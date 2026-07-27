@@ -1,0 +1,29 @@
+{
+  "name": "ORB",
+  "symbol": "MSFT",
+  "interval": "1min",
+  "direction": "long",
+  "conditions": [
+    {
+      "type": "breaks_high",
+      "lookback": 20
+    }
+  ],
+  "stop": {
+    "type": "percent",
+    "value": 0.5
+  },
+  "target": {
+    "type": "rr",
+    "value": 2
+  },
+  "session": {
+    "start": "13:30",
+    "end": "19:55"
+  },
+  "sizing": {
+    "type": "percent_equity",
+    "value": 95
+  },
+  "id": "6269caa42ed6"
+}

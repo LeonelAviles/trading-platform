@@ -1,0 +1,8 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Backtest job outputs (strategy.json, trades.json, worker.log per run) —
+# regenerable.
+backtests/

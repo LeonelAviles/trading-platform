@@ -22,13 +22,13 @@ export default function DrawToolbar({ activeTool, setActiveTool, onClear }) {
       <div className="sep" />
 
       <button className={`tool-btn ${activeTool === 'long' ? 'active' : ''}`} title="Long position (SL/TP)" onClick={() => setActiveTool('long')}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="#26a69a" strokeWidth="1.7">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
           <path d="M4 17l7-7 4 4 5-8" />
           <path d="M14 6h6v6" />
         </svg>
       </button>
       <button className={`tool-btn ${activeTool === 'short' ? 'active' : ''}`} title="Short position (SL/TP)" onClick={() => setActiveTool('short')}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="#ef5350" strokeWidth="1.7">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
           <path d="M4 7l7 7 4-4 5 8" />
           <path d="M14 18h6v-6" />
         </svg>

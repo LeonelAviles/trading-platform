@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ShapeElement from './ShapeElement';
+import TradeShape from './TradeShape';
 import ColorPicker from '../components/ColorPicker';
 import {
   pxToData, dataToPx, makePositionFromDrag, LINE_WIDTHS,
@@ -7,9 +8,16 @@ import {
   DEFAULT_PROFIT_COLOR, DEFAULT_LOSS_COLOR, DEFAULT_ENTRY_COLOR,
 } from './geometry';
 
-export default function DrawingOverlay({ chart, series, shapes, setShapes, activeTool, setActiveTool, selectedId, setSelectedId }) {
+export default function DrawingOverlay({
+  chart, series, shapes, setShapes, activeTool, setActiveTool, selectedId, setSelectedId,
+  trades = [], revealTime = null, bars = [], intervalSeconds = 60,
+}) {
   const svgRef = useRef(null);
   const [draft, setDraft] = useState(null);
+  // Pointer position (+ svg size) while a drawing tool is armed, used to draw
+  // our own crosshair — lightweight-charts' crosshair stops tracking because
+  // this overlay captures the pointer once a tool is active.
+  const [hover, setHover] = useState(null);
   const createRef = useRef(null); // { startPx } while dragging out a new shape
 
   // Clicking empty chart space (never reaches our shapes, since they sit on
@@ -76,8 +84,10 @@ export default function DrawingOverlay({ chart, series, shapes, setShapes, activ
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function onRootPointerMove(e) {
-    if (!createRef.current) return;
-    setDraft(buildDraft(activeTool, createRef.current.startPx, toXY(e)));
+    const rect = svgRef.current.getBoundingClientRect();
+    const pt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    if (activeTool !== 'cursor') setHover({ ...pt, w: rect.width, h: rect.height });
+    if (createRef.current) setDraft(buildDraft(activeTool, createRef.current.startPx, pt));
   }
   function onRootPointerUp(e) {
     if (!createRef.current) return;
@@ -139,7 +149,27 @@ export default function DrawingOverlay({ chart, series, shapes, setShapes, activ
         onPointerDown={onRootPointerDown}
         onPointerMove={onRootPointerMove}
         onPointerUp={onRootPointerUp}
+        onPointerLeave={() => setHover(null)}
       >
+        {activeTool !== 'cursor' && hover && (
+          <g className="draw-crosshair" pointerEvents="none">
+            <line x1={hover.x} y1={0} x2={hover.x} y2={hover.h} />
+            <line x1={0} y1={hover.y} x2={hover.w} y2={hover.y} />
+            {series && series.coordinateToPrice(hover.y) != null && (
+              <g transform={`translate(${hover.w - 1}, ${hover.y})`}>
+                <rect className="draw-crosshair-tag" x={-58} y={-9} width={57} height={18} rx={3} />
+                <text className="draw-crosshair-price" x={-29} y={4}>
+                  {series.coordinateToPrice(hover.y).toFixed(2)}
+                </text>
+              </g>
+            )}
+          </g>
+        )}
+        {trades
+          .filter((t) => revealTime == null || t.entryTime <= revealTime)
+          .map((t) => (
+            <TradeShape key={t.id} trade={t} chart={chart} series={series} bars={bars} intervalSeconds={intervalSeconds} />
+          ))}
         {shapes.map((shape) => (
           <ShapeElement
             key={shape.id}
