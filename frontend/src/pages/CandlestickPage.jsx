@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useLocation } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { fetchOHLCV, fetchBacktests, fetchBacktest, deleteBacktest } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
@@ -21,7 +22,9 @@ function volumePoint(b) {
 }
 
 export default function CandlestickPage({ symbol }) {
-  const headerSlot = useContext(HeaderSlotContext);
+  const { main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
+  const location = useLocation();
+  const entryStrategyId = location.state?.strategyId || null;
   const [interval, setInterval_] = useState('1min');
   const [status, setStatus] = useState('');
   const [activeTool, setActiveTool] = useState('cursor');
@@ -279,6 +282,18 @@ export default function CandlestickPage({ symbol }) {
   // Backtests belong to a symbol; changing symbol clears the selection.
   useEffect(() => { setSelectedBacktestId(''); }, [symbol]);
 
+  // Entering the chart from a strategy (front door): once the list loads,
+  // auto-select that strategy's most recent completed backtest.
+  const appliedEntryRef = useRef(false);
+  useEffect(() => {
+    if (!entryStrategyId || appliedEntryRef.current) return;
+    const match = backtests.find((b) => b.strategyId === entryStrategyId && b.symbol === symbol && b.status === 'done');
+    if (match) {
+      setSelectedBacktestId(match.id);
+      appliedEntryRef.current = true;
+    }
+  }, [backtests, entryStrategyId, symbol]);
+
   const bars = barsRef.current;
   const intervalSeconds = intervalToSeconds(interval);
   const revealTime = replay?.phase === 'active' ? (bars[replay.idx]?.time ?? null) : null;
@@ -330,32 +345,17 @@ export default function CandlestickPage({ symbol }) {
           Replay
         </button>
         <span className="status">{status}</span>
-
         <div className="toolbar-spacer" />
-
-        {selectedBacktestId && backtestTrades.length > 0 && (
-          <span className="compare-chip">
-            Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
-          </span>
-        )}
-        <BacktestPicker
-          backtests={symbolBacktests}
-          value={selectedBacktestId}
-          onChange={setSelectedBacktestId}
-          onDelete={handleDeleteBacktest}
-        />
-        <button className="icon-btn" title="Refresh backtests" onClick={refreshBacktests}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 4v7h-7" /></svg>
-        </button>
-        <div className="toolbar-sep-v" />
+        </div>
+      ), headerSlot)}
+      {trailingSlot && createPortal((
         <button className="icon-btn" title="Chart settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
-        </div>
-      ), headerSlot)}
+      ), trailingSlot)}
       <SettingsModal
         open={settingsOpen}
         settings={settings}
@@ -394,6 +394,24 @@ export default function CandlestickPage({ symbol }) {
               onExit={() => setReplay(null)}
             />
           )}
+
+          {/* Floating backtest control, bottom-left corner of the chart. */}
+          <div className="backtest-dock">
+            {selectedBacktestId && backtestTrades.length > 0 && (
+              <span className="compare-chip">
+                Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
+              </span>
+            )}
+            <BacktestPicker
+              backtests={symbolBacktests}
+              value={selectedBacktestId}
+              onChange={setSelectedBacktestId}
+              onDelete={handleDeleteBacktest}
+            />
+            <button className="icon-btn" title="Refresh backtests" onClick={refreshBacktests}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 4v7h-7" /></svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>

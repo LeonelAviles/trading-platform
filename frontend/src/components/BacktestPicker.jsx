@@ -31,7 +31,15 @@ export default function BacktestPicker({ backtests, value, onChange, onDelete })
   function toggle() {
     if (!open) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 6, right: window.innerWidth - r.right, width: Math.max(r.width, 260) });
+      // Flip the menu upward when the trigger is near the bottom (e.g. the
+      // dock in the chart's bottom corner).
+      const openUp = window.innerHeight - r.bottom < 320;
+      setPos({
+        top: openUp ? undefined : r.bottom + 6,
+        bottom: openUp ? window.innerHeight - r.top + 6 : undefined,
+        right: window.innerWidth - r.right,
+        width: Math.max(r.width, 260),
+      });
     }
     setOpen((o) => !o);
   }
@@ -45,7 +53,7 @@ export default function BacktestPicker({ backtests, value, onChange, onDelete })
       </button>
 
       {open && pos && createPortal(
-        <div ref={popRef} className="backtest-menu" style={{ position: 'fixed', top: pos.top, right: pos.right, minWidth: pos.width }}>
+        <div ref={popRef} className="backtest-menu" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right, minWidth: pos.width }}>
           <div className={`backtest-item ${!value ? 'active' : ''}`}>
             <button className="backtest-item-label" onClick={() => { onChange(''); setOpen(false); }}>None</button>
           </div>

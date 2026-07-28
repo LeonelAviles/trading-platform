@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   fetchStrategies, saveStrategy, deleteStrategy,
   fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest,
@@ -60,13 +61,21 @@ function ParamInputs({ obj, defs, onChange }) {
   ));
 }
 
-export default function StrategyPage({ symbol }) {
+export default function StrategyPage({ symbol, setSymbol }) {
+  const navigate = useNavigate();
   const [strategies, setStrategies] = useState([]);
   const [draft, setDraft] = useState(() => blankStrategy(symbol));
   const [engineStatus, setEngineStatus] = useState(null);
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const pollRef = useRef(null);
+
+  // Front-door → chart: open the chart with this strategy's symbol and, once
+  // there, its most recent backtest auto-selected (see CandlestickPage).
+  function openInChart(strategy) {
+    if (setSymbol && strategy.symbol) setSymbol(strategy.symbol);
+    navigate('/chart', { state: { strategyId: strategy.id, symbol: strategy.symbol } });
+  }
 
   const refresh = useCallback(() => {
     fetchStrategies().then(setStrategies).catch(() => setStrategies([]));
@@ -173,19 +182,31 @@ export default function StrategyPage({ symbol }) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           New strategy
         </button>
+        <button className="btn btn-ghost open-chart-btn" onClick={() => navigate('/chart')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 14l3-4 3 3 4-6" /></svg>
+          Open blank chart
+        </button>
+        {strategies.length > 0 && <div className="strategy-list-hint">Click a strategy to open it in the chart</div>}
         {strategies.length === 0 && <div className="strategy-empty">No strategies yet.<br />Create one to get started.</div>}
         {strategies.map((s) => (
-          <div key={s.id} className={`strategy-item ${draft.id === s.id ? 'active' : ''}`} onClick={() => edit(s)}>
-            <div>
+          <div
+            key={s.id}
+            className={`strategy-item ${draft.id === s.id ? 'active' : ''}`}
+            onClick={() => openInChart(s)}
+            title="Open in chart"
+          >
+            <div className="strategy-item-body">
               <div className="strategy-item-name">{s.name}</div>
               <div className="strategy-item-sub">{s.symbol} · {s.direction} · {s.conditions.length} condition{s.conditions.length === 1 ? '' : 's'}</div>
             </div>
-            <button
-              className="icon-btn" title="Delete strategy"
-              onClick={(e) => { e.stopPropagation(); handleDelete(s); }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-            </button>
+            <div className="strategy-item-actions">
+              <button className="icon-btn" title="Edit strategy" onClick={(e) => { e.stopPropagation(); edit(s); }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+              </button>
+              <button className="icon-btn" title="Delete strategy" onClick={(e) => { e.stopPropagation(); handleDelete(s); }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+              </button>
+            </div>
           </div>
         ))}
         {engineStatus && !engineStatus.installed && (
@@ -321,7 +342,7 @@ export default function StrategyPage({ symbol }) {
               {job.summary && (
                 <span> · {job.summary.trades} trades · {job.summary.winRate}% win · PnL {job.summary.totalPnl}</span>
               )}
-              {job.status === 'done' && <span> · open the Chart page and pick it in the Backtest dropdown</span>}
+              {job.status === 'done' && <span> · click the strategy in the list to open it in the chart</span>}
             </div>
           )}
         </div>

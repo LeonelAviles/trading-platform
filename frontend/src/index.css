@@ -137,6 +137,19 @@ select.chevron {
   border-bottom: 1px solid var(--border);
 }
 
+/* Home / logo button (top-left). On the chart it returns to Strategies. */
+.home-btn {
+  width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: var(--r-sm); cursor: pointer; padding: 0;
+  transition: background var(--ease);
+}
+.home-btn:hover { background: var(--surface-3); }
+.home-mark {
+  width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+}
+.home-mark svg { width: 15px; height: 15px; }
+
 /* Search-box style symbol switcher, like TradingView's ticker box. */
 .hdr-symbol {
   display: flex; align-items: center; gap: 7px;
@@ -161,31 +174,22 @@ select.chevron {
    route-specific controls in here (empty on routes that add none). */
 .hdr-slot { flex: 1; min-width: 0; display: flex; align-items: center; }
 .chart-tools { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding-left: 4px; }
-
-.app-nav {
-  display: flex; gap: 3px; flex: none;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-pill); padding: 3px;
-}
-.app-nav a {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 15px; border-radius: var(--r-pill);
-  font-size: 13px; font-weight: 600; color: var(--text-muted);
-  text-decoration: none; transition: background var(--ease), color var(--ease);
-}
-.app-nav a svg { width: 15px; height: 15px; }
-.app-nav a:hover { color: var(--text); }
-.app-nav a.active { background: var(--surface-4); color: var(--text); box-shadow: var(--sh-sm); }
+/* Trailing slot: sits after the AI Assist button (chart's settings gear). */
+.hdr-trailing { flex: none; display: flex; align-items: center; }
 
 /* Route content + optional docked chat panel sit side by side. */
 .app-body { flex: 1; min-height: 0; display: flex; }
 
+/* AI Assist — flat icon+label, matching the Replay button and the rest of
+   the toolbar. */
 .chat-toggle {
-  flex: none; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  flex: none; display: flex; align-items: center; gap: 7px;
   background: transparent; border: none; border-radius: var(--r-sm);
-  color: var(--text-muted); cursor: pointer; transition: background var(--ease), color var(--ease);
+  color: var(--text-muted); font-size: 13px; font-weight: 600;
+  padding: 6px 10px; cursor: pointer;
+  transition: background var(--ease), color var(--ease);
 }
-.chat-toggle svg { width: 17px; height: 17px; }
+.chat-toggle-spark { width: 16px; height: 16px; flex: none; }
 .chat-toggle:hover { color: var(--text); background: var(--surface-3); }
 .chat-toggle.active { color: var(--accent); background: var(--accent-soft); }
 
@@ -266,6 +270,15 @@ select.chevron {
   background: var(--surface-3); border: 1px solid var(--border);
   border-radius: var(--r-pill); padding: 5px 12px; white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* Floating backtest control, bottom-right corner of the chart (left of the
+   price scale). */
+.backtest-dock {
+  position: absolute; z-index: 4; right: 66px; bottom: 34px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-1); border: 1px solid var(--border-strong);
+  border-radius: var(--r); padding: 5px 7px; box-shadow: var(--sh);
 }
 
 /* Floating replay transport bar */
@@ -411,7 +424,9 @@ select.chevron {
 .strategy-list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .strategy-list-head h2 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.01em; }
 .strategy-count { font-size: 11px; color: var(--text-faint); font-weight: 600; }
-.new-strategy-btn { width: 100%; justify-content: center; margin-bottom: 4px; }
+.new-strategy-btn { width: 100%; justify-content: center; }
+.open-chart-btn { width: 100%; justify-content: center; margin-bottom: 2px; }
+.strategy-list-hint { font-size: 11px; color: var(--text-faint); padding: 2px 4px 6px; }
 
 .strategy-empty {
   font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.6;
@@ -431,8 +446,10 @@ select.chevron {
 .strategy-item:hover { background: var(--surface-3); }
 .strategy-item.active { background: var(--surface-3); border-color: var(--border-strong); }
 .strategy-item.active::before { background: var(--accent); }
+.strategy-item-body { min-width: 0; }
 .strategy-item-name { font-size: 13px; font-weight: 600; }
 .strategy-item-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.strategy-item-actions { display: flex; gap: 2px; flex: none; }
 .strategy-item .icon-btn { opacity: 0; }
 .strategy-item:hover .icon-btn, .strategy-item.active .icon-btn { opacity: 1; }
 

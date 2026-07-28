@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Route, Routes } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { fetchSymbols } from './api';
 import { HeaderSlotContext } from './headerSlot';
 import CandlestickPage from './pages/CandlestickPage';
@@ -10,9 +10,13 @@ export default function App() {
   const [symbols, setSymbols] = useState([]);
   const [symbol, setSymbol] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
-  // Ref-callback into state so the slot node is available to child portals
+  // Ref-callbacks into state so the slot nodes are available to child portals
   // once the header mounts.
   const [slot, setSlot] = useState(null);
+  const [trailingSlot, setTrailingSlot] = useState(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const onChart = location.pathname.startsWith('/chart');
 
   useEffect(() => {
     fetchSymbols().then((syms) => {
@@ -24,46 +28,45 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="hdr-symbol">
-          {symbol && <span className="symbol-avatar">{symbol[0]}</span>}
-          <select className="symbol-select chevron" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
-            {symbols.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
+        <button className="home-btn" title={onChart ? 'Back to strategies' : 'Strategies'} onClick={() => navigate('/')}>
+          <span className="home-mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 17l5-5 4 4 8-9" />
+            </svg>
+          </span>
+        </button>
+
+        {onChart && (
+          <div className="hdr-symbol">
+            {symbol && <span className="symbol-avatar">{symbol[0]}</span>}
+            <select className="symbol-select chevron" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
+              {symbols.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="hdr-slot" ref={setSlot} />
 
         <button
           className={`chat-toggle ${chatOpen ? 'active' : ''}`}
-          title="Assistant" onClick={() => setChatOpen((o) => !o)}
+          title="AI Assistant" onClick={() => setChatOpen((o) => !o)}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <svg className="chat-toggle-spark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9 2.5l1.4 3.7 3.7 1.4-3.7 1.4L9 12.7 7.6 9 3.9 7.6l3.7-1.4z" />
+            <path d="M17.5 12l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" />
           </svg>
+          AI Assist
         </button>
 
-        <nav className="app-nav">
-          <NavLink to="/" end>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 3v18h18" /><path d="M7 14l3-4 3 3 4-6" />
-            </svg>
-            Chart
-          </NavLink>
-          <NavLink to="/strategy">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 6h16M4 12h16M4 18h10" />
-            </svg>
-            Strategies
-          </NavLink>
-        </nav>
+        <div className="hdr-trailing" ref={setTrailingSlot} />
       </header>
       <div className="app-body">
-        <HeaderSlotContext.Provider value={slot}>
+        <HeaderSlotContext.Provider value={{ main: slot, trailing: trailingSlot }}>
           <Routes>
-            <Route path="/" element={<CandlestickPage symbol={symbol} />} />
-            <Route path="/strategy" element={<StrategyPage symbol={symbol} />} />
+            <Route path="/" element={<StrategyPage symbol={symbol} setSymbol={setSymbol} />} />
+            <Route path="/chart" element={<CandlestickPage symbol={symbol} />} />
           </Routes>
         </HeaderSlotContext.Provider>
         {chatOpen && <ChatPanel symbol={symbol} onClose={() => setChatOpen(false)} />}
