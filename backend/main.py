@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 import data_store
 import nautilus_runner
@@ -50,12 +51,34 @@ def get_ohlcv(
 @app.get("/api/range")
 def get_range(symbol: str = Query(...)):
     """First/last available bar time — lets the UI bound replay selection."""
-    bars = data_store.load_ohlcv_bars(symbol)
+    bars = data_store.get_bars(symbol, "1min")
     return {
         "start": int(bars.index[0].timestamp()),
         "end": int(bars.index[-1].timestamp()),
         "bars1min": len(bars),
     }
+
+
+@app.get("/api/cvd")
+def get_cvd(
+    symbol: str = Query(...),
+    interval: str = Query("1min"),
+    start: int | None = Query(None),
+    end: int | None = Query(None),
+):
+    """Cumulative Volume Delta, bucketed like /api/ohlcv so it lines up with the chart."""
+    series = data_store.get_cvd(symbol, interval, start, end)
+    return [{"time": int(ts.timestamp()), "cvd": round(float(v), 2)} for ts, v in series.items()]
+
+
+@app.get("/api/dom")
+def get_dom(
+    symbol: str = Query(...),
+    as_of: int | None = Query(None, description="Unix seconds; defaults to the latest event"),
+    depth: int = Query(12, ge=1, le=50),
+):
+    """Approximate order-book snapshot reconstructed from recent Add/Cancel/Fill events."""
+    return data_store.order_book_snapshot(symbol, as_of, depth)
 
 
 # --------------------------------------------------------------------------
@@ -134,6 +157,16 @@ def delete_backtest(job_id: str):
     return {"deleted": job_id}
 
 
+@app.get("/api/backtests/{job_id}/analytics")
+def get_backtest_analytics(job_id: str):
+    """Dashboard analytics (stat tiles, equity curve, distribution, monthly
+    table, exit-reason mix) derived from one backtest's closed trades."""
+    job = nautilus_runner.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"backtest '{job_id}' not found")
+    return nautilus_runner.strategy_analytics(job)
+
+
 @app.post("/api/backtests")
 def create_backtest(body: dict = Body(...)):
     if body.get("demo"):
@@ -149,43 +182,39 @@ def create_backtest(body: dict = Body(...)):
 
 
 # --------------------------------------------------------------------------
-# Assistant chat (LLM to be plugged in — see below)
+# Assistant chat — implementation removed for now. Routes stay in place so
+# the frontend (ChatPanel, AI Insights) degrades gracefully to "offline"
+# instead of hitting 404s.
 # --------------------------------------------------------------------------
 
 @app.get("/api/chat/status")
 def chat_status():
-    # Flip to True once an LLM is wired into /api/chat, so the UI can show it.
-    return {"connected": False, "model": None}
+    return {"connected": False, "model": None, "reason": "assistant not configured"}
 
 
 @app.post("/api/chat")
 def chat(body: dict = Body(...)):
-    """Assistant reply endpoint.
+    return {"role": "assistant", "content": "The assistant is not configured.", "error": True}
 
-    `body` = { messages: [{role, content}, ...], context: {...} }
-    `context` is whatever the UI wants the model to know (current symbol,
-    interval, etc.); ignored for now.
 
-    ======================  LLM INTEGRATION POINT  ======================
-    Plug your model in here. Call your provider with `messages` (and any
-    context), and return the assistant's reply. Keep the call server-side so
-    API keys never reach the browser. For example:
+@app.post("/api/backtests/{job_id}/insights")
+def get_backtest_insights(job_id: str):
+    job = nautilus_runner.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"backtest '{job_id}' not found")
+    return {"role": "assistant", "content": "The assistant is not configured.", "error": True}
 
-        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        resp = client.messages.create(model="claude-...", messages=messages,
-                                       system=build_system_prompt(context))
-        return {"role": "assistant", "content": resp.content[0].text}
 
-    Until then, return a clearly-labeled stub so the panel works end to end.
-    =====================================================================
-    """
-    messages = body.get("messages", [])
-    last_user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
-    return {
-        "role": "assistant",
-        "content": (
-            "The chat panel is connected to the backend, but no LLM is wired in yet. "
-            "Add your model in the /api/chat endpoint (backend/main.py).\n\n"
-            f"Echo — you said: {last_user}"
-        ),
-    }
+@app.post("/api/chat/stream")
+def chat_stream(body: dict = Body(...)):
+    """SSE stream — immediately reports the assistant as unconfigured."""
+    def gen():
+        event = {"type": "delta", "text": "The assistant is not configured."}
+        yield f"data: {json.dumps(event)}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

@@ -2,13 +2,16 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { fetchOHLCV, fetchBacktests, fetchBacktest, deleteBacktest } from '../api';
+import { fetchOHLCV, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import DrawToolbar from '../components/DrawToolbar';
 import DrawingOverlay from '../drawing/DrawingOverlay';
 import SettingsModal from '../components/SettingsModal';
 import ReplayControls from '../components/ReplayControls';
 import BacktestPicker from '../components/BacktestPicker';
+import StrategyPanel from '../components/StrategyPanel';
+import DomPanel from '../components/DomPanel';
+import AnalysisPanel from '../components/AnalysisPanel';
 import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
@@ -19,6 +22,12 @@ function volumePoint(b) {
     value: b.volume,
     color: b.close >= b.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
   };
+}
+
+function formatVol(v) {
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
+  return `${Math.round(v)}`;
 }
 
 export default function CandlestickPage({ symbol }) {
@@ -37,10 +46,29 @@ export default function CandlestickPage({ symbol }) {
   const [replay, setReplay] = useState(null);
   const prevReplayIdxRef = useRef(null);
 
+  // Index (into barsRef.current) of the bar under the crosshair, for the
+  // OHLCV legend; null means "not hovering" — legend falls back to the last bar.
+  const [hoverIdx, setHoverIdx] = useState(null);
+
   // Backtest overlay
   const [backtests, setBacktests] = useState([]);
   const [selectedBacktestId, setSelectedBacktestId] = useState('');
   const [backtestTrades, setBacktestTrades] = useState([]);
+  const [strategies, setStrategies] = useState([]);
+  const [cvdData, setCvdData] = useState([]);
+
+  // Left strategy panel, right DOM dock, bottom analysis dock — all persist
+  // their open/closed state.
+  const [strategyPanelOpen, setStrategyPanelOpen] = useState(
+    () => localStorage.getItem('strategyPanelOpen') !== 'false',
+  );
+  const [domOpen, setDomOpen] = useState(() => localStorage.getItem('domOpen') === 'true');
+  const [analysisPanelOpen, setAnalysisPanelOpen] = useState(
+    () => localStorage.getItem('analysisPanelOpen') !== 'false',
+  );
+  useEffect(() => { localStorage.setItem('strategyPanelOpen', String(strategyPanelOpen)); }, [strategyPanelOpen]);
+  useEffect(() => { localStorage.setItem('domOpen', String(domOpen)); }, [domOpen]);
+  useEffect(() => { localStorage.setItem('analysisPanelOpen', String(analysisPanelOpen)); }, [analysisPanelOpen]);
 
   const chartAreaRef = useRef(null);
   const chartDivRef = useRef(null);
@@ -96,6 +124,13 @@ export default function CandlestickPage({ symbol }) {
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(forceUpdate);
 
+    const onCrosshairMove = (param) => {
+      if (!param.time) { setHoverIdx(null); return; }
+      const idx = barsRef.current.findIndex((b) => b.time === param.time);
+      setHoverIdx(idx >= 0 ? idx : null);
+    };
+    chart.subscribeCrosshairMove(onCrosshairMove);
+
     // Dragging the right-side price axis rescales the price scale, but
     // lightweight-charts has no subscribable event for that (only for the
     // time scale, above) — so without this, our SVG overlay's shapes never
@@ -113,6 +148,7 @@ export default function CandlestickPage({ symbol }) {
 
     return () => {
       ro.disconnect();
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
       chart.remove();
       area.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointerup', onPointerUp);
@@ -177,6 +213,18 @@ export default function CandlestickPage({ symbol }) {
       });
     return () => { cancelled = true; };
   }, [symbol, interval, forceUpdate]);
+
+  // CVD (cumulative volume delta) for the analysis panel's CVD tab — fetched
+  // independently so a failure here (e.g. a symbol with no MBO side data)
+  // never affects the candles.
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    fetchCVD(symbol, interval)
+      .then((points) => { if (!cancelled) setCvdData(points); })
+      .catch(() => { if (!cancelled) setCvdData([]); });
+    return () => { cancelled = true; };
+  }, [symbol, interval]);
 
   // Any data reload (new symbol/interval) invalidates an in-progress replay.
   useEffect(() => {
@@ -263,6 +311,7 @@ export default function CandlestickPage({ symbol }) {
     fetchBacktests().then(setBacktests).catch(() => setBacktests([]));
   }, []);
   useEffect(() => { refreshBacktests(); }, [refreshBacktests]);
+  useEffect(() => { fetchStrategies().then(setStrategies).catch(() => setStrategies([])); }, []);
 
   const handleDeleteBacktest = useCallback(async (id) => {
     await deleteBacktest(id).catch(() => {});
@@ -295,12 +344,24 @@ export default function CandlestickPage({ symbol }) {
   }, [backtests, entryStrategyId, symbol]);
 
   const bars = barsRef.current;
+  const legendIdx = hoverIdx != null && hoverIdx < bars.length ? hoverIdx : bars.length - 1;
+  const legendBar = legendIdx >= 0 ? bars[legendIdx] : null;
+  const legendPrev = legendIdx > 0 ? bars[legendIdx - 1] : null;
+  const legendBase = legendPrev ? legendPrev.close : legendBar?.open;
+  const legendChange = legendBar ? legendBar.close - legendBase : 0;
+  const legendChangePct = legendBase ? (legendChange / legendBase) * 100 : 0;
+  const legendSign = legendChange >= 0 ? 'pos' : 'neg';
   const intervalSeconds = intervalToSeconds(interval);
   const revealTime = replay?.phase === 'active' ? (bars[replay.idx]?.time ?? null) : null;
   const visibleTrades = revealTime == null
     ? backtestTrades
     : backtestTrades.filter((t) => t.entryTime <= revealTime);
+  const visibleCvd = revealTime == null ? cvdData : cvdData.filter((p) => p.time <= revealTime);
   const symbolBacktests = backtests.filter((b) => b.symbol === symbol && b.status === 'done');
+  const selectedBacktestJob = backtests.find((b) => b.id === selectedBacktestId) || null;
+  const currentStrategy = selectedBacktestJob?.strategyId
+    ? strategies.find((s) => s.id === selectedBacktestJob.strategyId) || null
+    : null;
 
   // "Does the engine trade like me": my manual position shapes vs the visible
   // engine trades, matched by direction and entry within 3 bars.
@@ -344,6 +405,17 @@ export default function CandlestickPage({ symbol }) {
           </svg>
           Replay
         </button>
+        <div className="toolbar-sep-v" />
+        <button
+          className={`replay-toggle ${domOpen ? 'active' : ''}`}
+          title="Depth of Market"
+          onClick={() => setDomOpen((o) => !o)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+          DOM
+        </button>
         <span className="status">{status}</span>
         <div className="toolbar-spacer" />
         </div>
@@ -368,8 +440,31 @@ export default function CandlestickPage({ symbol }) {
           setActiveTool={setActiveTool}
           onClear={() => { setShapes([]); setSelectedId(null); }}
         />
+        <StrategyPanel
+          strategy={currentStrategy}
+          open={strategyPanelOpen}
+          onToggle={() => setStrategyPanelOpen((o) => !o)}
+        />
         <div className="chart-area" ref={chartAreaRef}>
           <div className="chart-inner" ref={chartDivRef} />
+          {legendBar && (
+            <div className="chart-legend">
+              <div className="legend-top">
+                <span className="legend-symbol">{symbol}</span>
+                <span className="legend-price">{legendBar.close.toFixed(2)}</span>
+                <span className={`legend-change ${legendSign}`}>
+                  {legendChange >= 0 ? '+' : ''}{legendChange.toFixed(2)} ({legendChange >= 0 ? '+' : ''}{legendChangePct.toFixed(2)}%)
+                </span>
+              </div>
+              <div className="legend-ohlc">
+                <span>O <b className={legendSign}>{legendBar.open.toFixed(2)}</b></span>
+                <span>H <b className={legendSign}>{legendBar.high.toFixed(2)}</b></span>
+                <span>L <b className={legendSign}>{legendBar.low.toFixed(2)}</b></span>
+                <span>C <b className={legendSign}>{legendBar.close.toFixed(2)}</b></span>
+                {legendBar.volume != null && <span>Vol <b>{formatVol(legendBar.volume)}</b></span>}
+              </div>
+            </div>
+          )}
           <DrawingOverlay
             chart={chartRef.current}
             series={candleSeriesRef.current}
@@ -413,7 +508,16 @@ export default function CandlestickPage({ symbol }) {
             </button>
           </div>
         </div>
+        {domOpen && (
+          <DomPanel symbol={symbol} asOf={revealTime} onClose={() => setDomOpen(false)} />
+        )}
       </div>
+      <AnalysisPanel
+        trades={visibleTrades}
+        cvd={visibleCvd}
+        open={analysisPanelOpen}
+        onToggle={() => setAnalysisPanelOpen((o) => !o)}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { fetchSymbols } from './api';
 import { HeaderSlotContext } from './headerSlot';
 import CandlestickPage from './pages/CandlestickPage';
 import StrategyPage from './pages/StrategyPage';
+import StrategyDashboardPage from './pages/StrategyDashboardPage';
 import ChatPanel from './components/ChatPanel';
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
               <path d="M3 17l5-5 4 4 8-9" />
             </svg>
           </span>
+          <span className="brand-name">Stratify</span>
         </button>
 
         {onChart && (
@@ -66,6 +68,7 @@ export default function App() {
         <HeaderSlotContext.Provider value={{ main: slot, trailing: trailingSlot }}>
           <Routes>
             <Route path="/" element={<StrategyPage symbol={symbol} setSymbol={setSymbol} />} />
+            <Route path="/strategy/:id" element={<StrategyDashboardPage />} />
             <Route path="/chart" element={<CandlestickPage symbol={symbol} />} />
           </Routes>
         </HeaderSlotContext.Provider>

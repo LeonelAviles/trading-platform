@@ -106,6 +106,127 @@ def _summarize(trades: list[dict]) -> dict:
     }
 
 
+def _r_multiple(t: dict) -> float | None:
+    """Trade P&L expressed in units of initial risk (R). Risk per share is
+    the entry-to-stop distance; None if a trade has no stop (can't size R)."""
+    risk_per_unit = abs(t["entryPrice"] - t["stopPrice"])
+    if risk_per_unit <= 0 or not t.get("qty"):
+        return None
+    return t["pnl"] / (risk_per_unit * t["qty"])
+
+
+def strategy_analytics(job: dict) -> dict:
+    """Dashboard analytics derived from one backtest job's closed trades:
+    stat tiles, an equity (R) curve, an R-multiple distribution, a monthly
+    win-rate table, and the exit-reason mix. Every number here is computed
+    directly from the job's trades — nothing is simulated or estimated.
+    """
+    trades = [t for t in (job.get("trades") or []) if t.get("exitTime") is not None]
+    trades.sort(key=lambda t: t["exitTime"])
+
+    if not trades:
+        return {
+            "trades": 0, "netPnl": 0, "winRate": 0, "profitFactor": 0,
+            "expectancyR": 0, "maxDrawdown": 0, "sharpe": 0, "sqn": 0,
+            "equityCurve": [], "distribution": [], "monthly": [], "exitReasons": [],
+            "recentTrades": [],
+        }
+
+    rs = [_r_multiple(t) for t in trades]
+    valid_rs = [r for r in rs if r is not None]
+
+    wins = [t for t in trades if t["pnl"] > 0]
+    losses = [t for t in trades if t["pnl"] < 0]
+    gross_win = sum(t["pnl"] for t in wins)
+    gross_loss = sum(t["pnl"] for t in losses)
+    net_pnl = sum(t["pnl"] for t in trades)
+
+    # Equity curve in R (cumulative), one point per closed trade.
+    equity_curve = []
+    cum_r = 0.0
+    for t, r in zip(trades, rs):
+        cum_r += r or 0.0
+        equity_curve.append({"time": t["exitTime"], "cumR": round(cum_r, 3), "pnl": t["pnl"]})
+
+    # Max drawdown, computed on cumulative $ P&L (peak-to-trough).
+    peak = -float("inf")
+    max_dd = 0.0
+    cum = 0.0
+    for t in trades:
+        cum += t["pnl"]
+        peak = max(peak, cum)
+        max_dd = min(max_dd, cum - peak)
+
+    # Sharpe / SQN from the per-trade R distribution (Van Tharp's SQN =
+    # mean(R)/stdev(R) * sqrt(N); "Sharpe" here is the same ratio without the
+    # sqrt(N) term — a per-trade risk-adjusted return, not a daily-return Sharpe).
+    sharpe = sqn = 0.0
+    if len(valid_rs) >= 2:
+        mean_r = sum(valid_rs) / len(valid_rs)
+        var_r = sum((r - mean_r) ** 2 for r in valid_rs) / (len(valid_rs) - 1)
+        std_r = var_r ** 0.5
+        if std_r > 0:
+            sharpe = round(mean_r / std_r, 2)
+            sqn = round(mean_r / std_r * (len(valid_rs) ** 0.5), 2)
+
+    # R-multiple distribution, bucketed into 0.5R-wide bins from -3R to +3R+.
+    buckets: dict[float, int] = {}
+    for r in valid_rs:
+        clamped = max(-3.0, min(3.0, r))
+        edge = int(clamped // 0.5) * 0.5
+        buckets[edge] = buckets.get(edge, 0) + 1
+    distribution = [{"bucket": edge, "count": buckets[edge]} for edge in sorted(buckets)]
+
+    # Monthly win-rate table (year -> month -> {trades, winRate, avgR}).
+    monthly_map: dict[str, dict] = {}
+    for t, r in zip(trades, rs):
+        ts = datetime.fromtimestamp(t["exitTime"], tz=timezone.utc)
+        key = f"{ts.year}-{ts.month:02d}"
+        m = monthly_map.setdefault(key, {"year": ts.year, "month": ts.month, "trades": [], "rs": []})
+        m["trades"].append(t)
+        if r is not None:
+            m["rs"].append(r)
+    monthly = []
+    for key in sorted(monthly_map):
+        m = monthly_map[key]
+        mwins = [t for t in m["trades"] if t["pnl"] > 0]
+        monthly.append({
+            "year": m["year"], "month": m["month"], "trades": len(m["trades"]),
+            "winRate": round(len(mwins) / len(m["trades"]) * 100, 1),
+            "avgR": round(sum(m["rs"]) / len(m["rs"]), 2) if m["rs"] else None,
+        })
+
+    # Exit-reason mix (target / stop / end_of_data / ...) — real, derivable
+    # substitute for anything requiring market-context data we don't have.
+    reason_counts: dict[str, int] = {}
+    for t in trades:
+        reason_counts[t["reason"]] = reason_counts.get(t["reason"], 0) + 1
+    exit_reasons = [{"reason": k, "count": v} for k, v in sorted(reason_counts.items(), key=lambda kv: -kv[1])]
+
+    return {
+        "trades": len(trades),
+        "netPnl": round(net_pnl, 2),
+        "winRate": round(len(wins) / len(trades) * 100, 1),
+        "profitFactor": round(abs(gross_win / gross_loss), 2) if gross_loss != 0 else (None if gross_win > 0 else 0),
+        "expectancyR": round(sum(valid_rs) / len(valid_rs), 3) if valid_rs else 0,
+        "maxDrawdown": round(max_dd, 2),
+        "sharpe": sharpe,
+        "sqn": sqn,
+        "avgWin": round(gross_win / len(wins), 2) if wins else 0,
+        "avgLoss": round(gross_loss / len(losses), 2) if losses else 0,
+        "largestWin": round(max((t["pnl"] for t in wins), default=0), 2),
+        "largestLoss": round(min((t["pnl"] for t in losses), default=0), 2),
+        "equityCurve": equity_curve,
+        "distribution": distribution,
+        "monthly": monthly,
+        "exitReasons": exit_reasons,
+        "recentTrades": [
+            {**t, "r": round(r, 2) if r is not None else None}
+            for t, r in list(zip(trades, rs))[-25:][::-1]
+        ],
+    }
+
+
 # --------------------------------------------------------------------------
 # Demo backtest: a fixed 5-bar-low breakout short, evaluated directly on the
 # loaded bars. NOT the engine — a fast way to exercise the UI pipeline.

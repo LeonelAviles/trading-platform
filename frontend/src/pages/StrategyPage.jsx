@@ -4,30 +4,7 @@ import {
   fetchStrategies, saveStrategy, deleteStrategy,
   fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest,
 } from '../api';
-
-// Mirrors CONDITION_DEFS in backend/strategy_spec.py — keep in sync.
-const CONDITION_DEFS = {
-  price_above: { label: 'Price above level', params: [{ name: 'value', label: 'Level', def: 100 }] },
-  price_below: { label: 'Price below level', params: [{ name: 'value', label: 'Level', def: 100 }] },
-  sma_cross_above: { label: 'SMA cross above (fast > slow)', params: [{ name: 'fast', label: 'Fast', def: 9 }, { name: 'slow', label: 'Slow', def: 21 }] },
-  sma_cross_below: { label: 'SMA cross below (fast < slow)', params: [{ name: 'fast', label: 'Fast', def: 9 }, { name: 'slow', label: 'Slow', def: 21 }] },
-  rsi_above: { label: 'RSI above', params: [{ name: 'period', label: 'Period', def: 14 }, { name: 'value', label: 'Value', def: 70 }] },
-  rsi_below: { label: 'RSI below', params: [{ name: 'period', label: 'Period', def: 14 }, { name: 'value', label: 'Value', def: 30 }] },
-  breaks_high: { label: 'Breaks N-bar high', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
-  breaks_low: { label: 'Breaks N-bar low', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
-  consecutive: { label: 'N consecutive candles', params: [{ name: 'count', label: 'Count', def: 3 }, { name: 'color', label: 'Color', def: 'green', options: ['green', 'red'] }] },
-};
-
-const STOP_TYPES = [
-  { value: 'percent', label: '% from entry', params: [{ name: 'value', label: '%', def: 0.5 }] },
-  { value: 'fixed_points', label: 'Fixed points', params: [{ name: 'value', label: 'Points', def: 1 }] },
-  { value: 'atr', label: 'ATR multiple', params: [{ name: 'value', label: '(unused)', def: 1, hidden: true }, { name: 'period', label: 'ATR period', def: 14 }, { name: 'mult', label: 'Multiplier', def: 1.5 }] },
-];
-const TARGET_TYPES = [
-  { value: 'rr', label: 'R multiple', params: [{ name: 'value', label: 'R', def: 2 }] },
-  { value: 'percent', label: '% from entry', params: [{ name: 'value', label: '%', def: 1 }] },
-  { value: 'fixed_points', label: 'Fixed points', params: [{ name: 'value', label: 'Points', def: 2 }] },
-];
+import { CONDITION_DEFS, STOP_TYPES, TARGET_TYPES } from '../strategyDefs';
 
 function blankStrategy(symbol) {
   return {
@@ -70,11 +47,11 @@ export default function StrategyPage({ symbol, setSymbol }) {
   const [error, setError] = useState('');
   const pollRef = useRef(null);
 
-  // Front-door → chart: open the chart with this strategy's symbol and, once
-  // there, its most recent backtest auto-selected (see CandlestickPage).
-  function openInChart(strategy) {
-    if (setSymbol && strategy.symbol) setSymbol(strategy.symbol);
-    navigate('/chart', { state: { strategyId: strategy.id, symbol: strategy.symbol } });
+  // Front-door → dashboard: clicking a strategy opens its analytics
+  // dashboard, where "Run Backtest" hands off to the chart (see
+  // StrategyDashboardPage).
+  function openDashboard(strategy) {
+    navigate(`/strategy/${strategy.id}`);
   }
 
   const refresh = useCallback(() => {
@@ -186,14 +163,14 @@ export default function StrategyPage({ symbol, setSymbol }) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 14l3-4 3 3 4-6" /></svg>
           Open blank chart
         </button>
-        {strategies.length > 0 && <div className="strategy-list-hint">Click a strategy to open it in the chart</div>}
+        {strategies.length > 0 && <div className="strategy-list-hint">Click a strategy to open its dashboard</div>}
         {strategies.length === 0 && <div className="strategy-empty">No strategies yet.<br />Create one to get started.</div>}
         {strategies.map((s) => (
           <div
             key={s.id}
             className={`strategy-item ${draft.id === s.id ? 'active' : ''}`}
-            onClick={() => openInChart(s)}
-            title="Open in chart"
+            onClick={() => openDashboard(s)}
+            title="Open dashboard"
           >
             <div className="strategy-item-body">
               <div className="strategy-item-name">{s.name}</div>

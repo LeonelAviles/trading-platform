@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchChatStatus, sendChat } from '../api';
+import { fetchChatStatus, streamChat } from '../api';
+
+// Friendly labels for backend tool calls shown while the assistant works.
+const TOOL_LABELS = {
+  get_market_summary: 'Reading market data',
+  list_strategies: 'Reading strategies',
+  list_backtests: 'Listing backtests',
+  get_backtest: 'Reading backtest results',
+};
 
 const STORAGE_KEY = 'chatMessages';
 const WIDTH_KEY = 'chatWidth';
@@ -29,6 +37,7 @@ export default function ChatPanel({ symbol, interval, onClose }) {
   const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
+  const [toolNote, setToolNote] = useState(null);
   const [status, setStatus] = useState(null);
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -83,16 +92,38 @@ export default function ChatPanel({ symbol, interval, onClose }) {
     setMessages(history);
     setInput('');
     setPending(true);
+    setToolNote(null);
+
+    // Placeholder assistant bubble that fills in as the stream arrives.
+    const replyId = crypto.randomUUID();
+    const patchReply = (patch) => setMessages((m) => m.map(
+      (msg) => (msg.id === replyId ? { ...msg, ...patch(msg) } : msg),
+    ));
+
     try {
-      // Only role/content go to the model; context carries app state so a
-      // future LLM can be chart-aware.
+      // Only role/content go to the model; context carries app state so the
+      // assistant is chart-aware.
       const wire = history.map((m) => ({ role: m.role, content: m.content }));
-      const reply = await sendChat(wire, { symbol, interval });
-      setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'assistant', content: reply.content }]);
+      setMessages((m) => [...m, { id: replyId, role: 'assistant', content: '' }]);
+      await streamChat(wire, { symbol, interval }, {
+        onDelta: (delta) => {
+          setToolNote(null);
+          patchReply((msg) => ({ content: msg.content + delta }));
+        },
+        onTool: (name) => setToolNote(TOOL_LABELS[name] || `Running ${name}`),
+        onError: (message) => patchReply((msg) => ({
+          content: msg.content ? `${msg.content}\n\n${message}` : message,
+          error: true,
+        })),
+      });
+      // Drop the bubble entirely if nothing ever arrived.
+      setMessages((m) => m.filter((msg) => msg.id !== replyId || msg.content));
     } catch (e) {
+      setMessages((m) => m.filter((msg) => msg.id !== replyId || msg.content));
       setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${e.message}`, error: true }]);
     } finally {
       setPending(false);
+      setToolNote(null);
       inputRef.current?.focus();
     }
   }
@@ -128,7 +159,7 @@ export default function ChatPanel({ symbol, interval, onClose }) {
         <h2>
           Assistant
           <span className={`chat-badge ${status?.connected ? 'on' : 'off'}`}>
-            {status?.connected ? (status.model || 'connected') : 'no LLM yet'}
+            {status?.connected ? 'online' : 'offline'}
           </span>
         </h2>
         <div className="chat-head-actions">
@@ -146,13 +177,20 @@ export default function ChatPanel({ symbol, interval, onClose }) {
           <div className="chat-empty">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
             <p>Ask about the chart, a strategy, or a backtest.</p>
-            <span>No model is connected yet — replies are placeholders.</span>
+            <span>
+              {status?.connected
+                ? 'The assistant can read your market data, strategies, and backtest results.'
+                : 'The assistant is currently offline.'}
+            </span>
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`chat-msg ${m.role}${m.error ? ' error' : ''}`}>{m.content}</div>
+          (m.content || m.role !== 'assistant') && (
+            <div key={m.id} className={`chat-msg ${m.role}${m.error ? ' error' : ''}`}>{m.content}</div>
+          )
         ))}
-        {pending && <div className="chat-typing"><span /><span /><span /></div>}
+        {pending && toolNote && <div className="chat-tool-note">{toolNote}…</div>}
+        {pending && !toolNote && <div className="chat-typing"><span /><span /><span /></div>}
       </div>
 
       <div className="chat-input-row">

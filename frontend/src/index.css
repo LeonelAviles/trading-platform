@@ -33,8 +33,7 @@
   --r-sm: 7px;
   --r: 9px;
   --r-lg: 13px;
-  --r-pill: 999px;
-
+  --r-pill: 5px;
   --sh-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
   --sh: 0 10px 28px rgba(0, 0, 0, 0.45);
   --sh-lg: 0 18px 44px rgba(0, 0, 0, 0.55);
@@ -139,16 +138,18 @@ select.chevron {
 
 /* Home / logo button (top-left). On the chart it returns to Strategies. */
 .home-btn {
-  width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center;
-  background: transparent; border: none; border-radius: var(--r-sm); cursor: pointer; padding: 0;
+  height: 34px; flex: none; display: flex; align-items: center; gap: 8px;
+  background: transparent; border: none; border-radius: var(--r-sm); cursor: pointer; padding: 0 8px 0 2px;
   transition: background var(--ease);
 }
 .home-btn:hover { background: var(--surface-3); }
 .home-mark {
-  width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(135deg, var(--accent), #a855f7);
+  width: 26px; height: 26px; flex: none; border-radius: 7px; display: grid; place-items: center; color: #fff;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 .home-mark svg { width: 15px; height: 15px; }
+.brand-name { font-size: 14.5px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
 
 /* Search-box style symbol switcher, like TradingView's ticker box. */
 .hdr-symbol {
@@ -161,7 +162,7 @@ select.chevron {
 .symbol-avatar {
   width: 20px; height: 20px; border-radius: 50%; flex: none;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #5b9dd9, #a855f7);
+  background: var(--accent);
   color: #fff; font-size: 10px; font-weight: 700;
 }
 .symbol-select {
@@ -202,17 +203,18 @@ select.chevron {
 .toolbar-sep-v { width: 1px; height: 22px; background: var(--border); margin: 0 2px; }
 .status { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
-/* Flat interval buttons; active gets a subtle box (not a filled accent pill),
-   like TradingView. */
-.interval-group { display: inline-flex; align-items: center; gap: 1px; }
+/* Segmented-control interval tabs: flat/muted at rest, a small solid-accent
+   chip only on the active one — selective boldness on the one thing that
+   matters, not a stadium pill everywhere. */
+.interval-group { display: inline-flex; align-items: center; gap: 2px; }
 .interval-btn {
   background: transparent; border: none; color: var(--text-muted);
-  font-size: 13px; font-weight: 600; padding: 6px 9px;
+  font-size: 12.5px; font-weight: 600; padding: 5px 9px;
   border-radius: var(--r-xs); cursor: pointer;
   transition: background var(--ease), color var(--ease);
 }
 .interval-btn:hover { color: var(--text); background: var(--surface-3); }
-.interval-btn.active { color: var(--text); background: var(--surface-3); }
+.interval-btn.active { color: #fff; background: var(--accent); }
 
 /* Flat icon+label button, TradingView style. */
 .replay-toggle {
@@ -224,7 +226,7 @@ select.chevron {
 }
 .replay-toggle svg { width: 16px; height: 16px; }
 .replay-toggle:hover { color: var(--text); background: var(--surface-3); }
-.replay-toggle.active { color: var(--accent); background: var(--accent-soft); }
+.replay-toggle.active { color: #fff; background: var(--accent); }
 
 .backtest-picker {
   display: flex; align-items: center; gap: 8px;
@@ -266,9 +268,9 @@ select.chevron {
 
 .compare-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 600; color: var(--text);
+  font-size: 11px; font-weight: 500; color: var(--text-muted);
   background: var(--surface-3); border: 1px solid var(--border);
-  border-radius: var(--r-pill); padding: 5px 12px; white-space: nowrap;
+  border-radius: var(--r-pill); padding: 4px 9px; white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
@@ -322,8 +324,154 @@ select.chevron {
 .tool-btn svg { width: 18px; height: 18px; }
 .draw-toolbar .sep { width: 22px; height: 1px; background: var(--border); margin: 5px 0; }
 
+/* Collapsible strategy panel — the entry conditions + exit actions behind the
+   backtest currently selected on the chart. */
+.strategy-panel {
+  position: relative; flex: none; display: flex; background: var(--surface-1); border-right: 1px solid var(--border);
+}
+.strategy-panel.collapsed { width: 24px; transition: width var(--ease); }
+
+/* Shared drag handle for panel edges — thin hit target, accent line on
+   hover/drag. Directional variants position it on the edge being dragged. */
+.panel-resize { position: absolute; z-index: 6; touch-action: none; }
+.panel-resize::after { content: ""; position: absolute; background: transparent; transition: background var(--ease); }
+.panel-resize:hover::after, .panel-resize.active::after { background: var(--accent); }
+.panel-resize.left, .panel-resize.right { top: 0; bottom: 0; width: 7px; cursor: col-resize; }
+.panel-resize.left { left: -3px; }
+.panel-resize.right { right: -3px; }
+.panel-resize.left::after, .panel-resize.right::after { left: 3px; top: 0; bottom: 0; width: 2px; }
+.panel-resize.top { left: 0; right: 0; height: 7px; top: -3px; cursor: row-resize; }
+.panel-resize.top::after { top: 3px; left: 0; right: 0; height: 2px; }
+.strategy-panel-toggle {
+  flex: none; width: 24px; align-self: stretch; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-right: 1px solid transparent; color: var(--text-faint);
+  cursor: pointer; transition: background var(--ease), color var(--ease);
+}
+.strategy-panel-toggle:hover { background: var(--surface-3); color: var(--text); }
+.strategy-panel-toggle svg { width: 14px; height: 14px; }
+.strategy-panel-body { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 18px; }
+.strategy-panel-section { display: flex; flex-direction: column; gap: 8px; }
+.strategy-panel-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.strategy-panel-sub { font-size: 11.5px; color: var(--text-muted); }
+.strategy-panel-empty { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; }
+.strategy-cond-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.strategy-cond-list li { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--text); line-height: 1.4; }
+.cond-check { width: 13px; height: 13px; flex: none; margin-top: 2px; color: var(--green); }
+.strategy-action-dir {
+  align-self: flex-start; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 3px 8px; border-radius: var(--r-xs);
+}
+.strategy-action-dir.long { color: var(--green-bright); background: var(--green-soft); }
+.strategy-action-dir.short { color: var(--red); background: var(--red-soft); }
+.strategy-action-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+.strategy-action-row b { color: var(--text); font-weight: 600; }
+
+/* DOM (Depth of Market) dock — right of the chart. Reconstructed bid/ask
+   ladder from MBO order-flow events (see backend order_book_snapshot). */
+.dom-panel {
+  position: relative; flex: none; background: var(--surface-1); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.dom-panel-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 9px 6px 9px 12px; border-bottom: 1px solid var(--border); }
+.dom-panel-head h2 { margin: 0; font-size: 13px; font-weight: 700; }
+.dom-panel-head-actions { display: flex; gap: 2px; }
+.dom-panel-head-actions .icon-btn { width: 26px; height: 26px; }
+.dom-panel-empty { margin: auto; text-align: center; color: var(--text-muted); padding: 20px; }
+.dom-panel-empty svg { width: 24px; height: 24px; color: var(--text-faint); margin-bottom: 8px; }
+.dom-panel-empty p { margin: 0 0 6px; font-size: 12px; color: var(--text); }
+.dom-panel-empty span { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+
+.dom-ladder { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.dom-side { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.dom-side:first-child { justify-content: flex-end; }
+.dom-empty-side { margin: auto; font-size: 11px; color: var(--text-faint); padding: 10px; text-align: center; }
+.dom-row {
+  position: relative; flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 12px; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.dom-row-bar { position: absolute; top: 0; bottom: 0; right: 0; z-index: 0; }
+.dom-ask .dom-row-bar { background: var(--red-soft); }
+.dom-bid .dom-row-bar { background: var(--green-soft); }
+.dom-row-price { position: relative; z-index: 1; font-weight: 600; }
+.dom-ask .dom-row-price { color: var(--red); }
+.dom-bid .dom-row-price { color: var(--green-bright); }
+.dom-row-size { position: relative; z-index: 1; color: var(--text-muted); }
+.dom-mid {
+  flex: none; text-align: center; padding: 7px 0; font-size: 14px; font-weight: 700; color: var(--text);
+  background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.dom-panel-foot { flex: none; padding: 8px 12px; font-size: 10.5px; color: var(--text-faint); line-height: 1.4; border-top: 1px solid var(--border); }
+
+/* Bottom analysis dock — trade log, equity curve, and (once wired) CVD. */
+.analysis-panel { position: relative; flex: none; background: var(--surface-1); border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+.analysis-panel.collapsed { height: 34px; transition: height var(--ease); }
+.analysis-tabs { flex: none; display: flex; align-items: center; gap: 3px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.analysis-panel.collapsed .analysis-tabs { border-bottom: none; }
+.analysis-panel-toggle {
+  flex: none; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: var(--r-xs); color: var(--text-faint); cursor: pointer;
+  transition: background var(--ease), color var(--ease);
+}
+.analysis-panel-toggle:hover { background: var(--surface-3); color: var(--text); }
+.analysis-panel-toggle svg { width: 14px; height: 14px; }
+.analysis-tab {
+  background: transparent; border: none; color: var(--text-muted);
+  font-size: 12.5px; font-weight: 600; padding: 5px 10px;
+  border-radius: var(--r-xs); cursor: pointer;
+  transition: background var(--ease), color var(--ease);
+}
+.analysis-tab:hover { color: var(--text); background: var(--surface-3); }
+.analysis-tab.active { color: #fff; background: var(--accent); }
+.analysis-body { flex: 1; min-height: 0; overflow: auto; }
+.analysis-empty { color: var(--text-faint); font-size: 12.5px; padding: 30px 20px; text-align: center; }
+.trades-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.trades-table th {
+  position: sticky; top: 0; background: var(--surface-1); text-align: left; color: var(--text-faint);
+  font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 7px 14px; border-bottom: 1px solid var(--border);
+}
+.trades-table td { padding: 6px 14px; border-bottom: 1px solid var(--border); color: var(--text); font-variant-numeric: tabular-nums; }
+.trades-table td.muted { color: var(--text-muted); }
+.trades-table .pos { color: var(--green); }
+.trades-table .neg { color: var(--red); }
+.equity-curve-wrap { height: 100%; padding: 10px 14px; }
+.equity-curve { width: 100%; height: 100%; display: block; }
+.equity-zero { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+.equity-line { stroke-width: 2; }
+.equity-line.pos { stroke: var(--green); }
+.equity-line.neg { stroke: var(--red); }
+.analysis-stats-row {
+  flex: none; display: flex; gap: 22px; padding: 8px 14px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-muted);
+}
+.analysis-stats-row b { color: var(--text); font-weight: 600; margin-left: 5px; }
+.analysis-stats-row .pos { color: var(--green); }
+.analysis-stats-row .neg { color: var(--red); }
+
 .chart-area { position: relative; flex: 1; min-width: 0; background: var(--bg); }
 .chart-inner { position: absolute; inset: 0; z-index: 1; }
+
+/* Price readout pinned to the top-left of the chart: bold symbol + large
+   last price + change on top, a smaller OHLCV row underneath — updates with
+   the crosshair (or the last bar when not hovering). Standard on every
+   serious charting terminal (Webull, TradingView, Bloomberg). */
+.chart-legend {
+  position: absolute; top: 10px; left: 14px; z-index: 2;
+  display: flex; flex-direction: column; gap: 3px;
+  pointer-events: none; user-select: none;
+}
+.legend-top { display: flex; align-items: baseline; gap: 10px; }
+.legend-symbol { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
+.legend-price { font-size: 21px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
+.legend-change { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.legend-ohlc {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.legend-ohlc b { font-weight: 500; color: var(--text); }
+.chart-legend .pos { color: var(--green); }
+.chart-legend .neg { color: var(--red); }
 
 /* Drawing crosshair shown while a draw tool is armed */
 .draw-crosshair line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.55; }
@@ -588,8 +736,15 @@ select.chevron {
 .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes chat-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
+/* Shown while the assistant runs a backend tool (reading backtests, etc.). */
+.chat-tool-note {
+  align-self: flex-start; padding: 8px 12px;
+  font-size: 12px; font-style: italic; color: var(--text-faint);
+  animation: chat-blink 1.6s infinite ease-in-out both;
+}
+
 .chat-input-row { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
-/* Pill input: sparkle icon, text, round send button — one rounded container. */
+/* Flat input row: sparkle icon, text, square send button — one bordered container. */
 .chat-input-box {
   display: flex; align-items: flex-end; gap: 8px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill);
@@ -605,10 +760,114 @@ select.chevron {
 }
 .chat-input:focus { outline: none; border: none; box-shadow: none; }
 .chat-send {
-  flex: none; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff; border: none; border-radius: 50%; cursor: pointer;
+  flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border: none; border-radius: var(--r-xs); cursor: pointer;
   transition: background var(--ease), color var(--ease);
 }
 .chat-send svg { width: 16px; height: 16px; }
 .chat-send:hover { background: var(--accent-hover); }
 .chat-send:disabled { background: var(--surface-4); color: var(--text-faint); cursor: default; }
+
+/* --- Strategy dashboard --- */
+.strategy-dash { overflow: hidden; }
+.dash-scroll { flex: 1; overflow-y: auto; padding: 22px 28px 60px; display: flex; flex-direction: column; gap: 18px; }
+.dash-loading { padding: 40px; color: var(--text-muted); font-size: 13px; display: flex; align-items: center; gap: 12px; }
+
+.dash-breadcrumb { font-size: 12.5px; color: var(--text-faint); display: flex; gap: 8px; align-items: center; }
+.dash-breadcrumb .crumb-link { cursor: pointer; }
+.dash-breadcrumb .crumb-link:hover { color: var(--text-muted); }
+.dash-breadcrumb .crumb-sep { color: var(--text-faint); }
+
+.dash-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.dash-title-row { display: flex; align-items: center; gap: 10px; }
+.dash-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+.badge {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 3px 8px; border-radius: var(--r-xs);
+}
+.badge-active { background: var(--green-soft); color: var(--green-bright); }
+
+.tag {
+  font-size: 11.5px; color: var(--text-muted); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-xs); padding: 3px 9px;
+}
+
+.dash-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.dash-tab {
+  background: transparent; border: none; color: var(--text-muted); font-size: 13px; font-weight: 600;
+  padding: 9px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.dash-tab:hover { color: var(--text); }
+.dash-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.dash-placeholder {
+  color: var(--text-faint); font-size: 13px; padding: 40px 20px; text-align: center;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+}
+.dash-placeholder-inline { color: var(--text-faint); font-size: 12.5px; padding: 24px 10px; text-align: center; }
+
+.stat-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.stat-tile {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 14px 16px;
+}
+.stat-tile-label { font-size: 11px; color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.stat-tile-value { margin-top: 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.stat-tile-value.pos { color: var(--green-bright); }
+.stat-tile-value.neg { color: var(--red); }
+
+.dash-grid-2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
+
+.pos { color: var(--green-bright); }
+.neg { color: var(--red); }
+.muted { color: var(--text-muted); }
+
+.equity-curve-r { width: 100%; height: 220px; display: block; }
+.equity-curve-foot { display: flex; justify-content: space-between; padding: 4px 4px 0; font-size: 11.5px; color: var(--text-faint); }
+.equity-curve-foot .pos, .equity-curve-foot .neg { font-weight: 700; }
+
+.dist-chart { display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 160px; padding: 6px 2px 0; }
+.dist-bar-col { flex: 0 1 56px; display: flex; flex-direction: column; align-items: center; height: 100%; min-width: 0; }
+.dist-bar-track { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+.dist-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 4px; }
+.dist-bar.pos { background: var(--green); }
+.dist-bar.neg { background: var(--red); }
+.dist-bar-label { font-size: 9.5px; color: var(--text-faint); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.dist-stats { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.dist-stats b { font-weight: 700; }
+
+.context-rows { display: flex; flex-direction: column; gap: 10px; }
+.context-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.context-row-label { width: 100px; flex: none; color: var(--text-muted); text-transform: capitalize; }
+.context-row-bar-track { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.context-row-bar { height: 100%; background: var(--accent); border-radius: 3px; }
+.context-row-count { width: 28px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.context-row-pct { width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.monthly-table-wrap { overflow-x: auto; }
+.monthly-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.monthly-table th {
+  color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  font-size: 9.5px; padding: 4px 6px; text-align: center;
+}
+.monthly-table th:first-child { text-align: left; }
+.monthly-year { color: var(--text-muted); font-weight: 600; padding: 4px 6px; }
+.monthly-cell {
+  text-align: center; padding: 6px 4px; border-radius: var(--r-xs); font-variant-numeric: tabular-nums;
+  font-weight: 600; color: #fff;
+}
+.monthly-cell.pos { background: var(--green); }
+.monthly-cell.neg { background: var(--red); }
+.monthly-cell.empty { color: var(--text-faint); background: transparent; font-weight: 400; }
+
+.ai-insights-card { background: linear-gradient(180deg, var(--surface-1), var(--surface-1)); }
+.ai-insights-body { font-size: 13px; color: var(--text); line-height: 1.6; }
+.ai-insights-body p { margin: 0 0 8px; }
+.ai-insights-body p:last-child { margin-bottom: 0; }
+.ai-insights-body.error { color: var(--red); }
+
+@media (max-width: 980px) {
+  .stat-tiles { grid-template-columns: repeat(2, 1fr); }
+  .dash-grid-2 { grid-template-columns: 1fr; }
+}
