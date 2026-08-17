@@ -31,8 +31,20 @@ export default function App() {
       <header className="app-header">
         <button className="home-btn" title={onChart ? 'Back to strategies' : 'Strategies'} onClick={() => navigate('/')}>
           <span className="home-mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 17l5-5 4 4 8-9" />
+            <svg viewBox="0 0 24 24" fill="none">
+              <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <line x1="5" y1="3" x2="5" y2="9" />
+                <line x1="5" y1="16" x2="5" y2="21" />
+                <line x1="12" y1="2" x2="12" y2="7" />
+                <line x1="12" y1="17" x2="12" y2="22" />
+                <line x1="19" y1="6" x2="19" y2="11" />
+                <line x1="19" y1="17" x2="19" y2="20" />
+              </g>
+              <g fill="currentColor">
+                <rect x="3.2" y="9" width="3.6" height="7" rx="1" />
+                <rect x="10.2" y="7" width="3.6" height="10" rx="1" />
+                <rect x="17.2" y="11" width="3.6" height="6" rx="1" />
+              </g>
             </svg>
           </span>
           <span className="brand-name">Stratify</span>

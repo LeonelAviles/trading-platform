@@ -28,21 +28,21 @@ export default function TradeShape({ trade, chart, series, bars, intervalSeconds
   return (
     <g pointerEvents="none" opacity={0.9}>
       {targetPx.y != null && (
-        <rect x={x1} y={Math.min(entry.y, targetPx.y)} width={w} height={Math.abs(targetPx.y - entry.y)} fill="rgba(38,166,154,0.14)" />
+        <rect x={x1} y={Math.min(entry.y, targetPx.y)} width={w} height={Math.abs(targetPx.y - entry.y)} fill="rgba(62,207,110,0.14)" />
       )}
       {stopPx.y != null && (
-        <rect x={x1} y={Math.min(entry.y, stopPx.y)} width={w} height={Math.abs(stopPx.y - entry.y)} fill="rgba(239,83,80,0.14)" />
+        <rect x={x1} y={Math.min(entry.y, stopPx.y)} width={w} height={Math.abs(stopPx.y - entry.y)} fill="rgba(239,68,68,0.14)" />
       )}
-      <line x1={entry.x} y1={entry.y} x2={exit.x} y2={exit.y} stroke={won ? '#26a69a' : '#ef5350'} strokeWidth={1.5} strokeDasharray="5 3" />
+      <line x1={entry.x} y1={entry.y} x2={exit.x} y2={exit.y} stroke={won ? '#3ecf6e' : '#ef4444'} strokeWidth={1.5} strokeDasharray="5 3" />
       {/* entry marker: triangle pointing in trade direction */}
       {trade.direction === 'long' ? (
-        <path d={`M ${entry.x - 5} ${entry.y + 7} L ${entry.x + 5} ${entry.y + 7} L ${entry.x} ${entry.y + 1} Z`} fill="#26a69a" />
+        <path d={`M ${entry.x - 5} ${entry.y + 7} L ${entry.x + 5} ${entry.y + 7} L ${entry.x} ${entry.y + 1} Z`} fill="#3ecf6e" />
       ) : (
-        <path d={`M ${entry.x - 5} ${entry.y - 7} L ${entry.x + 5} ${entry.y - 7} L ${entry.x} ${entry.y - 1} Z`} fill="#ef5350" />
+        <path d={`M ${entry.x - 5} ${entry.y - 7} L ${entry.x + 5} ${entry.y - 7} L ${entry.x} ${entry.y - 1} Z`} fill="#ef4444" />
       )}
       {/* exit marker */}
-      <circle cx={exit.x} cy={exit.y} r={3.5} fill={won ? '#26a69a' : '#ef5350'} stroke="#0e0f14" strokeWidth={1} />
-      <text x={exit.x + 6} y={exit.y + 4} fontSize="10" fontFamily="monospace" fill={won ? '#26a69a' : '#ef5350'}>
+      <circle cx={exit.x} cy={exit.y} r={3.5} fill={won ? '#3ecf6e' : '#ef4444'} stroke="#0a0a0c" strokeWidth={1} />
+      <text x={exit.x + 6} y={exit.y + 4} fontSize="10" fontFamily="monospace" fill={won ? '#3ecf6e' : '#ef4444'}>
         {`${trade.pnl >= 0 ? '+' : ''}${trade.pnl}`}
       </text>
     </g>

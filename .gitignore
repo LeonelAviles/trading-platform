@@ -6,3 +6,13 @@ __pycache__/
 # Backtest job outputs (strategy.json, trades.json, worker.log per run) —
 # regenerable.
 backtests/
+
+# Raw market data dumps (large binary files)
+market-data/
+
+# CSVs derived from market-data/ for the backend to serve — regenerable.
+mbo-data/
+
+# Local Postgres cluster (Postgres.app CLI, backend/.pgdata) — dev-only.
+backend/.pgdata/
+backend/*.log

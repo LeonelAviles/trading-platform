@@ -20,7 +20,7 @@ function volumePoint(b) {
   return {
     time: b.time,
     value: b.volume,
-    color: b.close >= b.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+    color: b.close >= b.open ? 'rgba(62,207,110,0.5)' : 'rgba(239,68,68,0.5)',
   };
 }
 
@@ -87,13 +87,13 @@ export default function CandlestickPage({ symbol }) {
 
   useEffect(() => {
     const chart = createChart(chartDivRef.current, {
-      layout: { background: { color: settings.background }, textColor: '#d1d4dc' },
+      layout: { background: { color: settings.background }, textColor: '#e8e8ea' },
       grid: {
         vertLines: { visible: settings.vertGridVisible, color: settings.gridColor },
         horzLines: { visible: settings.horzGridVisible, color: settings.gridColor },
       },
-      timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2a2e3d', rightOffset: 35 },
-      rightPriceScale: { borderColor: '#2a2e3d' },
+      timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2c2a33', rightOffset: 35 },
+      rightPriceScale: { borderColor: '#2c2a33' },
       crosshair: { mode: CrosshairMode.Normal },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -188,7 +188,7 @@ export default function CandlestickPage({ symbol }) {
           bars.map((b) => ({
             time: b.time,
             value: b.volume,
-            color: b.close >= b.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+            color: b.close >= b.open ? 'rgba(62,207,110,0.5)' : 'rgba(239,68,68,0.5)',
           }))
         );
 
@@ -281,7 +281,7 @@ export default function CandlestickPage({ symbol }) {
     chart.applyOptions({
       crosshair: {
         mode: CrosshairMode.Magnet,
-        vertLine: { color: '#4c8dff', width: 1, style: LineStyle.Solid, labelBackgroundColor: '#4c8dff' },
+        vertLine: { color: 'rgba(0, 0, 0, 0.65)', width: 1, style: LineStyle.Solid, labelBackgroundColor: 'rgba(0, 0, 0, 0.65)' },
         horzLine: { visible: false, labelVisible: false },
       },
     });
@@ -299,8 +299,8 @@ export default function CandlestickPage({ symbol }) {
       chart.applyOptions({
         crosshair: {
           mode: CrosshairMode.Normal,
-          vertLine: { color: '#787b86', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e3d', visible: true, labelVisible: true },
-          horzLine: { color: '#787b86', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2a2e3d', visible: true, labelVisible: true },
+          vertLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33', visible: true, labelVisible: true },
+          horzLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33', visible: true, labelVisible: true },
         },
       });
     };

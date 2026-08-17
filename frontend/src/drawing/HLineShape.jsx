@@ -45,9 +45,9 @@ export default function HLineShape({ shape, chart, series, selected, interactive
       )}
       {selected && canInteract && (
         <>
-          <circle cx={p1.x} cy={p1.y} r={5} fill="#0e0f14" stroke={color} pointerEvents="all" strokeWidth={1.5} style={{ cursor: 'ew-resize' }}
+          <circle cx={p1.x} cy={p1.y} r={5} fill="#0a0a0c" stroke={color} pointerEvents="all" strokeWidth={1.5} style={{ cursor: 'ew-resize' }}
             onPointerDown={h1Drag.onPointerDown} onPointerMove={(e) => h1Drag.onPointerMove(e, setShapes)} onPointerUp={h1Drag.onPointerUp} />
-          <circle cx={p2.x} cy={p2.y} r={5} fill="#0e0f14" stroke={color} pointerEvents="all" strokeWidth={1.5} style={{ cursor: 'ew-resize' }}
+          <circle cx={p2.x} cy={p2.y} r={5} fill="#0a0a0c" stroke={color} pointerEvents="all" strokeWidth={1.5} style={{ cursor: 'ew-resize' }}
             onPointerDown={h2Drag.onPointerDown} onPointerMove={(e) => h2Drag.onPointerMove(e, setShapes)} onPointerUp={h2Drag.onPointerUp} />
         </>
       )}

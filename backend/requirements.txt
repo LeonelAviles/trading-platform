@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 pandas
 nautilus_trader
+sqlalchemy
+alembic
+psycopg[binary]

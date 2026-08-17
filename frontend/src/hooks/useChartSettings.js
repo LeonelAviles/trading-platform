@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 
 export const DEFAULT_SETTINGS = {
-  upColor: '#26a69a', downColor: '#ef5350',
-  borderVisible: true, borderUpColor: '#26a69a', borderDownColor: '#ef5350',
-  wickVisible: true, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-  background: '#0e0f14',
-  vertGridVisible: true, horzGridVisible: true, gridColor: '#1a1d29',
+  upColor: '#3ecf6e', downColor: '#ef4444',
+  borderVisible: true, borderUpColor: '#3ecf6e', borderDownColor: '#ef4444',
+  wickVisible: true, wickUpColor: '#3ecf6e', wickDownColor: '#ef4444',
+  background: '#0a0a0c',
+  vertGridVisible: true, horzGridVisible: true, gridColor: '#17171b',
 };
 
 const KEY = 'chartSettings';
