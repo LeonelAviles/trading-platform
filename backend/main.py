@@ -11,8 +11,9 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+import agent_llm
 import data_store
 import nautilus_runner
 import strategy_spec
@@ -45,7 +46,12 @@ def get_ohlcv(
     start: int | None = Query(None, description="Clip to bars at/after this unix timestamp"),
     end: int | None = Query(None, description="Clip to bars at/before this unix timestamp"),
 ):
-    return data_store.bars_to_records(data_store.get_bars(symbol, interval, start, end))
+    # bars_to_records() already returns plain int/float/dict — skip FastAPI's
+    # default jsonable_encoder() pass (it's a generic recursive encoder built
+    # for arbitrary/pydantic types, and that per-item overhead dominates the
+    # response time once a payload gets into the 100k-row range).
+    records = data_store.bars_to_records(data_store.get_bars(symbol, interval, start, end))
+    return JSONResponse(content=records)
 
 
 @app.get("/api/range")
@@ -116,6 +122,25 @@ def save_strategy(strategy: dict = Body(...)):
     STRATEGIES_DIR.mkdir(exist_ok=True)
     _strategy_file(strategy["id"]).write_text(json.dumps(strategy, indent=2), encoding="utf-8")
     return strategy
+
+
+@app.post("/api/strategies/generate")
+def generate_strategy(body: dict = Body(...)):
+    """Idea -> deterministic strategy, via Claude + agent_tools.create_strategy.
+    400 if ANTHROPIC_API_KEY isn't set (mirrors /api/chat/status's
+    "not configured" pattern) rather than 500ing."""
+    for field in ("name", "symbol", "direction", "prompt"):
+        if not body.get(field):
+            raise HTTPException(400, f"'{field}' is required")
+    try:
+        return agent_llm.generate_strategy(
+            name=body["name"], symbol=body["symbol"], direction=body["direction"],
+            prompt=body["prompt"], interval=body.get("interval", "1min"),
+        )
+    except agent_llm.LLMNotConfigured as e:
+        raise HTTPException(400, f"AI strategy generation not configured: {e}")
+    except Exception as e:
+        raise HTTPException(502, f"strategy generation failed: {e}")
 
 
 @app.delete("/api/strategies/{strategy_id}")

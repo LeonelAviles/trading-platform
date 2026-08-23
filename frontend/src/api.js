@@ -49,6 +49,17 @@ export async function deleteStrategy(id) {
   return json(await fetch(`${BASE}/strategies/${id}`, { method: 'DELETE' }));
 }
 
+// Idea -> deterministic strategy (entry conditions, stop, target) via the
+// agent. Returns { strategy, explanation } for direction long/short, or
+// { directionGroup, long, short, explanation } for direction "both".
+export async function generateStrategy(name, symbol, direction, prompt, interval) {
+  return json(await fetch(`${BASE}/strategies/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, symbol, direction, prompt, interval }),
+  }));
+}
+
 // --- backtests ---
 
 export async function fetchEngineStatus() {

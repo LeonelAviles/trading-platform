@@ -641,6 +641,38 @@ select.chevron {
 .dir-toggle button { background: transparent; border: none; color: var(--text-muted); font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: var(--r-xs); cursor: pointer; transition: background var(--ease), color var(--ease); }
 .dir-toggle button.active-long { background: var(--green-soft); color: var(--green-bright); }
 .dir-toggle button.active-short { background: var(--red-soft); color: var(--red); }
+.dir-toggle button.active-both { background: var(--accent-soft); color: var(--accent); }
+
+.idea-textarea {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 8px 10px; font-size: 13px; font-family: inherit;
+  resize: vertical; min-height: 60px;
+  transition: border-color var(--ease), box-shadow var(--ease), background var(--ease);
+}
+.idea-textarea:hover { border-color: var(--border-strong); }
+.idea-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.idea-textarea::placeholder { color: var(--text-faint); }
+
+.gen-btn { margin-top: 12px; }
+.gen-result {
+  margin-top: 12px; font-size: 13px; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; line-height: 1.5;
+}
+.gen-result p { margin: 0 0 6px; }
+.gen-result p:last-child { margin-bottom: 0; }
+.gen-note { color: var(--text-muted); }
+.gen-hint { color: var(--text-faint); font-size: 12px; }
+
+.compare-table-wrap { margin: 10px 0; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.compare-table th, .compare-table td {
+  text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--border);
+}
+.compare-table th:first-child, .compare-table td:first-child { text-align: left; color: var(--text-muted); }
+.compare-table thead th { font-weight: 700; color: var(--text); }
+.compare-table .compare-winner { color: var(--accent); font-weight: 700; }
+.compare-warnings { margin: 8px 0 0; padding: 0; list-style: none; color: var(--warn); font-size: 12px; }
+.compare-verdict { margin: 8px 0 0; font-weight: 600; }
 
 .cond-row {
   display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;

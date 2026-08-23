@@ -18,6 +18,7 @@ Trade record schema (shared by the worker and demo):
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -52,7 +53,14 @@ def _job_path(job_id: str) -> Path:
 def _write_job(job: dict):
     path = _job_path(job["id"])
     path.mkdir(parents=True, exist_ok=True)
-    (path / "job.json").write_text(json.dumps(job, indent=2))
+    # Atomic write: a poller (agent_tools.run_backtest polls every 0.5s) can
+    # otherwise read job.json mid-write and hit an empty/truncated file,
+    # since write_text() truncates before writing — os.replace() is atomic
+    # on the same filesystem, so readers only ever see a complete file.
+    target = path / "job.json"
+    tmp = path / "job.json.tmp"
+    tmp.write_text(json.dumps(job, indent=2))
+    os.replace(tmp, target)
 
 
 def _read_job(job_id: str) -> dict | None:

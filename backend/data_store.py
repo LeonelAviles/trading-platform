@@ -225,24 +225,28 @@ def get_bars(symbol: str, interval: str, start: int | None = None, end: int | No
 
 
 def list_symbols() -> list[str]:
+    """Only continuous tickers (e.g. "ES1!") are surfaced — individual
+    dated contract months and calendar spreads (ESH0, ESM6-ESU6, ...) are
+    just the raw material continuous series are built from, not something
+    a user picks directly."""
     symbols: set[str] = set()
     for kind, pattern in (("mbo", _tick_pattern()), ("ohlcv", "*.ohlcv-1m.csv")):
         try:
             symbols.update(_read_all(kind, pattern)["symbol"].unique())
         except HTTPException:
             pass
-    return sorted(symbols)
+    return sorted(s for s in symbols if s.endswith("!"))
 
 
 def bars_to_records(bars: pd.DataFrame) -> list[dict]:
+    """Row-wise `.iterrows()` reconstructs a full pandas Series per row —
+    with 100k+ bars that per-row object overhead dominates the request. All
+    five fields come out as flat numpy arrays instead, then zip() just
+    walks them in parallel with no per-row Series/label lookups."""
+    times = bars.index.values.astype("int64") // 1_000_000_000
+    o, h, l, c = (bars[col].to_numpy().round(4) for col in ("open", "high", "low", "close"))
+    v = bars["volume"].to_numpy(dtype=float)
     return [
-        {
-            "time": int(ts.timestamp()),
-            "open": round(row.open, 4),
-            "high": round(row.high, 4),
-            "low": round(row.low, 4),
-            "close": round(row.close, 4),
-            "volume": float(row.volume),
-        }
-        for ts, row in bars.iterrows()
+        {"time": int(t), "open": float(o_), "high": float(h_), "low": float(l_), "close": float(c_), "volume": float(v_)}
+        for t, o_, h_, l_, c_, v_ in zip(times, o, h, l, c, v)
     ]

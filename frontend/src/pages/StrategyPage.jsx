@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  fetchStrategies, saveStrategy, deleteStrategy,
-  fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest,
+  fetchStrategies, saveStrategy, deleteStrategy, generateStrategy,
+  fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest, fetchSymbols,
 } from '../api';
 import { CONDITION_DEFS, STOP_TYPES, TARGET_TYPES } from '../strategyDefs';
 
@@ -18,6 +18,62 @@ function blankStrategy(symbol) {
     session: { start: '13:30', end: '19:55' },
     sizing: { type: 'percent_equity', value: 95 },
   };
+}
+
+// The backend only includes session/sizing/interval when explicitly given
+// (agent-generated strategies often omit them, relying on the worker's own
+// defaults) — but the form always reads draft.session.start etc, so any
+// strategy loaded from outside this component needs those filled in first.
+function normalizeStrategy(s) {
+  return {
+    ...s,
+    interval: s.interval || '1min',
+    session: s.session || { start: '13:30', end: '19:55' },
+    sizing: s.sizing || { type: 'percent_equity', value: 95 },
+  };
+}
+
+const COMPARISON_METRICS = [
+  ['trades', 'Trades'],
+  ['winRate', 'Win rate (%)'],
+  ['profitFactor', 'Profit factor'],
+  ['expectancyR', 'Expectancy (R)'],
+  ['netPnl', 'Net P&L ($)'],
+  ['maxDrawdown', 'Max drawdown ($)'],
+  ['sharpe', 'Sharpe'],
+  ['sqn', 'SQN'],
+];
+
+function ComparisonTable({ comparison }) {
+  const { a, b, metrics, winner, verdict, warnings } = comparison;
+  return (
+    <div className="compare-table-wrap">
+      <table className="compare-table">
+        <thead>
+          <tr>
+            <th />
+            <th className={winner === 'a' ? 'compare-winner' : ''}>{a.strategyName}{winner === 'a' ? ' ✓' : ''}</th>
+            <th className={winner === 'b' ? 'compare-winner' : ''}>{b.strategyName}{winner === 'b' ? ' ✓' : ''}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {COMPARISON_METRICS.map(([key, label]) => (
+            <tr key={key}>
+              <td>{label}</td>
+              <td className={winner === 'a' ? 'compare-winner' : ''}>{metrics[key]?.a ?? '—'}</td>
+              <td className={winner === 'b' ? 'compare-winner' : ''}>{metrics[key]?.b ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {warnings?.length > 0 && (
+        <ul className="compare-warnings">
+          {warnings.map((w, i) => <li key={i}>⚠ {w}</li>)}
+        </ul>
+      )}
+      <p className="compare-verdict">{verdict}</p>
+    </div>
+  );
 }
 
 function ParamInputs({ obj, defs, onChange }) {
@@ -42,7 +98,13 @@ export default function StrategyPage({ symbol, setSymbol }) {
   const navigate = useNavigate();
   const [strategies, setStrategies] = useState([]);
   const [draft, setDraft] = useState(() => blankStrategy(symbol));
+  const [symbols, setSymbols] = useState([]);
   const [engineStatus, setEngineStatus] = useState(null);
+  const [idea, setIdea] = useState('');
+  const [genDirection, setGenDirection] = useState('long');
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState('');
+  const [genResult, setGenResult] = useState(null); // { explanation, note? }
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -61,11 +123,22 @@ export default function StrategyPage({ symbol, setSymbol }) {
   useEffect(() => {
     refresh();
     fetchEngineStatus().then(setEngineStatus).catch(() => setEngineStatus(null));
+    fetchSymbols().then(setSymbols).catch(() => setSymbols([]));
     return () => clearInterval(pollRef.current);
   }, [refresh]);
 
+  // A never-saved draft's default symbol can predate the symbols fetch
+  // resolving (or just be the 'MSFT' fallback) — snap it to a real one once
+  // we know what's actually available. Never touches a loaded/edited draft.
+  useEffect(() => {
+    if (!draft.id && symbols.length && !symbols.includes(draft.symbol)) {
+      setDraft((d) => ({ ...d, symbol: symbols[0] }));
+    }
+  }, [symbols, draft.id, draft.symbol]);
+
   function edit(strategy) {
-    setDraft(JSON.parse(JSON.stringify(strategy)));
+    setDraft(normalizeStrategy(JSON.parse(JSON.stringify(strategy))));
+    setGenDirection(strategy.direction === 'short' ? 'short' : 'long');
     setError('');
     setJob(null);
   }
@@ -99,6 +172,45 @@ export default function StrategyPage({ symbol, setSymbol }) {
       refresh();
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function handleGenerate() {
+    setGenError('');
+    setGenResult(null);
+    setGenerating(true);
+    try {
+      const name = draft.name || 'Untitled strategy';
+      const result = await generateStrategy(name, draft.symbol, genDirection, idea, draft.interval);
+      if (result.variants) {
+        // The idea named multiple approaches — each was built and backtested,
+        // then compared. Load whichever one compare_backtests picked (if it
+        // could pick one) into the editor; either way, show the full
+        // comparison so the trader can see (and override) the call.
+        const { comparison, variants } = result;
+        const winnerJobId = comparison.winner ? comparison[comparison.winner].jobId : null;
+        const winnerVariant = variants.find((v) => v.backtest?.id === winnerJobId) || variants[0];
+        setDraft(normalizeStrategy(winnerVariant));
+        setGenResult({ explanation: result.explanation, comparison, variants });
+        refresh();
+        return;
+      }
+      if (result.strategy) {
+        setDraft(normalizeStrategy(result.strategy));
+      } else if (result.long) {
+        // "both": load the long side into the editor, the short sibling
+        // was saved too — surface it as a note rather than a second editor.
+        setDraft(normalizeStrategy(result.long));
+        setGenResult({ explanation: result.explanation, note: `Also created "${result.short.name}" for the short side.` });
+        refresh();
+        return;
+      }
+      setGenResult({ explanation: result.explanation });
+      refresh();
+    } catch (e) {
+      setGenError(e.message);
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -218,15 +330,45 @@ export default function StrategyPage({ symbol, setSymbol }) {
                 <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Opening range breakout" />
               </label>
               <label className="param-field">Symbol
-                <input value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value.toUpperCase() })} />
+                <select className="chevron" value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })}>
+                  {!symbols.includes(draft.symbol) && <option value={draft.symbol}>{draft.symbol}</option>}
+                  {symbols.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-head"><h2>Describe your strategy</h2><span className="card-hint">The agent builds the entry/exit rules below from your idea</span></div>
+            <div className="form-grid">
+              <label className="param-field grow">Idea
+                <textarea
+                  className="idea-textarea" rows={3} value={idea} onChange={(e) => setIdea(e.target.value)}
+                  placeholder="e.g. Buy when price breaks the 20-bar high with RSI above 60, tight ATR stop, 2R target"
+                />
               </label>
               <label className="param-field">Direction
                 <div className="dir-toggle">
-                  <button className={draft.direction === 'long' ? 'active-long' : ''} onClick={() => setDraft({ ...draft, direction: 'long' })}>Long</button>
-                  <button className={draft.direction === 'short' ? 'active-short' : ''} onClick={() => setDraft({ ...draft, direction: 'short' })}>Short</button>
+                  <button className={genDirection === 'long' ? 'active-long' : ''} onClick={() => { setGenDirection('long'); setDraft((d) => ({ ...d, direction: 'long' })); }}>Long</button>
+                  <button className={genDirection === 'short' ? 'active-short' : ''} onClick={() => { setGenDirection('short'); setDraft((d) => ({ ...d, direction: 'short' })); }}>Short</button>
+                  <button className={genDirection === 'both' ? 'active-both' : ''} onClick={() => setGenDirection('both')}>Both</button>
                 </div>
               </label>
             </div>
+            <button className="btn btn-primary gen-btn" onClick={handleGenerate} disabled={generating || !idea.trim()}>
+              {generating ? 'Generating… (comparing multiple approaches can take a minute)' : 'Generate strategy'}
+            </button>
+            {genError && <div className="form-error">{genError}</div>}
+            {genResult && (
+              <div className="gen-result">
+                {genResult.explanation && <p>{genResult.explanation}</p>}
+                {genResult.note && <p className="gen-note">{genResult.note}</p>}
+                {genResult.comparison && <ComparisonTable comparison={genResult.comparison} />}
+                <p className="gen-hint">
+                  {genResult.comparison ? 'The winning approach is loaded below — review, then Save.' : 'Review the rules below, then Save.'}
+                </p>
+              </div>
+            )}
           </section>
 
           <section className="card">
