@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { fetchOHLCV, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
+import { fetchOHLCV, fetchRange, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import DrawToolbar from '../components/DrawToolbar';
 import DrawingOverlay from '../drawing/DrawingOverlay';
@@ -15,6 +15,16 @@ import AnalysisPanel from '../components/AnalysisPanel';
 import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
+
+// Bars requested for the first paint. Aggregating every tick in the store
+// takes ~16s regardless of how few bars come back, while a window this size
+// returns in well under a second — so the chart draws immediately and the
+// full history is swapped in behind it (see the loader below).
+const FIRST_PAINT_BARS = 1500;
+
+function candlePoint(b) {
+  return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+}
 
 function volumePoint(b) {
   return {
@@ -79,8 +89,12 @@ export default function CandlestickPage({ symbol }) {
   // that switching timeframe can re-anchor them through real time instead of
   // leaving their logical-index fields pointing at unrelated bars.
   const barsRef = useRef([]);
-  const intervalRef = useRef(interval);
-  const symbolRef = useRef(symbol);
+  // What the current shapes' logical-index fields are anchored to. Tracked
+  // separately from barsRef because the loader below paints a partial window
+  // first: barsRef is "what the chart is showing right now", while this is
+  // "the dataset the shapes were last remapped against", which only advances
+  // once a full load completes.
+  const anchorRef = useRef({ bars: [], interval, symbol });
 
   const [, setTick] = useState(0);
   const forceUpdate = useCallback(() => setTick((n) => n + 1), []);
@@ -176,43 +190,77 @@ export default function CandlestickPage({ symbol }) {
     });
   }, [settings]);
 
+  // Two-phase load: a recent window first so the chart is usable straight
+  // away, then the full history swapped in underneath the same view. Asking
+  // for everything up front meant staring at an empty chart for ~30s.
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
+    // Read the shape anchors once, before either phase moves them.
+    const anchor = anchorRef.current;
     setStatus('Loading…');
-    fetchOHLCV(symbol, interval)
-      .then((bars) => {
-        if (cancelled) return;
-        candleSeriesRef.current.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-        volumeSeriesRef.current.setData(
-          bars.map((b) => ({
-            time: b.time,
-            value: b.volume,
-            color: b.close >= b.open ? 'rgba(62,207,110,0.5)' : 'rgba(239,68,68,0.5)',
-          }))
-        );
 
-        if (symbolRef.current === symbol && intervalRef.current !== interval && barsRef.current.length && bars.length) {
-          const oldBars = barsRef.current, oldSeconds = intervalToSeconds(intervalRef.current);
-          const newSeconds = intervalToSeconds(interval);
-          setShapes((prev) => prev.map((s) => remapShapeToInterval(s, oldBars, oldSeconds, bars, newSeconds)));
+    const paint = (bars) => {
+      candleSeriesRef.current.setData(bars.map(candlePoint));
+      volumeSeriesRef.current.setData(bars.map(volumePoint));
+      barsRef.current = bars;
+    };
+
+    // Re-anchor drawings through real time when the timeframe changed. Runs
+    // only against the complete dataset — remapping onto a partial window
+    // would strand every shape that falls outside it.
+    const reanchor = (bars) => {
+      if (anchor.symbol === symbol && anchor.interval !== interval && anchor.bars.length && bars.length) {
+        const oldSeconds = intervalToSeconds(anchor.interval);
+        const newSeconds = intervalToSeconds(interval);
+        setShapes((prev) => prev.map((s) => remapShapeToInterval(s, anchor.bars, oldSeconds, bars, newSeconds)));
+      }
+      anchorRef.current = { bars, interval, symbol };
+    };
+
+    (async () => {
+      try {
+        const { start, end } = await fetchRange(symbol);
+        if (cancelled) return;
+
+        // Phase 1 — the tail of the series, if that's meaningfully less than
+        // all of it.
+        const windowStart = end - FIRST_PAINT_BARS * intervalToSeconds(interval);
+        const windowed = windowStart > start;
+        if (windowed) {
+          const head = await fetchOHLCV(symbol, interval, windowStart);
+          if (cancelled) return;
+          if (head.length) {
+            paint(head);
+            chartRef.current.timeScale().fitContent();
+            setStatus(`${head.length} bars — loading history…`);
+            forceUpdate();
+          }
         }
-        barsRef.current = bars;
-        intervalRef.current = interval;
-        symbolRef.current = symbol;
-        chartRef.current.timeScale().fitContent();
+
+        // Phase 2 — everything. Restoring the visible *time* range keeps the
+        // viewport where the user left it; phase 1's bars are a suffix of
+        // these and carry identical timestamps, so the same range still
+        // frames the same candles.
+        const bars = await fetchOHLCV(symbol, interval);
+        if (cancelled) return;
+        const view = windowed ? chartRef.current.timeScale().getVisibleRange() : null;
+        paint(bars);
+        if (view) chartRef.current.timeScale().setVisibleRange(view);
+        else chartRef.current.timeScale().fitContent();
+        reanchor(bars);
         setStatus(`${bars.length} bars`);
         forceUpdate();
-      })
-      .catch(() => {
-        if (!cancelled) {
-          candleSeriesRef.current.setData([]);
-          volumeSeriesRef.current.setData([]);
-          setStatus('No data for this interval');
-        }
-      });
+      } catch {
+        if (cancelled) return;
+        candleSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+        setStatus('No data for this interval');
+      }
+    })();
+
     return () => { cancelled = true; };
-  }, [symbol, interval, forceUpdate]);
+  }, [symbol, interval, forceUpdate, setShapes]);
 
   // CVD (cumulative volume delta) for the analysis panel's CVD tab — fetched
   // independently so a failure here (e.g. a symbol with no MBO side data)

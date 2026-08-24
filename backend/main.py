@@ -56,13 +56,17 @@ def get_ohlcv(
 
 @app.get("/api/range")
 def get_range(symbol: str = Query(...)):
-    """First/last available bar time — lets the UI bound replay selection."""
-    bars = data_store.get_bars(symbol, "1min")
-    return {
-        "start": int(bars.index[0].timestamp()),
-        "end": int(bars.index[-1].timestamp()),
-        "bars1min": len(bars),
-    }
+    """First/last available bar time — lets the chart size its initial
+    request, and bounds replay selection.
+
+    Answered from min/max timestamps, not by building the 1-minute series:
+    this is on the critical path of the first paint, and aggregating every
+    tick just to read its two endpoints cost ~16s. The old `bars1min` count
+    is gone with it — nothing consumed it, and it was the one field that
+    could not be produced without the full aggregate.
+    """
+    start, end = data_store.data_range(symbol)
+    return {"start": start, "end": end}
 
 
 @app.get("/api/cvd")

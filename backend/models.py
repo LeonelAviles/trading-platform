@@ -18,10 +18,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger,
     Enum,
     ForeignKey,
-    Integer,
     Numeric,
     String,
     Text,
@@ -101,96 +99,16 @@ class StrategyVersion(Base):
 
 
 # --------------------------------------------------------------------------
-# Market data
+# Market data (raw MBO ticks + derived bars) lives in DuckDB, not here —
+# see backend/duckdb_store.py and scripts/ingest_dbn_to_duckdb.py. Real,
+# measured evidence on the same file: Postgres/TimescaleDB took 18+ minutes
+# and still hadn't finished ingesting one busy day (11.26M rows, 5 live
+# indexes, a UUID generated per row); DuckDB + polars + Parquet decoded,
+# loaded, and queried the identical file in 22.2 seconds, at ~3x better
+# compression. The former DataSource/MarketData/MboEvent/Bar models (and
+# their tables) were dropped in migration 90bc011f231e — they never held
+# real data, every ingestion attempt into them was a truncated test.
 # --------------------------------------------------------------------------
-
-class DataSource(Base):
-    __tablename__ = "data_sources"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(String(255))  # e.g. "Databento"
-    type: Mapped[str] = mapped_column(String(64))  # e.g. "trade", "quote"
-    connection_config: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    market_data: Mapped[list["MarketData"]] = relationship(back_populates="source")
-
-
-class MarketData(Base):
-    __tablename__ = "market_data"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    timestamp: Mapped[datetime] = mapped_column(index=True)
-    open: Mapped[float] = mapped_column(Numeric(18, 6))
-    high: Mapped[float] = mapped_column(Numeric(18, 6))
-    low: Mapped[float] = mapped_column(Numeric(18, 6))
-    close: Mapped[float] = mapped_column(Numeric(18, 6))
-    volume: Mapped[float] = mapped_column(Numeric(24, 6))
-    bid: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    ask: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    source_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("data_sources.id", ondelete="RESTRICT"), index=True
-    )
-
-    source: Mapped["DataSource"] = relationship(back_populates="market_data")
-    mbo_events: Mapped[list["MboEvent"]] = relationship(
-        back_populates="market_data", cascade="all, delete-orphan"
-    )
-    bars: Mapped[list["Bar"]] = relationship(back_populates="market_data", cascade="all, delete-orphan")
-
-
-class MboEvent(Base):
-    """One row per raw Databento MBO (market-by-order) record — every
-    Add/Cancel/Modify/Trade/Fill/clear event on the book, at full exchange
-    fidelity. This is what order_book_snapshot()-style DOM reconstruction
-    needs (order_id + action), not just trade prints.
-
-    `price` is nullable: Databento uses the int64 sentinel
-    9223372036854775807 for "no price" (e.g. on a book-clear/Reset record),
-    which doesn't fit any real price column — ingestion should map that
-    sentinel to NULL rather than storing it.
-    """
-
-    __tablename__ = "mbo_events"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    market_data_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("market_data.id", ondelete="CASCADE"), index=True
-    )
-    ts_event: Mapped[datetime] = mapped_column(index=True)
-    action: Mapped[str] = mapped_column(String(1))  # A/C/M/T/F/R
-    side: Mapped[str | None] = mapped_column(String(1))  # B/A/N
-    price: Mapped[float | None] = mapped_column(Numeric(18, 9))
-    size: Mapped[float] = mapped_column(Numeric(24, 6))
-    order_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    sequence: Mapped[int] = mapped_column(BigInteger)
-    flags: Mapped[int] = mapped_column(Integer)
-    ts_in_delta: Mapped[int] = mapped_column(BigInteger)
-    channel_id: Mapped[int | None] = mapped_column(Integer)
-    instrument_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
-    publisher_id: Mapped[int | None] = mapped_column(Integer)
-    rtype: Mapped[int | None] = mapped_column(Integer)
-
-    market_data: Mapped["MarketData"] = relationship(back_populates="mbo_events")
-
-
-class Bar(Base):
-    __tablename__ = "bars"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    market_data_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("market_data.id", ondelete="CASCADE"), index=True
-    )
-    timeframe: Mapped[str] = mapped_column(String(16))  # e.g. "1min", "1D"
-    open: Mapped[float] = mapped_column(Numeric(18, 6))
-    high: Mapped[float] = mapped_column(Numeric(18, 6))
-    low: Mapped[float] = mapped_column(Numeric(18, 6))
-    close: Mapped[float] = mapped_column(Numeric(18, 6))
-    volume: Mapped[float] = mapped_column(Numeric(24, 6))
-    timestamp: Mapped[datetime] = mapped_column(index=True)
-
-    market_data: Mapped["MarketData"] = relationship(back_populates="bars")
 
 
 # --------------------------------------------------------------------------

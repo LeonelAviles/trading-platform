@@ -14,10 +14,16 @@ export async function fetchSymbols() {
   return symbols;
 }
 
-export async function fetchOHLCV(symbol, interval) {
-  return json(await fetch(`${BASE}/ohlcv?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`));
+// `start`/`end` (unix seconds) are pushed all the way down into the SQL that
+// aggregates the ticks, so a bounded request is genuinely cheaper rather than
+// just smaller — see the chart's two-phase load in CandlestickPage.
+export async function fetchOHLCV(symbol, interval, start, end) {
+  const bounds = (start != null ? `&start=${Math.floor(start)}` : '')
+    + (end != null ? `&end=${Math.ceil(end)}` : '');
+  return json(await fetch(`${BASE}/ohlcv?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}${bounds}`));
 }
 
+// { start, end } unix seconds bounding the symbol's available data.
 export async function fetchRange(symbol) {
   return json(await fetch(`${BASE}/range?symbol=${encodeURIComponent(symbol)}`));
 }
