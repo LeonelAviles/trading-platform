@@ -58,11 +58,11 @@ export async function deleteStrategy(id) {
 // Idea -> deterministic strategy (entry conditions, stop, target) via the
 // agent. Returns { strategy, explanation } for direction long/short, or
 // { directionGroup, long, short, explanation } for direction "both".
-export async function generateStrategy(name, symbol, direction, prompt, interval) {
+export async function generateStrategy(name, symbol, direction, prompt, interval, risk) {
   return json(await fetch(`${BASE}/strategies/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, symbol, direction, prompt, interval }),
+    body: JSON.stringify({ name, symbol, direction, prompt, interval, risk }),
   }));
 }
 

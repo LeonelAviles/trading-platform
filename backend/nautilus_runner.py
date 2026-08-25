@@ -33,6 +33,11 @@ BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
 JOBS_DIR = REPO_ROOT / "backtests"
 WORKER = BACKEND_DIR / "nautilus_backtest.py"
+# The simulated account the worker funds every backtest with — kept here (not
+# in nautilus_backtest, which can't be imported without nautilus_trader
+# installed) so percentage returns can be computed from a job's trades alone.
+# Must match nautilus_backtest.py's starting_balances.
+STARTING_EQUITY = 100_000.0
 
 _jobs_lock = threading.Lock()
 _live_threads: dict[str, threading.Thread] = {}

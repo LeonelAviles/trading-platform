@@ -244,6 +244,24 @@ _SCHEMAS = {
             }
         }
     },
+    "trading_get_weekly_performance": {
+        "type": "function",
+        "function": {
+            "name": "trading_get_weekly_performance",
+            "description": "Week-by-week returns for a backtest, scored against the goal: return between 2% and 5% in the MAJORITY of weeks traded, and end up positive overall. This is the pass/fail check for a strategy \u2014 call it on every backtest you want to judge, and use `meetsGoal`/`verdict` to decide whether to keep tuning or stop. Returns are percentages of account equity (starting at 100k, compounding week to week), and only weeks that actually traded are counted. Weeks above 5% count as meeting the goal \u2014 overshooting the band is not a failure \u2014 but they're reported separately as `weeksAboveBand` because outsized weeks are usually where the risk is.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "job_id"
+                ]
+            }
+        }
+    },
     "trading_get_trade_features": {
         "type": "function",
         "function": {

@@ -226,6 +226,8 @@ def run(strategy_path, out_path):
     engine = BacktestEngine(config=BacktestEngineConfig(trader_id="BACKTEST-001", logging=LoggingConfig(log_level="ERROR")))
     engine.add_venue(
         venue=Venue("SIM"), oms_type=OmsType.NETTING, account_type=AccountType.MARGIN,
+        # 100k — mirrored as nautilus_runner.STARTING_EQUITY, which is what
+        # weekly/percentage performance is measured against. Keep them in sync.
         base_currency=USD, starting_balances=[Money(100_000, USD)],
     )
     instrument = TestInstrumentProvider.equity(symbol=symbol, venue="SIM")

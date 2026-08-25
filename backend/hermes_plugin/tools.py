@@ -1,8 +1,8 @@
 """Tool handlers — one thin closure per tool, all routed through client.
 
 Every handler has the same body, so they're built by a factory rather than
-written out 15 times. The only per-tool difference is the name, and the
-schemas module already knows all 15.
+written out 16 times. The only per-tool difference is the name, and the
+schemas module already knows all 16.
 """
 
 from __future__ import annotations

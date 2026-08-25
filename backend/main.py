@@ -141,6 +141,7 @@ def generate_strategy(body: dict = Body(...)):
         return agent_llm.generate_strategy(
             name=body["name"], symbol=body["symbol"], direction=body["direction"],
             prompt=body["prompt"], interval=body.get("interval", "1min"),
+            risk=body.get("risk"),
         )
     except agent_llm.LLMNotConfigured as e:
         raise HTTPException(400, f"AI strategy generation not configured: {e}")

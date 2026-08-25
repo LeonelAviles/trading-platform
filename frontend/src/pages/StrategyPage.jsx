@@ -4,14 +4,16 @@ import {
   fetchStrategies, saveStrategy, deleteStrategy, generateStrategy,
   fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest, fetchSymbols,
 } from '../api';
-import { CONDITION_DEFS, STOP_TYPES, TARGET_TYPES } from '../strategyDefs';
+import { describeCondition, describeStop, describeTarget } from '../strategyDefs';
 
 function blankStrategy(symbol) {
   return {
     name: '',
+    description: '',
     symbol: symbol || 'MSFT',
     interval: '1min',
     direction: 'long',
+    riskPerTradePercent: 1,
     conditions: [{ type: 'breaks_high', lookback: 20 }],
     stop: { type: 'percent', value: 0.5 },
     target: { type: 'rr', value: 2 },
@@ -27,6 +29,8 @@ function blankStrategy(symbol) {
 function normalizeStrategy(s) {
   return {
     ...s,
+    description: s.description || '',
+    riskPerTradePercent: s.riskPerTradePercent ?? 1,
     interval: s.interval || '1min',
     session: s.session || { start: '13:30', end: '19:55' },
     sizing: s.sizing || { type: 'percent_equity', value: 95 },
@@ -76,22 +80,58 @@ function ComparisonTable({ comparison }) {
   );
 }
 
-function ParamInputs({ obj, defs, onChange }) {
-  return defs.filter((p) => !p.hidden).map((p) => (
-    <label key={p.name} className="param-field">
-      {p.label}
-      {p.options ? (
-        <select value={obj[p.name] ?? p.def} onChange={(e) => onChange({ ...obj, [p.name]: e.target.value })}>
-          {p.options.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      ) : (
-        <input
-          type="number" step="any" value={obj[p.name] ?? p.def}
-          onChange={(e) => onChange({ ...obj, [p.name]: e.target.value === '' ? '' : Number(e.target.value) })}
-        />
+function GoalVerdict({ goal }) {
+  // The trader's bar: 2-5% in the majority of weeks traded, positive overall.
+  // Backend-computed from the champion's backtest, not the agent's summary of it.
+  const { meetsGoal, verdict, weeksTraded, weeksAtOrAboveTarget, positiveWeeks, netReturnPct, warnings } = goal;
+  return (
+    <div className={`goal-verdict ${meetsGoal ? 'goal-met' : 'goal-missed'}`}>
+      <div className="goal-headline">
+        {meetsGoal ? '✓ Meets the goal' : '✗ Does not meet the goal'} — {verdict}
+      </div>
+      <div className="goal-numbers">
+        {weeksAtOrAboveTarget}/{weeksTraded} weeks at 2%+ · {positiveWeeks}/{weeksTraded} weeks positive · {netReturnPct}% overall
+      </div>
+      {warnings?.length > 0 && (
+        <ul className="compare-warnings">{warnings.map((w, i) => <li key={i}>⚠ {w}</li>)}</ul>
       )}
-    </label>
-  ));
+    </div>
+  );
+}
+
+function RunTable({ label, rows, championId, showHypothesis }) {
+  // Every strategy the run actually built and backtested — the Phase 1
+  // candidates, or the Phase 2 one-variable experiments. compare_backtests is
+  // pairwise, so the comparison table alone never shows all of them.
+  return (
+    <div className="compare-table-wrap">
+      <div className="derived-label">{label}</div>
+      <table className="compare-table">
+        <thead>
+          <tr>
+            <th>{showHypothesis ? 'Experiment' : 'Approach'}</th>
+            {showHypothesis && <th className="hypothesis-col">Variable changed</th>}
+            <th>Trades</th><th>Win rate</th><th>Net P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const sum = r.backtest?.summary;
+            const won = r.id === championId;
+            return (
+              <tr key={r.id} className={won ? 'compare-winner' : ''}>
+                <td>{r.name}{won ? ' ✓' : ''}</td>
+                {showHypothesis && <td className="hypothesis-col">{r.rationale || '—'}</td>}
+                <td>{sum ? sum.trades : '—'}</td>
+                <td>{sum ? `${sum.winRate}%` : '—'}</td>
+                <td>{sum ? sum.totalPnl : '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export default function StrategyPage({ symbol, setSymbol }) {
@@ -100,11 +140,10 @@ export default function StrategyPage({ symbol, setSymbol }) {
   const [draft, setDraft] = useState(() => blankStrategy(symbol));
   const [symbols, setSymbols] = useState([]);
   const [engineStatus, setEngineStatus] = useState(null);
-  const [idea, setIdea] = useState('');
   const [genDirection, setGenDirection] = useState('long');
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState('');
-  const [genResult, setGenResult] = useState(null); // { explanation, note? }
+  const [genResult, setGenResult] = useState(null); // { explanation, championId, goal?, variants?, experiments?, comparison?, note? }
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -143,27 +182,6 @@ export default function StrategyPage({ symbol, setSymbol }) {
     setJob(null);
   }
 
-  function setCondition(i, next) {
-    setDraft((d) => ({ ...d, conditions: d.conditions.map((c, j) => (j === i ? next : c)) }));
-  }
-
-  function setConditionType(i, type) {
-    const cond = { type };
-    for (const p of CONDITION_DEFS[type].params) cond[p.name] = p.def;
-    setCondition(i, cond);
-  }
-
-  function setExit(key, patch, defs) {
-    setDraft((d) => {
-      let next = { ...d[key], ...patch };
-      if (patch.type) {
-        next = { type: patch.type };
-        for (const p of defs.find((t) => t.value === patch.type).params) next[p.name] = p.def;
-      }
-      return { ...d, [key]: next };
-    });
-  }
-
   async function handleSave() {
     setError('');
     try {
@@ -181,31 +199,28 @@ export default function StrategyPage({ symbol, setSymbol }) {
     setGenerating(true);
     try {
       const name = draft.name || 'Untitled strategy';
-      const result = await generateStrategy(name, draft.symbol, genDirection, idea, draft.interval);
-      if (result.variants) {
-        // The idea named multiple approaches — each was built and backtested,
-        // then compared. Load whichever one compare_backtests picked (if it
-        // could pick one) into the editor; either way, show the full
-        // comparison so the trader can see (and override) the call.
-        const { comparison, variants } = result;
-        const winnerJobId = comparison.winner ? comparison[comparison.winner].jobId : null;
-        const winnerVariant = variants.find((v) => v.backtest?.id === winnerJobId) || variants[0];
-        setDraft(normalizeStrategy(winnerVariant));
-        setGenResult({ explanation: result.explanation, comparison, variants });
-        refresh();
-        return;
-      }
-      if (result.strategy) {
-        setDraft(normalizeStrategy(result.strategy));
-      } else if (result.long) {
-        // "both": load the long side into the editor, the short sibling
-        // was saved too — surface it as a note rather than a second editor.
-        setDraft(normalizeStrategy(result.long));
-        setGenResult({ explanation: result.explanation, note: `Also created "${result.short.name}" for the short side.` });
-        refresh();
-        return;
-      }
-      setGenResult({ explanation: result.explanation });
+      const result = await generateStrategy(
+        name, draft.symbol, genDirection, draft.description, draft.interval, draft.riskPerTradePercent,
+      );
+      // create_strategy only stores the rule spec, so the description and risk
+      // the trader typed have to be carried back onto whatever comes out of it.
+      const load = (g) => setDraft(normalizeStrategy({
+        ...g, description: draft.description, riskPerTradePercent: draft.riskPerTradePercent,
+      }));
+      // The champion — after narrowing the candidates and tuning the survivor —
+      // goes in the editor; "both" is create_strategy's long/short pair, where
+      // the long side is loaded and the short sibling is just noted.
+      const champion = result.strategy || result.long;
+      if (champion) load(champion);
+      setGenResult({
+        explanation: result.explanation,
+        championId: champion?.id,
+        goal: result.goal,
+        variants: result.variants,
+        experiments: result.experiments,
+        comparison: result.comparison,
+        note: result.long ? `Also created "${result.short.name}" for the short side.` : null,
+      });
       refresh();
     } catch (e) {
       setGenError(e.message);
@@ -316,7 +331,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
           <div className="page-head">
             <div>
               <h1 className="page-title">{draft.id ? 'Edit strategy' : 'New strategy'}</h1>
-              <p className="page-sub">Deterministic entry rules, run through the NautilusTrader engine.</p>
+              <p className="page-sub">Describe the strategy and your risk — the agent derives the entry and exit rules, then runs them through the NautilusTrader engine.</p>
             </div>
             <div className="page-head-actions">
               <button className="btn btn-primary" onClick={handleSave}>Save</button>
@@ -324,7 +339,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
           </div>
 
           <section className="card">
-            <div className="card-head"><h2>Overview</h2></div>
+            <div className="card-head"><h2>Strategy</h2></div>
             <div className="form-grid">
               <label className="param-field grow">Name
                 <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Opening range breakout" />
@@ -335,18 +350,6 @@ export default function StrategyPage({ symbol, setSymbol }) {
                   {symbols.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </label>
-            </div>
-          </section>
-
-          <section className="card">
-            <div className="card-head"><h2>Describe your strategy</h2><span className="card-hint">The agent builds the entry/exit rules below from your idea</span></div>
-            <div className="form-grid">
-              <label className="param-field grow">Idea
-                <textarea
-                  className="idea-textarea" rows={3} value={idea} onChange={(e) => setIdea(e.target.value)}
-                  placeholder="e.g. Buy when price breaks the 20-bar high with RSI above 60, tight ATR stop, 2R target"
-                />
-              </label>
               <label className="param-field">Direction
                 <div className="dir-toggle">
                   <button className={genDirection === 'long' ? 'active-long' : ''} onClick={() => { setGenDirection('long'); setDraft((d) => ({ ...d, direction: 'long' })); }}>Long</button>
@@ -354,67 +357,70 @@ export default function StrategyPage({ symbol, setSymbol }) {
                   <button className={genDirection === 'both' ? 'active-both' : ''} onClick={() => setGenDirection('both')}>Both</button>
                 </div>
               </label>
+              <label className="param-field">Risk per trade (%)
+                <input
+                  type="number" step="any" min="0" value={draft.riskPerTradePercent}
+                  onChange={(e) => setDraft({ ...draft, riskPerTradePercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                />
+              </label>
             </div>
-            <button className="btn btn-primary gen-btn" onClick={handleGenerate} disabled={generating || !idea.trim()}>
-              {generating ? 'Generating… (comparing multiple approaches can take a minute)' : 'Generate strategy'}
+            <label className="param-field grow description-field">Description
+              <span className="field-hint">Leave the entry or exit open — or name a few approaches — and the agent backtests each, keeps the best, then tunes it one variable at a time until it clears the target: 2–5% in most weeks traded, positive overall. If it can't get there, it says so.</span>
+              <textarea
+                className="idea-textarea" rows={5} value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                placeholder="Describe the setup, what triggers an entry, and how the trade should be exited. The more precise the description, the more accurately the agent can build your rules."
+              />
+            </label>
+            <button className="btn btn-primary gen-btn" onClick={handleGenerate} disabled={generating || !draft.description.trim()}>
+              {generating ? 'Working… (building, backtesting and tuning takes a few minutes)' : 'Generate strategy'}
             </button>
             {genError && <div className="form-error">{genError}</div>}
             {genResult && (
               <div className="gen-result">
+                {genResult.goal && <GoalVerdict goal={genResult.goal} />}
                 {genResult.explanation && <p>{genResult.explanation}</p>}
                 {genResult.note && <p className="gen-note">{genResult.note}</p>}
+                {genResult.variants && (
+                  <RunTable label="Approaches tested" rows={genResult.variants} championId={genResult.championId} />
+                )}
+                {genResult.experiments && (
+                  <RunTable
+                    label="Experiments — one variable at a time" rows={genResult.experiments}
+                    championId={genResult.championId} showHypothesis
+                  />
+                )}
                 {genResult.comparison && <ComparisonTable comparison={genResult.comparison} />}
                 <p className="gen-hint">
-                  {genResult.comparison ? 'The winning approach is loaded below — review, then Save.' : 'Review the rules below, then Save.'}
+                  {genResult.goal && !genResult.goal.meetsGoal
+                    ? 'The best version found is loaded below, but it did not reach the target — saving it is up to you.'
+                    : genResult.comparison
+                      ? 'The best-performing version is loaded below — review, then Save. Everything else the agent tried stays in the list on the left.'
+                      : 'Review the rules below, then Save.'}
                 </p>
               </div>
             )}
           </section>
 
           <section className="card">
-            <div className="card-head"><h2>Entry</h2><span className="card-hint">All conditions must be true</span></div>
-            {draft.conditions.map((cond, i) => (
-              <div key={i}>
-                {i > 0 && <div className="cond-and">AND</div>}
-                <div className="cond-row">
-                  <span className="cond-index">{i + 1}</span>
-                  <select className="chevron" value={cond.type} onChange={(e) => setConditionType(i, e.target.value)}>
-                    {Object.entries(CONDITION_DEFS).map(([t, d]) => <option key={t} value={t}>{d.label}</option>)}
-                  </select>
-                  <ParamInputs obj={cond} defs={CONDITION_DEFS[cond.type].params} onChange={(next) => setCondition(i, next)} />
-                  <button
-                    className="icon-btn" title="Remove condition"
-                    disabled={draft.conditions.length === 1}
-                    onClick={() => setDraft({ ...draft, conditions: draft.conditions.filter((_, j) => j !== i) })}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                  </button>
-                </div>
-              </div>
-            ))}
-            <button className="btn btn-ghost add-cond" onClick={() => setDraft({ ...draft, conditions: [...draft.conditions, { type: 'breaks_high', lookback: 20 }] })}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-              Add condition
-            </button>
-          </section>
-
-          <section className="card">
-            <div className="card-head"><h2>Exit</h2></div>
-            <div className="form-grid">
-              <label className="param-field">Stop loss
-                <select className="chevron" value={draft.stop.type} onChange={(e) => setExit('stop', { type: e.target.value }, STOP_TYPES)}>
-                  {STOP_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </label>
-              <ParamInputs obj={draft.stop} defs={STOP_TYPES.find((t) => t.value === draft.stop.type).params} onChange={(next) => setDraft({ ...draft, stop: next })} />
+            <div className="card-head">
+              <h2>Entry &amp; exit</h2>
+              <span className="card-hint">Derived from the description — regenerate to change them</span>
             </div>
-            <div className="form-grid" style={{ marginTop: 14 }}>
-              <label className="param-field">Take profit
-                <select className="chevron" value={draft.target.type} onChange={(e) => setExit('target', { type: e.target.value }, TARGET_TYPES)}>
-                  {TARGET_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </label>
-              <ParamInputs obj={draft.target} defs={TARGET_TYPES.find((t) => t.value === draft.target.type).params} onChange={(next) => setDraft({ ...draft, target: next })} />
+            <div className="derived-rules">
+              <div className="derived-block">
+                <div className="derived-label">Entry {draft.conditions.length > 1 ? '(all must be true)' : ''}</div>
+                <ul className="derived-list">
+                  {draft.conditions.map((cond, i) => <li key={i}>{describeCondition(cond)}</li>)}
+                </ul>
+              </div>
+              <div className="derived-block">
+                <div className="derived-label">Exit</div>
+                <ul className="derived-list">
+                  <li>Stop loss — {describeStop(draft.stop)}</li>
+                  <li>Take profit — {describeTarget(draft.target)}</li>
+                </ul>
+              </div>
             </div>
           </section>
 

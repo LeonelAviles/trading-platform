@@ -321,6 +321,106 @@ def _replay_features(symbol: str, interval: str, conditions: list[dict], stop_cf
     return times, features
 
 
+# The trader's actual goal, and what "done" means for a tuning run: a majority
+# of traded weeks returning at least WEEKLY_TARGET_LOW_PCT, and a positive
+# result overall. Weeks are what's judged, not days — a losing day, or a losing
+# week, is expected; a strategy that doesn't end up ahead is not.
+WEEKLY_TARGET_LOW_PCT = 2.0
+WEEKLY_TARGET_HIGH_PCT = 5.0
+MIN_WEEKS_FOR_CONFIDENCE = 8
+
+
+def get_weekly_performance(job_id: str) -> dict:
+    """Week-by-week returns for a backtest, scored against the goal: return
+    between 2% and 5% in the MAJORITY of weeks traded, and end up positive
+    overall. This is the pass/fail check for a strategy — call it on every
+    backtest you want to judge, and use `meetsGoal`/`verdict` to decide
+    whether to keep tuning or stop. Returns are percentages of account equity
+    (starting at 100k, compounding week to week), and only weeks that actually
+    traded are counted. Weeks above 5% count as meeting the goal — overshooting
+    the band is not a failure — but they're reported separately as
+    `weeksAboveBand` because outsized weeks are usually where the risk is."""
+    job = get_backtest(job_id)
+    trades = sorted(
+        (t for t in (job.get("trades") or []) if t.get("exitTime") is not None),
+        key=lambda t: t["exitTime"],
+    )
+
+    by_week: dict[tuple, float] = {}
+    counts: dict[tuple, int] = {}
+    for t in trades:
+        iso = datetime.fromtimestamp(t["exitTime"], tz=timezone.utc).isocalendar()
+        key = (iso.year, iso.week)
+        by_week[key] = by_week.get(key, 0.0) + t["pnl"]
+        counts[key] = counts.get(key, 0) + 1
+
+    equity = nautilus_runner.STARTING_EQUITY
+    weeks = []
+    for key in sorted(by_week):
+        pnl = by_week[key]
+        ret_pct = pnl / equity * 100 if equity > 0 else 0.0
+        equity += pnl
+        weeks.append({
+            "week": f"{key[0]}-W{key[1]:02d}", "trades": counts[key],
+            "pnl": round(pnl, 2), "returnPct": round(ret_pct, 2),
+            "equityEnd": round(equity, 2),
+        })
+
+    n = len(weeks)
+    positive = [w for w in weeks if w["returnPct"] > 0]
+    at_target = [w for w in weeks if w["returnPct"] >= WEEKLY_TARGET_LOW_PCT]
+    in_band = [w for w in at_target if w["returnPct"] <= WEEKLY_TARGET_HIGH_PCT]
+    net_return_pct = (equity - nautilus_runner.STARTING_EQUITY) / nautilus_runner.STARTING_EQUITY * 100
+    ends_positive = net_return_pct > 0
+    majority_at_target = n > 0 and len(at_target) > n / 2
+    meets_goal = ends_positive and majority_at_target
+
+    warnings = []
+    if n < MIN_WEEKS_FOR_CONFIDENCE:
+        warnings.append(
+            f"only {n} week(s) traded — under {MIN_WEEKS_FOR_CONFIDENCE}, this is too short a "
+            "sample to trust either way"
+        )
+    if len(at_target) > len(in_band):
+        warnings.append(
+            f"{len(at_target) - len(in_band)} week(s) returned more than {WEEKLY_TARGET_HIGH_PCT}% — "
+            "check whether that is edge or one oversized position"
+        )
+
+    if n == 0:
+        verdict = "no closed trades — nothing to judge"
+    elif meets_goal:
+        verdict = (
+            f"meets the goal — {len(at_target)}/{n} weeks at or above {WEEKLY_TARGET_LOW_PCT}%, "
+            f"{net_return_pct:.1f}% overall"
+        )
+    elif not ends_positive:
+        verdict = f"fails — ends down {net_return_pct:.1f}% overall, so it loses money"
+    else:
+        verdict = (
+            f"fails — positive overall ({net_return_pct:.1f}%) but only {len(at_target)}/{n} weeks "
+            f"reached {WEEKLY_TARGET_LOW_PCT}%, short of a majority"
+        )
+
+    return {
+        "jobId": job_id, "strategyName": job.get("strategyName"),
+        "startingEquity": nautilus_runner.STARTING_EQUITY,
+        "targetBandPct": [WEEKLY_TARGET_LOW_PCT, WEEKLY_TARGET_HIGH_PCT],
+        "weeks": weeks, "weeksTraded": n,
+        "positiveWeeks": len(positive),
+        "positiveWeekRate": round(len(positive) / n * 100, 1) if n else 0,
+        "weeksAtOrAboveTarget": len(at_target),
+        "weeksInTargetBand": len(in_band),
+        "weeksAboveBand": len(at_target) - len(in_band),
+        "targetHitRate": round(len(at_target) / n * 100, 1) if n else 0,
+        "netReturnPct": round(net_return_pct, 2),
+        "endsPositive": ends_positive,
+        "meetsGoal": meets_goal,
+        "verdict": verdict,
+        "warnings": warnings,
+    }
+
+
 def get_trade_features(job_id: str) -> list[dict]:
     """The core enrichment tool: for every closed trade in a backtest,
     reconstruct the market context at entry (relative volume, ATR14,
@@ -550,6 +650,10 @@ TOOLS = [
         },
     }},
     {"type": "function", "function": {
+        "name": "get_weekly_performance", "description": get_weekly_performance.__doc__,
+        "parameters": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]},
+    }},
+    {"type": "function", "function": {
         "name": "get_trade_features", "description": get_trade_features.__doc__,
         "parameters": {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]},
     }},
@@ -599,6 +703,7 @@ TOOL_FUNCS = {
     "get_backtest_analytics": get_backtest_analytics,
     "get_win_rate": get_win_rate,
     "compare_backtests": compare_backtests,
+    "get_weekly_performance": get_weekly_performance,
     "get_trade_features": get_trade_features,
     "compare_winners_vs_losers": compare_winners_vs_losers,
     "find_near_miss_entries": find_near_miss_entries,
