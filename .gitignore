@@ -16,3 +16,6 @@ mbo-data/
 # Local Postgres cluster (Postgres.app CLI, backend/.pgdata) — dev-only.
 backend/.pgdata/
 backend/*.log
+
+# Local secrets — API keys, DB URLs. See backend/.env.example.
+.env

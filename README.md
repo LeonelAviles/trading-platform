@@ -23,6 +23,10 @@ with NautilusTrader as the backtest engine.
 
 ## Running
 
+Copy `backend/.env.example` to `backend/.env` and put your `ANTHROPIC_API_KEY`
+in it — the backend loads it at startup. Everything except AI strategy
+generation and the chat analyst works without one.
+
 ```bash
 # backend (port 8123)
 cd backend

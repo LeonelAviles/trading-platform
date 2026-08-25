@@ -9,6 +9,14 @@ import json
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Before importing anything that reads the environment — agent_llm resolves
+# ANTHROPIC_MODEL at import time. Real values live in backend/.env (gitignored);
+# backend/.env.example is the template. Anything already exported in the shell
+# wins, so a one-off `ANTHROPIC_MODEL=... uvicorn ...` still overrides the file.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
