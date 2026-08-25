@@ -325,6 +325,9 @@ def start_backtest(strategy: dict | None, demo: bool, symbol: str | None = None)
         "strategyId": strategy.get("id") if strategy else None,
         "strategyName": strategy.get("name") if strategy else "Demo (built-in sample logic)",
         "symbol": (strategy or {}).get("symbol") or symbol,
+        # The bar size this ran on — the chart switches to it when the job is
+        # selected, so trades are drawn on the timeframe that produced them.
+        "interval": (strategy or {}).get("interval", "1min"),
         "status": "preparing",
         "message": None,
         "source": "demo" if demo else "nautilus",

@@ -65,6 +65,7 @@ def get_condition_vocabulary() -> dict:
         },
         "stopTypes": sorted(strategy_spec.STOP_TYPES),
         "targetTypes": sorted(strategy_spec.TARGET_TYPES),
+        "intervals": list(strategy_spec.INTERVALS),
         "notes": (
             "conditions are ANDed together (all must be true on the same bar). "
             "stop.type == 'atr' uses stop.period/stop.mult (default 14/1.5) to compute the stop, "
@@ -72,6 +73,9 @@ def get_condition_vocabulary() -> dict:
             "regardless of type, so always include one anyway (e.g. same as mult, it's just unused). "
             "sizing defaults to {type: percent_equity, value: 95}. "
             "session times are 'HH:MM' 24h UTC, default 13:30-19:55. "
+            "interval is the bar size every condition is evaluated on — one of `intervals` "
+            "above, default '1min'. A strategy runs on ONE interval; there are no "
+            "multi-timeframe conditions. "
             "ORDER FLOW: delta_above/delta_below/cvd_rising/cvd_falling/rel_volume_above "
             "come from Databento MBO ticks (aggressive buys minus aggressive sells per bar), "
             "not from price. delta_above/below take `lookback` bars and a UNITLESS `value`: "
@@ -653,7 +657,7 @@ TOOLS = [
                 "target": {"type": "object", "description": "{type: rr|percent|fixed_points, value}"},
                 "sizing": {"type": "object", "description": "optional {type: fixed_qty|percent_equity, value}"},
                 "session": {"type": "object", "description": "optional {start: 'HH:MM', end: 'HH:MM'} UTC"},
-                "interval": {"type": "string", "description": "bar interval, default '1min'"},
+                "interval": {"type": "string", "description": "bar interval — one of get_condition_vocabulary's `intervals`, default '1min'"},
             },
             "required": ["name", "symbol", "direction", "conditions", "stop", "target"],
         },

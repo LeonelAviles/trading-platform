@@ -26,6 +26,7 @@ import os
 
 import agent_tools
 import nautilus_runner
+import strategy_spec
 
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 MAX_TOOL_ROUNDS = 40
@@ -39,8 +40,14 @@ Rules:
 - Call get_condition_vocabulary first if you're not certain of the exact condition \
   types/params — do not guess or invent a condition type that doesn't exist.
 - Use the name, symbol, and direction given to you exactly as provided — do not \
-  change them. Only conditions, stop, target, session, and sizing come from your \
-  own judgment based on the idea.
+  change them. Conditions, stop, target, session, sizing AND the bar interval come \
+  from your own judgment based on the idea.
+- The interval is the bar size every condition is evaluated on, one of \
+  get_condition_vocabulary's `intervals`. If the trader's message pins an interval, \
+  use it and never vary it. If it says "interval: agent's choice", it is yours to \
+  pick and to test. A strategy runs on ONE interval — there is no way to reference a \
+  second timeframe from a condition, so "1-min entry with the hourly trend up" cannot \
+  be built; pick the timeframe the setup itself lives on.
 - Prefer the simplest rule set that captures the idea. 1-3 entry conditions is \
   normal; don't add conditions the idea doesn't call for.
 - Every strategy you create needs a concrete stop and target — never ask the trader \
@@ -62,10 +69,16 @@ A) It pins down BOTH a specific entry trigger AND a specific exit (stop and/or \
 B) Anything else — the description leaves the entry vague, leaves the exit vague, \
    or names several approaches ("the breakout or the retest, which is better") — \
    the trader has delegated that choice to you, so don't guess at one reading:
-   1. Call create_strategy once per variant — same symbol/direction/interval, name \
-      suffixed with what makes it different, e.g. "(20-bar breakout)", "(2R target)". \
-      Vary only the unspecified part: if the entry is given but the exit isn't, all \
-      variants share that entry and differ in stop/target, and vice versa. Two \
+   1. Call create_strategy once per variant — same symbol and direction, name \
+      suffixed with what makes it different, e.g. "(20-bar breakout)", "(2R target)", \
+      "(5min)". Vary only ONE dimension across the set, so the comparison attributes \
+      cleanly. Pick which dimension by this order:
+        a. entry, if the description leaves the entry trigger open;
+        b. otherwise exit, if it leaves the stop/target open;
+        c. otherwise the interval, if the trader left it to you — same rules on \
+           1min vs 5min vs 15min is a genuinely different strategy, and often a \
+           bigger effect than any parameter tweak.
+      Whatever you are not varying is held identical across every variant. Two \
       variants is usually enough; never build more than three.
    2. Call run_backtest on each one.
    3. Compare them with compare_backtests, which takes exactly two job ids — with \
@@ -94,8 +107,15 @@ actually moves performance, so each experiment isolates a single cause:
 
 - ONE VARIABLE AT A TIME. Every propose_strategy_revision must change exactly one \
   thing from the current champion: one condition's parameter, OR the stop type/value, \
-  OR the target value, OR the session window, OR sizing. Never two at once — if you \
-  change two and the result improves, you have learned nothing about which one did it.
+  OR the target value, OR the session window, OR sizing, OR the bar interval \
+  ({"interval": "5min"} — the rules stay identical, only the bar size changes). Never \
+  two at once — if you change two and the result improves, you have learned nothing \
+  about which one did it.
+- Interval is often the highest-leverage single variable, especially when the \
+  champion is taking a lot of trades and losing to noise: a 1-minute strategy stopped \
+  out by 2-tick wiggles frequently survives on 5-minute bars with the same logic. \
+  Test it early rather than after five parameter tweaks — but only when the trader \
+  left the timeframe to you.
 - Form a hypothesis before each run, and put it in `rationale`: the variable, the \
   direction you are moving it, and what you expect ("widen ATR stop 1.5 -> 2.0; the \
   losers are mostly stop-outs that later reached target").
@@ -123,6 +143,11 @@ actually moves performance, so each experiment isolates a single cause:
   three in a row that fail to improve the champion means you are out of ideas that \
   the data supports, and more runs will only overfit. Too few trades or too few weeks \
   to tell the difference is also a reason to stop, not a reason to run more.
+- Coarser intervals take far fewer trades — 15-minute bars may produce a tenth of \
+  what 1-minute does over the same data. A higher win rate on 18 trades is usually \
+  noise, not an edge, so when compare_backtests or get_weekly_performance warns that \
+  the sample is too small, believe the warning: do not crown a slow-timeframe variant \
+  on a flattering percentage, and say plainly that it was untestable on this data.
 
 FINISH — call finalize_strategy with the id of the champion and one line on why. It \
 replies with the champion's real weekly scorecard; use those numbers in your report, \
@@ -186,7 +211,7 @@ def _client():
 
 
 def generate_strategy(
-    name: str, symbol: str, direction: str, prompt: str, interval: str = "1min",
+    name: str, symbol: str, direction: str, prompt: str, interval: str | None = None,
     risk: float | str | None = None,
 ) -> dict:
     """Run a bounded tool-calling loop against Claude: build candidates from
@@ -206,6 +231,12 @@ def generate_strategy(
     """
     client = _client()
 
+    # No interval from the trader means they left the timeframe to the agent —
+    # it becomes a Phase 1 axis / Phase 2 variable instead of a fixed constant.
+    interval_line = (
+        f"interval: {interval!r}\n" if interval
+        else f"interval: agent's choice (one of {list(strategy_spec.INTERVALS)})\n"
+    )
     risk_line = f"risk per trade: {risk}% of account equity\n" if risk not in (None, "") else ""
     # Branch B needs real backtests; without the engine the model has to stay
     # on A rather than burning its tool rounds on run_backtest errors.
@@ -213,8 +244,8 @@ def generate_strategy(
         "NOTE: the backtest engine is unavailable — you cannot run or compare backtests.\n"
     )
     user_msg = (
-        f"name: {name!r}\nsymbol: {symbol!r}\ndirection: {direction!r}\ninterval: {interval!r}\n"
-        f"{risk_line}{engine_line}\n"
+        f"name: {name!r}\nsymbol: {symbol!r}\ndirection: {direction!r}\n"
+        f"{interval_line}{risk_line}{engine_line}\n"
         f"Strategy description:\n{prompt}"
     )
     messages = [{"role": "user", "content": user_msg}]

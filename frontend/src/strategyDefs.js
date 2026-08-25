@@ -22,6 +22,18 @@ export const CONDITION_DEFS = {
   rel_volume_above: { label: 'Relative volume above', params: [{ name: 'lookback', label: 'Bars', def: 20 }, { name: 'value', label: 'x avg', def: 1.5 }] },
 };
 
+// Mirrors backend/strategy_spec.INTERVALS. A strategy runs on exactly one of
+// these; '' means the trader left the choice to the agent.
+export const INTERVALS = [
+  ['1min', '1 minute'], ['5min', '5 minutes'], ['15min', '15 minutes'], ['30min', '30 minutes'],
+  ['1h', '1 hour'], ['4h', '4 hours'], ['1D', 'Daily'],
+];
+
+export function describeInterval(interval) {
+  const found = INTERVALS.find(([v]) => v === interval);
+  return found ? found[1] : interval || '—';
+}
+
 export const STOP_TYPES = [
   { value: 'percent', label: '% from entry', params: [{ name: 'value', label: '%', def: 0.5 }] },
   { value: 'fixed_points', label: 'Fixed points', params: [{ name: 'value', label: 'Points', def: 1 }] },
@@ -52,6 +64,12 @@ export function describeCondition(cond) {
     case 'rel_volume_above': return `Volume above ${cond.value}× the ${cond.lookback}-bar average`;
     default: return cond.type;
   }
+}
+
+export function describeSizing(sizing) {
+  if (!sizing) return '—';
+  if (sizing.type === 'fixed_qty') return `${sizing.value} contracts`;
+  return `${sizing.value}% of equity`;
 }
 
 export function describeStop(stop) {

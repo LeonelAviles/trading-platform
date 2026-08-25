@@ -166,7 +166,7 @@ export default function StrategyDashboardPage() {
               {strategy.direction === 'long' ? 'Long' : 'Short'} · {strategy.symbol} · {strategy.conditions.length} entry condition{strategy.conditions.length === 1 ? '' : 's'}
             </p>
             <div className="dash-tags">
-              <span className="tag">{strategy.interval}</span>
+              <span className="tag">{strategy.interval || '1min'}</span>
               <span className="tag">{strategy.symbol}</span>
               {strategy.conditions.slice(0, 3).map((c, i) => <span className="tag" key={i}>{c.type.replace(/_/g, ' ')}</span>)}
             </div>

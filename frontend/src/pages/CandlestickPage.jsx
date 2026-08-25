@@ -371,7 +371,14 @@ export default function CandlestickPage({ symbol }) {
     if (!selectedBacktestId) { setBacktestTrades([]); return; }
     let cancelled = false;
     fetchBacktest(selectedBacktestId)
-      .then((job) => { if (!cancelled) setBacktestTrades(job.trades || []); })
+      .then((job) => {
+        if (cancelled) return;
+        setBacktestTrades(job.trades || []);
+        // Draw the trades on the bars that produced them: a 15-minute
+        // strategy's entries are meaningless against a 1-minute chart. Jobs
+        // recorded before interval was stored have none — leave those alone.
+        if (job.interval) setInterval_(job.interval);
+      })
       .catch(() => { if (!cancelled) setBacktestTrades([]); });
     return () => { cancelled = true; };
   }, [selectedBacktestId]);

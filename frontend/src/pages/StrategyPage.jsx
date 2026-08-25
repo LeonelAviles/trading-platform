@@ -4,14 +4,14 @@ import {
   fetchStrategies, saveStrategy, deleteStrategy, generateStrategy,
   fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest, fetchSymbols,
 } from '../api';
-import { describeCondition, describeStop, describeTarget } from '../strategyDefs';
+import { INTERVALS, describeCondition, describeInterval, describeSizing, describeStop, describeTarget } from '../strategyDefs';
 
 function blankStrategy(symbol) {
   return {
     name: '',
     description: '',
     symbol: symbol || 'MSFT',
-    interval: '1min',
+    interval: '',   // '' = let the agent pick and test the timeframe
     direction: 'long',
     riskPerTradePercent: 1,
     conditions: [{ type: 'breaks_high', lookback: 20 }],
@@ -31,7 +31,9 @@ function normalizeStrategy(s) {
     ...s,
     description: s.description || '',
     riskPerTradePercent: s.riskPerTradePercent ?? 1,
-    interval: s.interval || '1min',
+    // A saved strategy always has a concrete interval; only an unsaved draft
+    // can be '' (agent's choice), so don't backfill it to 1min here.
+    interval: s.interval || '',
     session: s.session || { start: '13:30', end: '19:55' },
     sizing: s.sizing || { type: 'percent_equity', value: 95 },
   };
@@ -182,10 +184,17 @@ export default function StrategyPage({ symbol, setSymbol }) {
     setJob(null);
   }
 
+  // An unsaved draft can carry interval: '' ("agent decides"). Saving one
+  // directly, without generating, has to drop the key rather than send an
+  // empty string the validator rejects — the engine then applies its default.
+  function forSave(d) {
+    return d.interval ? d : { ...d, interval: undefined };
+  }
+
   async function handleSave() {
     setError('');
     try {
-      const saved = await saveStrategy(draft);
+      const saved = await saveStrategy(forSave(draft));
       setDraft(saved);
       refresh();
     } catch (e) {
@@ -254,7 +263,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
     try {
       let saved = draft;
       if (!draft.id) {
-        saved = await saveStrategy(draft);
+        saved = await saveStrategy(forSave(draft));
         setDraft(saved);
         refresh();
       }
@@ -301,7 +310,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
           >
             <div className="strategy-item-body">
               <div className="strategy-item-name">{s.name}</div>
-              <div className="strategy-item-sub">{s.symbol} · {s.direction} · {s.conditions.length} condition{s.conditions.length === 1 ? '' : 's'}</div>
+              <div className="strategy-item-sub">{s.symbol} · {s.interval || '1min'} · {s.direction} · {s.conditions.length} condition{s.conditions.length === 1 ? '' : 's'}</div>
             </div>
             <div className="strategy-item-actions">
               <button className="icon-btn" title="Edit strategy" onClick={(e) => { e.stopPropagation(); edit(s); }}>
@@ -357,6 +366,12 @@ export default function StrategyPage({ symbol, setSymbol }) {
                   <button className={genDirection === 'both' ? 'active-both' : ''} onClick={() => setGenDirection('both')}>Both</button>
                 </div>
               </label>
+              <label className="param-field">Timeframe
+                <select className="chevron" value={draft.interval} onChange={(e) => setDraft({ ...draft, interval: e.target.value })}>
+                  <option value="">Agent decides</option>
+                  {INTERVALS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+              </label>
               <label className="param-field">Risk per trade (%)
                 <input
                   type="number" step="any" min="0" value={draft.riskPerTradePercent}
@@ -405,11 +420,14 @@ export default function StrategyPage({ symbol, setSymbol }) {
           <section className="card">
             <div className="card-head">
               <h2>Entry &amp; exit</h2>
-              <span className="card-hint">Derived from the description — regenerate to change them</span>
+              <span className="card-hint">Derived from the description and your risk — regenerate to change them</span>
             </div>
             <div className="derived-rules">
               <div className="derived-block">
-                <div className="derived-label">Entry {draft.conditions.length > 1 ? '(all must be true)' : ''}</div>
+                <div className="derived-label">
+                  Entry {draft.conditions.length > 1 ? '(all must be true)' : ''}
+                  <span className="derived-tf">{draft.interval ? describeInterval(draft.interval) : 'timeframe: agent decides'} bars</span>
+                </div>
                 <ul className="derived-list">
                   {draft.conditions.map((cond, i) => <li key={i}>{describeCondition(cond)}</li>)}
                 </ul>
@@ -421,26 +439,27 @@ export default function StrategyPage({ symbol, setSymbol }) {
                   <li>Take profit — {describeTarget(draft.target)}</li>
                 </ul>
               </div>
+              <div className="derived-block">
+                <div className="derived-label">Position size</div>
+                <ul className="derived-list">
+                  <li>{describeSizing(draft.sizing)}</li>
+                  <li className="derived-note">sized to risk {draft.riskPerTradePercent}% per trade</li>
+                </ul>
+              </div>
             </div>
           </section>
 
           <section className="card">
-            <div className="card-head"><h2>Session &amp; sizing</h2><span className="card-hint">Session times in UTC</span></div>
+            <div className="card-head">
+              <h2>Session</h2>
+              <span className="card-hint">Trading window, UTC — the agent may narrow it while tuning</span>
+            </div>
             <div className="form-grid">
               <label className="param-field">Session start
                 <input type="time" value={draft.session.start} onChange={(e) => setDraft({ ...draft, session: { ...draft.session, start: e.target.value } })} />
               </label>
               <label className="param-field">Session end
                 <input type="time" value={draft.session.end} onChange={(e) => setDraft({ ...draft, session: { ...draft.session, end: e.target.value } })} />
-              </label>
-              <label className="param-field">Sizing
-                <select className="chevron" value={draft.sizing.type} onChange={(e) => setDraft({ ...draft, sizing: { type: e.target.value, value: e.target.value === 'fixed_qty' ? 100 : 95 } })}>
-                  <option value="percent_equity">% of equity</option>
-                  <option value="fixed_qty">Fixed quantity</option>
-                </select>
-              </label>
-              <label className="param-field">{draft.sizing.type === 'fixed_qty' ? 'Shares' : '%'}
-                <input type="number" step="any" value={draft.sizing.value} onChange={(e) => setDraft({ ...draft, sizing: { ...draft.sizing, value: Number(e.target.value) } })} />
               </label>
             </div>
           </section>

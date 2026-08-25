@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 
 function labelOf(b) {
   const detail = b.summary ? `${b.summary.trades} trades` : b.status;
-  return `${b.strategyName} · ${detail}${b.source === 'demo' ? ' (demo)' : ''}`;
+  // Interval matters here: selecting a job switches the chart to its bars.
+  const tf = b.interval ? ` · ${b.interval}` : '';
+  return `${b.strategyName}${tf} · ${detail}${b.source === 'demo' ? ' (demo)' : ''}`;
 }
 
 // Custom dropdown (a native <select> can't host per-row delete buttons):

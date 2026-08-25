@@ -24,6 +24,11 @@ CONDITION_DEFS = {
     "rel_volume_above": {"params": {"lookback": int, "value": float}},
 }
 
+# Bar intervals the whole stack supports, in order. Mirrors
+# data_store._INTERVAL_SQL (kept here rather than imported, so validation
+# doesn't drag pandas/duckdb in) and nautilus_backtest._BAR_UNITS.
+INTERVALS = ("1min", "5min", "15min", "30min", "1h", "4h", "1D")
+
 STOP_TYPES = {"percent", "fixed_points", "atr"}
 TARGET_TYPES = {"rr", "percent", "fixed_points"}
 
@@ -37,6 +42,10 @@ def validate_strategy(s: dict) -> list[str]:
         errors.append("symbol is required")
     if s.get("direction") not in ("long", "short"):
         errors.append("direction must be 'long' or 'short'")
+    # Caught here rather than at run time: an unsupported interval otherwise
+    # surfaces as a worker crash mid-backtest, long after the strategy saved.
+    if s.get("interval") is not None and s["interval"] not in INTERVALS:
+        errors.append(f"interval must be one of {list(INTERVALS)}")
     conditions = s.get("conditions", [])
     if not conditions:
         errors.append("at least one entry condition is required")

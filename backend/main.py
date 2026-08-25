@@ -148,7 +148,7 @@ def generate_strategy(body: dict = Body(...)):
     try:
         return agent_llm.generate_strategy(
             name=body["name"], symbol=body["symbol"], direction=body["direction"],
-            prompt=body["prompt"], interval=body.get("interval", "1min"),
+            prompt=body["prompt"], interval=body.get("interval") or None,
             risk=body.get("risk"),
         )
     except agent_llm.LLMNotConfigured as e:
