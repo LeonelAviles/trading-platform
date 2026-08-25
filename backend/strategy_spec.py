@@ -13,6 +13,15 @@ CONDITION_DEFS = {
     "breaks_high": {"params": {"lookback": int}},
     "breaks_low": {"params": {"lookback": int}},
     "consecutive": {"params": {"count": int, "color": str}},
+    # Order flow, from the Databento MBO ticks (bars_1m.delta = aggressive
+    # buys minus aggressive sells). delta_above/below compare a *normalised*
+    # cumulative delta (see Indicators.rel_delta), so their `value` is a
+    # unitless ratio, not a contract count.
+    "delta_above": {"params": {"lookback": int, "value": float}},
+    "delta_below": {"params": {"lookback": int, "value": float}},
+    "cvd_rising": {"params": {"lookback": int}},
+    "cvd_falling": {"params": {"lookback": int}},
+    "rel_volume_above": {"params": {"lookback": int, "value": float}},
 }
 
 STOP_TYPES = {"percent", "fixed_points", "atr"}

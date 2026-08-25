@@ -266,7 +266,7 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_get_trade_features",
-            "description": "The core enrichment tool: for every closed trade in a backtest, reconstruct the market context at entry (relative volume, ATR14, RSI14, hour/day, distance from the 20-bar high/low) using the exact same indicator math the backtest engine used. This is what compare_winners_vs_losers() analyzes \u2014 call this first if you want the per-trade detail instead of the aggregate comparison.",
+            "description": "The core enrichment tool: for every closed trade in a backtest, reconstruct the market context at entry \u2014 relative volume, ATR14, RSI14, hour/day, distance from the 20-bar high/low, AND the Databento MBO order flow (deltaBar, cvd20, relDelta20, cvdSession, flowDivergence) \u2014 using the exact same indicator math the backtest engine used. The flow fields are null for symbols with no tick-level side data. This is what compare_winners_vs_losers() analyzes \u2014 call this first if you want the per-trade detail instead of the aggregate comparison.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -284,7 +284,7 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_compare_winners_vs_losers",
-            "description": "Statistical comparison of winning vs losing trades' entry context \u2014 answers \"what do winners have in common.\" Numeric features (relVolume20, atr14, rsi14, distFrom20High/Low) are ranked by effect size (Cohen's d: how many pooled standard deviations apart the two groups' means are \u2014 >0.5 is a moderately strong separation, >0.8 is strong). Categorical features (hourUtc, dayOfWeek, exitReason) get a win-rate-by-bucket breakdown instead.",
+            "description": "Statistical comparison of winning vs losing trades' entry context \u2014 answers \"what do winners have in common.\" Numeric features (relVolume20, atr14, rsi14, distFrom20High/Low, and the MBO order flow: deltaBar, cvd20, relDelta20, cvdSession) are ranked by effect size (Cohen's d: how many pooled standard deviations apart the two groups' means are \u2014 >0.5 is a moderately strong separation, >0.8 is strong). Categorical features (hourUtc, dayOfWeek, flowDivergence, exitReason) get a win-rate-by-bucket breakdown instead. A strong order-flow separation is directly actionable: delta_above/cvd_rising/rel_volume_above are real entry conditions, so a finding there can be tested as a revision.",
             "parameters": {
                 "type": "object",
                 "properties": {

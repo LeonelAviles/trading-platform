@@ -20,6 +20,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+import pandas as pd
+
 import data_store
 from condition_engine import Indicators, condition_lookback, eval_condition, session_minutes
 
@@ -40,7 +42,7 @@ from nautilus_trader.trading.strategy import Strategy
 # --------------------------------------------------------------------------
 
 class ConfigStrategy(Strategy):
-    def init_params(self, spec, instrument, bar_type):
+    def init_params(self, spec, instrument, bar_type, flow=None, has_flow=False):
         self.spec = spec
         self.instrument = instrument
         self.bar_type = bar_type
@@ -59,6 +61,9 @@ class ConfigStrategy(Strategy):
             lookback = max(lookback, int(self.stop_cfg.get("period", 14)) + 2)
         self.ind = Indicators(lookback)
         self.min_bars = lookback
+        # {bar open unix seconds: (volume, delta)} — see run().
+        self.flow = flow or {}
+        self.has_flow = has_flow
 
         # position state
         self.in_pos = False
@@ -110,8 +115,12 @@ class ConfigStrategy(Strategy):
 
     def on_bar(self, bar):
         o, h, l, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
-        self.ind.update(o, h, l, c)
         ts = bar.ts_event
+        # bar.volume is the 1e9 fill-guarantee placeholder, so real size and
+        # delta come from the flow map instead. None (not 0) when this symbol
+        # has no side data, which is what stops flow conditions firing blind.
+        v, d = self.flow.get(int(ts / 1e9), (None, None)) if self.has_flow else (None, None)
+        self.ind.update(o, h, l, c, v, d)
 
         if self.in_pos and not self.closing:
             reason = None
@@ -218,6 +227,15 @@ def run(strategy_path, out_path):
     df.columns = [c.lower() for c in df.columns]
     if df.empty:
         raise RuntimeError(f"no bars for {symbol} at {interval}")
+    # Real traded size and MBO order flow, keyed by bar open time (BarDataWrangler
+    # uses the frame's index as ts_event verbatim). Captured BEFORE volume is
+    # overwritten below, and handed to the strategy out-of-band because a
+    # Nautilus Bar carries no delta field at all.
+    flow = {
+        int(ts.timestamp()): (float(v), float(d))
+        for ts, v, d in zip(df.index, df["volume"], df.get("delta", pd.Series(0.0, index=df.index)))
+    }
+    has_flow = "delta" in df.columns
     # The simulated venue caps a market fill at the bar's volume; this tool
     # models decision logic, not liquidity, so give bars unbounded volume so
     # orders always fill in full (partial fills would also corrupt netting).
@@ -236,7 +254,7 @@ def run(strategy_path, out_path):
     engine.add_data(BarDataWrangler(bar_type, instrument).process(df))
 
     strat = ConfigStrategy()
-    strat.init_params(spec, instrument, bar_type)
+    strat.init_params(spec, instrument, bar_type, flow=flow, has_flow=has_flow)
     # last bar timestamp, for on_stop's forced close
     strat.last_ts = int(df.index[-1].timestamp() * 1e9)
     engine.add_strategy(strat)

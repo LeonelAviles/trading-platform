@@ -1,4 +1,6 @@
 // Shared with backend/strategy_spec.py — keep condition/stop/target types in sync.
+// Order-flow conditions are evaluated in backend/condition_engine.py against
+// bars_1m.delta; they never fire for symbols with no MBO side data.
 
 export const CONDITION_DEFS = {
   price_above: { label: 'Price above level', params: [{ name: 'value', label: 'Level', def: 100 }] },
@@ -10,6 +12,14 @@ export const CONDITION_DEFS = {
   breaks_high: { label: 'Breaks N-bar high', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
   breaks_low: { label: 'Breaks N-bar low', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
   consecutive: { label: 'N consecutive candles', params: [{ name: 'count', label: 'Count', def: 3 }, { name: 'color', label: 'Color', def: 'green', options: ['green', 'red'] }] },
+  // Order flow, from the Databento MBO ticks (aggressive buys minus sells).
+  // delta_above/below take a unitless ratio, not a contract count — see
+  // condition_engine.Indicators.rel_delta.
+  delta_above: { label: 'Buy delta above', params: [{ name: 'lookback', label: 'Bars', def: 20 }, { name: 'value', label: 'Ratio', def: 1 }] },
+  delta_below: { label: 'Sell delta below', params: [{ name: 'lookback', label: 'Bars', def: 20 }, { name: 'value', label: 'Ratio', def: -1 }] },
+  cvd_rising: { label: 'CVD rising', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
+  cvd_falling: { label: 'CVD falling', params: [{ name: 'lookback', label: 'Bars', def: 20 }] },
+  rel_volume_above: { label: 'Relative volume above', params: [{ name: 'lookback', label: 'Bars', def: 20 }, { name: 'value', label: 'x avg', def: 1.5 }] },
 };
 
 export const STOP_TYPES = [
@@ -35,6 +45,11 @@ export function describeCondition(cond) {
     case 'breaks_high': return `Breaks ${cond.lookback}-bar high`;
     case 'breaks_low': return `Breaks ${cond.lookback}-bar low`;
     case 'consecutive': return `${cond.count} consecutive ${cond.color} candles`;
+    case 'delta_above': return `Buy delta over ${cond.lookback} bars above ${cond.value}× avg`;
+    case 'delta_below': return `Sell delta over ${cond.lookback} bars below ${cond.value}× avg`;
+    case 'cvd_rising': return `CVD rising over ${cond.lookback} bars`;
+    case 'cvd_falling': return `CVD falling over ${cond.lookback} bars`;
+    case 'rel_volume_above': return `Volume above ${cond.value}× the ${cond.lookback}-bar average`;
     default: return cond.type;
   }
 }

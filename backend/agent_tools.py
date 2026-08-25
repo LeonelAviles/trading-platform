@@ -71,7 +71,16 @@ def get_condition_vocabulary() -> dict:
             "NOT stop.value — but validation still requires stop.value to be present and numeric "
             "regardless of type, so always include one anyway (e.g. same as mult, it's just unused). "
             "sizing defaults to {type: percent_equity, value: 95}. "
-            "session times are 'HH:MM' 24h UTC, default 13:30-19:55."
+            "session times are 'HH:MM' 24h UTC, default 13:30-19:55. "
+            "ORDER FLOW: delta_above/delta_below/cvd_rising/cvd_falling/rel_volume_above "
+            "come from Databento MBO ticks (aggressive buys minus aggressive sells per bar), "
+            "not from price. delta_above/below take `lookback` bars and a UNITLESS `value`: "
+            "cumulative delta over the window divided by the average absolute per-bar delta, "
+            "so 1.0 means one average bar's worth of one-sided flow (try 0.5-2.0, not raw "
+            "contract counts). cvd_rising/falling just test the sign of cumulative delta over "
+            "`lookback` bars. rel_volume_above compares this bar's size to the `lookback`-bar "
+            "average (1.5 = 50% busier than normal). These never fire for symbols with no "
+            "tick-level side data, so check get_trade_features' flow fields are non-null first."
         ),
     }
 
@@ -291,11 +300,17 @@ def _replay_features(symbol: str, interval: str, conditions: list[dict], stop_cf
     sess_start = session_minutes(session["start"])
     sess_end = session_minutes(session["end"])
 
+    has_flow = bool(bars[0].get("hasDelta"))
     volumes: list[float] = []
     times: list[int] = []
     features: list[dict] = []
+    session_delta = 0.0
+    prev_in_session = False
     for bar in bars:
-        ind.update(bar["open"], bar["high"], bar["low"], bar["close"])
+        ind.update(
+            bar["open"], bar["high"], bar["low"], bar["close"],
+            bar["volume"], bar["delta"] if has_flow else None,
+        )
         volumes.append(bar["volume"])
         vol_window = volumes[-20:]
         rel_volume = bar["volume"] / (sum(vol_window) / len(vol_window)) if vol_window and sum(vol_window) else None
@@ -305,11 +320,44 @@ def _replay_features(symbol: str, interval: str, conditions: list[dict], stop_cf
         highs20, lows20 = list(ind.highs)[-20:], list(ind.lows)[-20:]
 
         conds_true = sum(1 for c in conditions if eval_condition(c, ind)) if ind.count >= 2 else 0
+        in_session = sess_start <= minutes < sess_end
+        # Session-cumulative delta: resets at each session open, which is what
+        # a trader means by "CVD today" — a rolling window can't express it.
+        if in_session:
+            session_delta = session_delta + bar["delta"] if prev_in_session else bar["delta"]
+        prev_in_session = in_session
+
+        # Order flow at this bar, all MBO-derived. Price-only fields could
+        # never separate "broke the high on real buying" from "broke the high
+        # on no participation" — these are the fields that can.
+        flow_feats = {
+            "deltaBar": None, "cvd20": None, "relDelta20": None,
+            "cvdSession": None, "flowDivergence": None,
+        }
+        if has_flow:
+            cvd20 = ind.delta_sum(20)
+            price_up = len(ind.closes) > 20 and bar["close"] > list(ind.closes)[-21]
+            flow_feats = {
+                "deltaBar": round(bar["delta"], 2),
+                "cvd20": round(cvd20, 2) if cvd20 is not None else None,
+                "relDelta20": round(ind.rel_delta(20), 3) if ind.rel_delta(20) is not None else None,
+                "cvdSession": round(session_delta, 2) if in_session else None,
+                # Price and flow disagreeing over the last 20 bars — the
+                # classic "move without participation behind it".
+                "flowDivergence": (
+                    None if cvd20 is None
+                    else "bearish" if price_up and cvd20 < 0
+                    else "bullish" if not price_up and cvd20 > 0
+                    else "none"
+                ),
+            }
+
         times.append(bar["time"])
         features.append({
             "conditionsTrue": conds_true,
             "conditionsTotal": len(conditions),
-            "inSession": sess_start <= minutes < sess_end,
+            "inSession": in_session,
+            **flow_feats,
             "relVolume20": round(rel_volume, 3) if rel_volume is not None else None,
             "atr14": round(ind.atr(14), 4) if ind.atr(14) is not None else None,
             "rsi14": round(ind.rsi(14), 1) if ind.rsi(14) is not None else None,
@@ -423,9 +471,11 @@ def get_weekly_performance(job_id: str) -> dict:
 
 def get_trade_features(job_id: str) -> list[dict]:
     """The core enrichment tool: for every closed trade in a backtest,
-    reconstruct the market context at entry (relative volume, ATR14,
-    RSI14, hour/day, distance from the 20-bar high/low) using the exact
-    same indicator math the backtest engine used. This is what
+    reconstruct the market context at entry — relative volume, ATR14, RSI14,
+    hour/day, distance from the 20-bar high/low, AND the Databento MBO order
+    flow (deltaBar, cvd20, relDelta20, cvdSession, flowDivergence) — using the
+    exact same indicator math the backtest engine used. The flow fields are
+    null for symbols with no tick-level side data. This is what
     compare_winners_vs_losers() analyzes — call this first if you want the
     per-trade detail instead of the aggregate comparison."""
     job = get_backtest(job_id)
@@ -462,11 +512,14 @@ def get_trade_features(job_id: str) -> list[dict]:
 def compare_winners_vs_losers(job_id: str) -> dict:
     """Statistical comparison of winning vs losing trades' entry context —
     answers "what do winners have in common." Numeric features (relVolume20,
-    atr14, rsi14, distFrom20High/Low) are ranked by effect size (Cohen's d:
+    atr14, rsi14, distFrom20High/Low, and the MBO order flow: deltaBar, cvd20,
+    relDelta20, cvdSession) are ranked by effect size (Cohen's d:
     how many pooled standard deviations apart the two groups' means are —
     >0.5 is a moderately strong separation, >0.8 is strong). Categorical
-    features (hourUtc, dayOfWeek, exitReason) get a win-rate-by-bucket
-    breakdown instead."""
+    features (hourUtc, dayOfWeek, flowDivergence, exitReason) get a
+    win-rate-by-bucket breakdown instead. A strong order-flow separation is
+    directly actionable: delta_above/cvd_rising/rel_volume_above are real
+    entry conditions, so a finding there can be tested as a revision."""
     rows = get_trade_features(job_id)
     if len(rows) < 4:
         raise ToolError(f"only {len(rows)} closed trades — too few for a meaningful comparison (want 10+)")
@@ -474,7 +527,12 @@ def compare_winners_vs_losers(job_id: str) -> dict:
     wins = [r for r in rows if r["outcome"] == "win"]
     losses = [r for r in rows if r["outcome"] == "loss"]
 
-    numeric_features = ["relVolume20", "atr14", "rsi14", "distFrom20High", "distFrom20Low"]
+    numeric_features = [
+        "relVolume20", "atr14", "rsi14", "distFrom20High", "distFrom20Low",
+        # Order flow — null for symbols without MBO side data, in which case
+        # the len() guard below drops them from the ranking automatically.
+        "deltaBar", "cvd20", "relDelta20", "cvdSession",
+    ]
     numeric_comparison = []
     for feat in numeric_features:
         wv = [r["marketContextAtEntry"][feat] for r in wins if r["marketContextAtEntry"][feat] is not None]
@@ -493,7 +551,7 @@ def compare_winners_vs_losers(job_id: str) -> dict:
     numeric_comparison.sort(key=lambda x: -abs(x["effectSize"]))
 
     categorical_comparison = {}
-    for feat in ("hourUtc", "dayOfWeek", "exitReason"):
+    for feat in ("hourUtc", "dayOfWeek", "flowDivergence", "exitReason"):
         key_fn = (lambda r: r["exitReason"]) if feat == "exitReason" else (lambda r, f=feat: r["marketContextAtEntry"][f])
         buckets: dict = {}
         for r in rows:

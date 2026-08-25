@@ -429,7 +429,8 @@ def _bars_from_1m(symbol: str, bucket: str, interval: str,
                max(high)                AS high,
                min(low)                 AS low,
                last(close ORDER BY ts)  AS close,
-               sum(volume)              AS volume
+               sum(volume)              AS volume,
+               sum(delta)               AS delta
         FROM bars_1m
         WHERE {where}
         GROUP BY 1 ORDER BY 1
@@ -487,7 +488,12 @@ def _duck_bars(symbol: str, interval: str, start: int | None = None,
                max(price) AS high,
                min(price) AS low,
                last(price ORDER BY ts_event) AS close,
-               sum(size) AS volume
+               sum(size) AS volume,
+               -- Signed order flow, same convention as duckdb_store's
+               -- BARS_1M_SELECT: aggressive buys minus aggressive sells.
+               sum(CASE WHEN side = 'B' THEN size
+                        WHEN side = 'A' THEN -size
+                        ELSE 0 END) AS delta
         FROM mbo_events
         WHERE action = 'T' AND {where}
         GROUP BY 1 ORDER BY 1
@@ -501,10 +507,16 @@ def _duck_bars(symbol: str, interval: str, start: int | None = None,
 
 
 def resample_bars(bars: pd.DataFrame, interval: str) -> pd.DataFrame:
-    """Roll already-aggregated OHLCV bars up to a coarser interval."""
-    agg = bars.resample(interval).agg(
-        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-    )
+    """Roll already-aggregated OHLCV bars up to a coarser interval.
+
+    `delta` (signed order flow) sums like volume does, but only the DuckDB
+    paths carry it — the ohlcv-1m.csv fallback has no side information at
+    all, so it is aggregated only when present rather than assumed.
+    """
+    how = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    if "delta" in bars.columns:
+        how["delta"] = "sum"
+    agg = bars.resample(interval).agg(how)
     return agg.dropna(subset=["open"])
 
 
@@ -623,7 +635,15 @@ def bars_to_records(bars: pd.DataFrame) -> list[dict]:
     times = bars.index.values.astype("datetime64[ns]").astype("int64") // 1_000_000_000
     o, h, l, c = (bars[col].to_numpy().round(4) for col in ("open", "high", "low", "close"))
     v = bars["volume"].to_numpy(dtype=float)
+    # Signed order flow (aggressive buys minus sells), from the MBO ticks.
+    # Absent on the ohlcv-1m.csv fallback path, which has no side data — zero
+    # there rather than None so arithmetic downstream doesn't have to branch;
+    # `hasDelta` is what tells a caller the difference between "flat flow" and
+    # "no flow data".
+    has_delta = "delta" in bars.columns
+    d = bars["delta"].to_numpy(dtype=float) if has_delta else [0.0] * len(v)
     return [
-        {"time": int(t), "open": float(o_), "high": float(h_), "low": float(l_), "close": float(c_), "volume": float(v_)}
-        for t, o_, h_, l_, c_, v_ in zip(times, o, h, l, c, v)
+        {"time": int(t), "open": float(o_), "high": float(h_), "low": float(l_), "close": float(c_),
+         "volume": float(v_), "delta": float(d_), "hasDelta": has_delta}
+        for t, o_, h_, l_, c_, v_, d_ in zip(times, o, h, l, c, v, d)
     ]

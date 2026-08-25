@@ -103,6 +103,15 @@ actually moves performance, so each experiment isolates a single cause:
   find_near_miss_entries on the champion's backtest to see where it is actually \
   losing, and test that variable rather than guessing at random. Log what you learn \
   with log_finding.
+- USE THE ORDER FLOW. This platform has Databento MBO tick data, so every trade \
+  carries real signed flow at entry — deltaBar, cvd20, relDelta20, cvdSession and \
+  flowDivergence in get_trade_features, ranked against price features by \
+  compare_winners_vs_losers. A separation there is the most actionable kind of \
+  finding you can get, because delta_above/delta_below/cvd_rising/cvd_falling/ \
+  rel_volume_above are real entry conditions: "losers are the breakouts with \
+  negative delta behind them" turns straight into adding one flow filter and \
+  re-running. Price-only tuning (lookbacks, RSI thresholds, ATR multiples) is the \
+  shallower lever — reach for flow first when the flow features separate.
 - Each experiment is: propose_strategy_revision (one change, off the CURRENT \
   champion) -> run_backtest -> compare_backtests against the current champion's job.
 - Keep the winner. If the revision wins, it becomes the new champion and the next \

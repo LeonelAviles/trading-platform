@@ -20,18 +20,60 @@ class Indicators:
         self.highs = deque(maxlen=cap)
         self.lows = deque(maxlen=cap)
         self.closes = deque(maxlen=cap)
+        # Order flow, from the Databento MBO ticks: per-bar traded size and
+        # delta (aggressive buys minus aggressive sells). Sourced from
+        # bars_1m.delta, so these are real signed flow, not tick-rule guesses.
+        self.volumes = deque(maxlen=cap)
+        self.deltas = deque(maxlen=cap)
         self._rsi = {}   # period -> {avg_gain, avg_loss, seed, value}
         self._atr = {}   # period -> {value, seed}
         self.count = 0
+        # False once a bar arrives with no flow data (the ohlcv-1m.csv
+        # fallback), so flow conditions can refuse to fire rather than
+        # silently evaluating against zeros.
+        self.has_flow = True
 
-    def update(self, o, h, l, c):
+    def update(self, o, h, l, c, v=None, d=None):
         self.opens.append(o)
         self.highs.append(h)
         self.lows.append(l)
         self.closes.append(c)
+        self.volumes.append(float(v) if v is not None else 0.0)
+        self.deltas.append(float(d) if d is not None else 0.0)
+        if d is None:
+            self.has_flow = False
         self.count += 1
         self._update_rsi()
         self._update_atr()
+
+    def delta_sum(self, n):
+        """Cumulative signed flow over the last n bars — a windowed CVD.
+        None until n bars exist, so a condition can't fire on a partial window."""
+        dl = list(self.deltas)
+        if len(dl) < n:
+            return None
+        return sum(dl[-n:])
+
+    def rel_volume(self, n):
+        """This bar's traded size over the average of the last n bars. 1.0 is
+        an average bar; 2.0 is twice the usual participation."""
+        vl = list(self.volumes)
+        if len(vl) < n:
+            return None
+        window = vl[-n:]
+        avg = sum(window) / n
+        return vl[-1] / avg if avg else None
+
+    def rel_delta(self, n):
+        """Cumulative delta over n bars, scaled by the average absolute
+        per-bar delta over the same window. Unitless, so a threshold means
+        the same thing on ES as on a stock — raw contract counts do not."""
+        dl = list(self.deltas)
+        if len(dl) < n:
+            return None
+        window = dl[-n:]
+        scale = sum(abs(x) for x in window) / n
+        return sum(window) / scale if scale else None
 
     def sma(self, n, offset=0):
         """Mean of the n closes ending `offset` bars back (offset=0 = latest)."""
@@ -91,6 +133,8 @@ def condition_lookback(cond):
         return int(cond["lookback"]) + 1
     if t == "consecutive":
         return int(cond["count"]) + 1
+    if t in ("delta_above", "delta_below", "cvd_rising", "cvd_falling", "rel_volume_above"):
+        return int(cond["lookback"]) + 1
     return 2
 
 
@@ -125,6 +169,24 @@ def eval_condition(cond, ind: Indicators):
         if len(lows) <= lb:
             return False
         return c < min(lows[-lb - 1:-1])
+    # --- order-flow conditions (MBO-derived; see Indicators.update) --------
+    if t in ("delta_above", "delta_below", "cvd_rising", "cvd_falling", "rel_volume_above"):
+        if not ind.has_flow:
+            return False  # no side data for this symbol — never fire blind
+        lb = int(cond["lookback"])
+        if t == "rel_volume_above":
+            rv = ind.rel_volume(lb)
+            return rv is not None and rv > float(cond["value"])
+        if t in ("cvd_rising", "cvd_falling"):
+            ds = ind.delta_sum(lb)
+            if ds is None:
+                return False
+            return ds > 0 if t == "cvd_rising" else ds < 0
+        rd = ind.rel_delta(lb)
+        if rd is None:
+            return False
+        return rd > float(cond["value"]) if t == "delta_above" else rd < float(cond["value"])
+
     if t == "consecutive":
         n, color = int(cond["count"]), cond["color"]
         if len(ind.closes) < n:
