@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import agent_llm
+import agent_tools
 import data_store
 import nautilus_runner
 import strategy_spec
@@ -211,35 +212,38 @@ def create_backtest(body: dict = Body(...)):
 
 
 # --------------------------------------------------------------------------
-# Assistant chat — implementation removed for now. Routes stay in place so
-# the frontend (ChatPanel, AI Insights) degrades gracefully to "offline"
-# instead of hitting 404s.
+# Assistant chat — conversational loop over the same agent_tools the Hermes
+# plugin drives, so the in-app panel and the external agent see identical
+# strategies, backtests and findings.
+#
+# Every route here stays answerable with no ANTHROPIC_API_KEY set: the
+# frontend renders an "offline" badge off /api/chat/status and shows the
+# error text in the bubble, which is friendlier than a 500.
 # --------------------------------------------------------------------------
 
 @app.get("/api/chat/status")
 def chat_status():
-    return {"connected": False, "model": None, "reason": "assistant not configured"}
+    return agent_llm.chat_status()
 
 
 @app.post("/api/chat")
 def chat(body: dict = Body(...)):
-    return {"role": "assistant", "content": "The assistant is not configured.", "error": True}
-
-
-@app.post("/api/backtests/{job_id}/insights")
-def get_backtest_insights(job_id: str):
-    job = nautilus_runner.get_job(job_id)
-    if job is None:
-        raise HTTPException(404, f"backtest '{job_id}' not found")
-    return {"role": "assistant", "content": "The assistant is not configured.", "error": True}
+    return agent_llm.chat(body.get("messages") or [], body.get("context"))
 
 
 @app.post("/api/chat/stream")
 def chat_stream(body: dict = Body(...)):
-    """SSE stream — immediately reports the assistant as unconfigured."""
+    """SSE stream of one assistant turn.
+
+    stream_chat() yields errors as events rather than raising, so this
+    generator has no failure path of its own — it always terminates with a
+    "done" event and the reader in api.js always completes.
+    """
+    messages, context = body.get("messages") or [], body.get("context")
+
     def gen():
-        event = {"type": "delta", "text": "The assistant is not configured."}
-        yield f"data: {json.dumps(event)}\n\n"
+        for event in agent_llm.stream_chat(messages, context):
+            yield f"data: {json.dumps(event)}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
@@ -247,3 +251,53 @@ def chat_stream(body: dict = Body(...)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/backtests/{job_id}/insights")
+def get_backtest_insights(job_id: str):
+    """One-shot analysis of a finished backtest — the "AI Insights" button.
+
+    Seeded as a normal chat turn naming the job id, so the model reaches the
+    numbers through the same tools (get_backtest_analytics, get_win_rate,
+    compare_winners_vs_losers) it would use if asked in the panel, rather
+    than through a second, separately-maintained prompt path.
+    """
+    job = nautilus_runner.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"backtest '{job_id}' not found")
+    prompt = (
+        f"Analyze backtest {job_id}. Pull its analytics and compare winners against "
+        f"losers, then give me the two or three things that most stand out — what's "
+        f"working, what's losing money, and the single change most worth testing next."
+    )
+    return agent_llm.chat([{"role": "user", "content": prompt}])
+
+
+# --------------------------------------------------------------------------
+# Agent tool bridge
+#
+# One generic endpoint over agent_tools.call_tool() rather than a REST route
+# per tool. The tools are already a closed, self-describing set (TOOLS is the
+# manifest, call_tool the dispatcher), so hand-writing 15 routes would just be
+# a second copy of that mapping to keep in sync.
+#
+# This exists so an out-of-process agent runtime — the Hermes plugin in
+# hermes_plugin/ — can drive the same tools agent_llm uses in-process, without
+# importing nautilus_trader/duckdb/polars into its own interpreter.
+# --------------------------------------------------------------------------
+
+@app.get("/api/agent/tools")
+def list_agent_tools():
+    """OpenAI-format function-calling manifest. Hermes consumes this shape
+    directly (ctx.register_tool(schema=...)); the plugin ships a generated
+    copy so it can register while the backend is down, and uses this route
+    to check for drift."""
+    return agent_tools.TOOLS
+
+
+@app.post("/api/agent/tools/{name}")
+def call_agent_tool(name: str, arguments: dict = Body(default={})):
+    """Dispatch one tool call. call_tool() never raises — failures come back
+    as {"error": ...} with a 200, because the caller is a model that should
+    read the error and adjust, not an HTTP client that should retry."""
+    return agent_tools.call_tool(name, arguments)

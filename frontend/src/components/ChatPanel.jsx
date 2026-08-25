@@ -2,11 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { fetchChatStatus, streamChat } from '../api';
 
 // Friendly labels for backend tool calls shown while the assistant works.
+// Keyed by agent_tools tool names (backend/agent_tools.py). Anything not
+// listed falls back to `Running <name>`, so this map only needs to cover the
+// tools whose raw name reads badly in the UI.
 const TOOL_LABELS = {
-  get_market_summary: 'Reading market data',
+  get_condition_vocabulary: 'Checking the rule vocabulary',
+  create_strategy: 'Building the strategy',
+  get_strategy: 'Reading the strategy',
   list_strategies: 'Reading strategies',
-  list_backtests: 'Listing backtests',
+  propose_strategy_revision: 'Drafting a revision',
+  run_backtest: 'Running the backtest (this can take a few minutes)',
   get_backtest: 'Reading backtest results',
+  get_backtest_analytics: 'Crunching analytics',
+  get_win_rate: 'Computing win rate',
+  compare_backtests: 'Comparing backtests',
+  get_trade_features: 'Reading trade context',
+  compare_winners_vs_losers: 'Comparing winners vs losers',
+  find_near_miss_entries: 'Looking for near-miss entries',
+  log_finding: 'Saving a finding',
+  get_findings: 'Reading saved findings',
 };
 
 const STORAGE_KEY = 'chatMessages';

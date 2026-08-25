@@ -140,3 +140,138 @@ def _envelope(created: list[dict], jobs_by_strategy_id: dict, comparison: dict |
     if "directionGroup" in generated:
         return {**generated, "explanation": explanation}
     return {"strategy": generated, "explanation": explanation}
+
+
+# --------------------------------------------------------------------------
+# Conversational analyst loop (/api/chat, /api/chat/stream)
+#
+# Separate from generate_strategy() above, and deliberately so: that function
+# is a one-shot with a fixed output envelope the UI renders as structured
+# rules. This one is open-ended chat over the same toolset, so it keeps its
+# own system prompt and returns prose. They share agent_tools and _client(),
+# not a prompt.
+# --------------------------------------------------------------------------
+
+CHAT_SYSTEM_PROMPT = """You are a quant analyst embedded in a trading platform, \
+talking to the trader who owns it. You have tools that read their real strategies, \
+run real NautilusTrader backtests, and analyze real trades.
+
+How to work:
+- Ground answers in tool output. If a question can be settled by calling a tool, \
+  call it rather than reasoning from memory about what their data probably says.
+- Never invent strategy ids, job ids, or numbers. If you need an id, list first.
+- Backtests are slow (up to ~3 minutes). Run one when the trader is asking a \
+  question that genuinely needs fresh results; don't re-run a backtest whose \
+  results you can already read with get_backtest or get_backtest_analytics.
+- When evidence is thin — a handful of trades, a comparison the tool itself \
+  flags as not significant — say so instead of drawing a confident conclusion. \
+  compare_backtests returns a `verdict` field that already accounts for this; \
+  defer to it rather than eyeballing win rate.
+- Be brief and concrete. This is a side panel, not a report: a few sentences, \
+  specific numbers, no restating the question back.
+
+The trader's current chart context (symbol/interval) is provided with their \
+message. Treat it as what they're looking at, not as a constraint — if they ask \
+about a different symbol, answer about that one.
+"""
+
+MAX_CHAT_TOOL_ROUNDS = 8
+
+
+def chat_status() -> dict:
+    """What /api/chat/status reports. Never raises — 'not configured' is a
+    normal state the UI renders as an offline badge."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return {"connected": False, "model": None, "reason": "ANTHROPIC_API_KEY is not set"}
+    return {"connected": True, "model": MODEL, "reason": None}
+
+
+def _chat_messages(messages: list[dict], context: dict | None) -> list[dict]:
+    """Frontend history -> Anthropic messages.
+
+    Chart context rides on the last user turn rather than in the system prompt
+    because it changes as the trader moves around the app; pinning it to the
+    turn it belongs to keeps earlier answers honest about what was on screen
+    when they were given.
+    """
+    wire = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    if not wire:
+        raise ValueError("No message to send.")
+    if context:
+        bits = ", ".join(f"{k}={v}" for k, v in context.items() if v)
+        if bits:
+            wire[-1] = {**wire[-1], "content": f"[chart context: {bits}]\n\n{wire[-1]['content']}"}
+    return wire
+
+
+def stream_chat(messages: list[dict], context: dict | None = None):
+    """Yield SSE event dicts for one assistant turn.
+
+    Event shapes are fixed by the frontend's streamChat() reader (api.js):
+    {"type": "delta", "text"} | {"type": "tool", "name"} |
+    {"type": "error", "message"} | {"type": "done"}.
+
+    Errors are yielded as events, not raised: the response has already
+    started streaming by the time most failures happen, so a mid-stream
+    exception would leave the UI with a half-written bubble and no
+    explanation. The caller closes with "done" either way.
+    """
+    try:
+        client = _client()
+        wire = _chat_messages(messages, context)
+    except LLMNotConfigured as e:
+        yield {"type": "error", "message": f"The assistant is not configured: {e}"}
+        return
+    except ValueError as e:
+        yield {"type": "error", "message": str(e)}
+        return
+
+    try:
+        for _ in range(MAX_CHAT_TOOL_ROUNDS):
+            with client.messages.stream(
+                model=MODEL, max_tokens=1536, system=CHAT_SYSTEM_PROMPT,
+                tools=agent_tools.ANTHROPIC_TOOLS, messages=wire,
+            ) as stream:
+                for text in stream.text_stream:
+                    yield {"type": "delta", "text": text}
+                response = stream.get_final_message()
+
+            tool_calls = [b for b in response.content if b.type == "tool_use"]
+            if not tool_calls:
+                return
+
+            wire.append({"role": "assistant", "content": response.content})
+            results = []
+            for call in tool_calls:
+                yield {"type": "tool", "name": call.name}
+                result = agent_tools.call_tool(call.name, call.input)
+                results.append({
+                    "type": "tool_result", "tool_use_id": call.id, "content": str(result),
+                })
+            wire.append({"role": "user", "content": results})
+
+        yield {"type": "error", "message": (
+            f"Stopped after {MAX_CHAT_TOOL_ROUNDS} tool rounds without a final answer."
+        )}
+    except Exception as e:
+        yield {"type": "error", "message": f"Assistant error: {type(e).__name__}: {e}"}
+
+
+def chat(messages: list[dict], context: dict | None = None) -> dict:
+    """Non-streaming sibling of stream_chat, for /api/chat and the backtest
+    insights route. Collapses the same event stream into one message so the
+    two paths can't drift in behaviour."""
+    text, error = [], None
+    for event in stream_chat(messages, context):
+        if event["type"] == "delta":
+            text.append(event["text"])
+        elif event["type"] == "error":
+            error = event["message"]
+    content = "".join(text).strip()
+    if error and not content:
+        return {"role": "assistant", "content": error, "error": True}
+    return {"role": "assistant", "content": content, "error": False}

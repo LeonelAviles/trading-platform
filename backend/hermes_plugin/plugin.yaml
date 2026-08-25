@@ -1,0 +1,21 @@
+name: trading
+version: 1.0.0
+description: "Quant-engineer tools for the trading platform — build deterministic strategies, run NautilusTrader backtests, and analyze results. Thin HTTP client over the FastAPI backend (backend/main.py); requires that server to be running."
+author: leonel.aviles32@gmail.com
+kind: backend
+provides_tools:
+  - trading_get_condition_vocabulary
+  - trading_create_strategy
+  - trading_get_strategy
+  - trading_list_strategies
+  - trading_propose_strategy_revision
+  - trading_run_backtest
+  - trading_get_backtest
+  - trading_get_backtest_analytics
+  - trading_get_win_rate
+  - trading_compare_backtests
+  - trading_get_trade_features
+  - trading_compare_winners_vs_losers
+  - trading_find_near_miss_entries
+  - trading_log_finding
+  - trading_get_findings
