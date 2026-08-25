@@ -167,7 +167,7 @@ def delete_strategy(strategy_id: str):
 
 
 # --------------------------------------------------------------------------
-# Backtests (NautilusTrader jobs + built-in demo)
+# Backtests (NautilusTrader jobs)
 # --------------------------------------------------------------------------
 
 @app.get("/api/engine/status")
@@ -208,16 +208,11 @@ def get_backtest_analytics(job_id: str):
 
 @app.post("/api/backtests")
 def create_backtest(body: dict = Body(...)):
-    if body.get("demo"):
-        symbol = body.get("symbol")
-        if not symbol:
-            raise HTTPException(400, "demo backtest requires 'symbol'")
-        return nautilus_runner.start_backtest(None, demo=True, symbol=symbol)
     strategy_id = body.get("strategyId")
     if not strategy_id:
-        raise HTTPException(400, "'strategyId' (or demo: true) is required")
+        raise HTTPException(400, "'strategyId' is required")
     strategy = _load_strategy(strategy_id)
-    return nautilus_runner.start_backtest(strategy, demo=False)
+    return nautilus_runner.start_backtest(strategy)
 
 
 # --------------------------------------------------------------------------

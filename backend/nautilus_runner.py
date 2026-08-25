@@ -9,10 +9,7 @@ Job lifecycle: POST /api/backtests creates a job folder under backtests/ and
 a background thread runs the worker, persisting job.json at each step so jobs
 survive backend restarts.
 
-A built-in "demo" mode runs a fixed breakout rule directly against the loaded
-bars (clearly labeled, not the engine) as a fast pipeline check.
-
-Trade record schema (shared by the worker and demo):
+Trade record schema:
   { id, direction, qty, entryTime, entryPrice, exitTime, exitPrice,
     stopPrice, targetPrice, pnl, reason }
 """
@@ -26,8 +23,6 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-
-import data_store
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
@@ -107,16 +102,6 @@ def delete_job(job_id: str) -> bool:
     shutil.rmtree(path, ignore_errors=True)
     _live_threads.pop(job_id, None)
     return True
-
-
-def _summarize(trades: list[dict]) -> dict:
-    wins = [t for t in trades if t["pnl"] > 0]
-    return {
-        "trades": len(trades),
-        "wins": len(wins),
-        "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
-        "totalPnl": round(sum(t["pnl"] for t in trades), 2),
-    }
 
 
 def _r_multiple(t: dict) -> float | None:
@@ -241,48 +226,6 @@ def strategy_analytics(job: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
-# Demo backtest: a fixed 5-bar-low breakout short, evaluated directly on the
-# loaded bars. NOT the engine — a fast way to exercise the UI pipeline.
-# --------------------------------------------------------------------------
-
-def run_demo(symbol: str, interval: str = "1min") -> list[dict]:
-    bars = data_store.bars_to_records(data_store.get_bars(symbol, interval))
-    trades = []
-    position = None
-    lookback = 5
-    for i, bar in enumerate(bars):
-        if position is not None:
-            if bar["high"] >= position["stopPrice"]:
-                exit_price, reason = position["stopPrice"], "stop"
-            elif bar["low"] <= position["targetPrice"]:
-                exit_price, reason = position["targetPrice"], "target"
-            elif i == len(bars) - 1:
-                exit_price, reason = bar["close"], "end_of_data"
-            else:
-                continue
-            position.update({
-                "exitTime": bar["time"], "exitPrice": round(exit_price, 4), "reason": reason,
-                "pnl": round(-(exit_price - position["entryPrice"]) * position["qty"], 2),
-            })
-            trades.append(position)
-            position = None
-            continue
-        if i < lookback:
-            continue
-        prior_low = min(b["low"] for b in bars[i - lookback:i])
-        if bar["close"] < prior_low:
-            entry = bar["close"]
-            stop = entry * 1.003
-            target = entry - (stop - entry) * 2
-            position = {
-                "id": str(uuid.uuid4()), "direction": "short", "qty": 100,
-                "entryTime": bar["time"], "entryPrice": round(entry, 4),
-                "stopPrice": round(stop, 4), "targetPrice": round(target, 4),
-            }
-    return trades
-
-
-# --------------------------------------------------------------------------
 # Real NautilusTrader backtest (subprocess worker)
 # --------------------------------------------------------------------------
 
@@ -318,31 +261,22 @@ def _nautilus_thread(job: dict, strategy: dict):
         _write_job(job)
 
 
-def start_backtest(strategy: dict | None, demo: bool, symbol: str | None = None) -> dict:
+def start_backtest(strategy: dict) -> dict:
     job = {
         "id": uuid.uuid4().hex[:12],
         "createdAt": datetime.now(timezone.utc).isoformat(),
-        "strategyId": strategy.get("id") if strategy else None,
-        "strategyName": strategy.get("name") if strategy else "Demo (built-in sample logic)",
-        "symbol": (strategy or {}).get("symbol") or symbol,
+        "strategyId": strategy.get("id"),
+        "strategyName": strategy.get("name"),
+        "symbol": strategy.get("symbol"),
         # The bar size this ran on — the chart switches to it when the job is
         # selected, so trades are drawn on the timeframe that produced them.
-        "interval": (strategy or {}).get("interval", "1min"),
+        "interval": strategy.get("interval", "1min"),
         "status": "preparing",
         "message": None,
-        "source": "demo" if demo else "nautilus",
+        "source": "nautilus",
     }
     with _jobs_lock:
         _write_job(job)
-
-    if demo:
-        try:
-            trades = run_demo(job["symbol"])
-            job.update(status="done", trades=trades, summary=_summarize(trades))
-        except Exception as e:
-            job.update(status="error", message=str(e))
-        _write_job(job)
-        return job
 
     t = threading.Thread(target=_nautilus_thread, args=(job, strategy), daemon=True)
     _live_threads[job["id"]] = t

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   fetchStrategies, saveStrategy, deleteStrategy, generateStrategy,
-  fetchEngineStatus, fetchBacktest, runBacktest, runDemoBacktest, fetchSymbols,
+  fetchEngineStatus, runBacktest, fetchSymbols,
 } from '../api';
 import { INTERVALS, describeCondition, describeInterval, describeSizing, describeStop, describeTarget } from '../strategyDefs';
 
@@ -146,9 +146,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState('');
   const [genResult, setGenResult] = useState(null); // { explanation, championId, goal?, variants?, experiments?, comparison?, note? }
-  const [job, setJob] = useState(null);
   const [error, setError] = useState('');
-  const pollRef = useRef(null);
 
   // Front-door → dashboard: clicking a strategy opens its analytics
   // dashboard, where "Run Backtest" hands off to the chart (see
@@ -165,7 +163,6 @@ export default function StrategyPage({ symbol, setSymbol }) {
     refresh();
     fetchEngineStatus().then(setEngineStatus).catch(() => setEngineStatus(null));
     fetchSymbols().then(setSymbols).catch(() => setSymbols([]));
-    return () => clearInterval(pollRef.current);
   }, [refresh]);
 
   // A never-saved draft's default symbol can predate the symbols fetch
@@ -244,22 +241,8 @@ export default function StrategyPage({ symbol, setSymbol }) {
     refresh();
   }
 
-  function pollJob(id) {
-    clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const j = await fetchBacktest(id);
-        setJob(j);
-        if (j.status === 'done' || j.status === 'error') clearInterval(pollRef.current);
-      } catch {
-        clearInterval(pollRef.current);
-      }
-    }, 2000);
-  }
-
   async function handleRun() {
     setError('');
-    setJob(null);
     try {
       let saved = draft;
       if (!draft.id) {
@@ -268,17 +251,17 @@ export default function StrategyPage({ symbol, setSymbol }) {
         refresh();
       }
       const j = await runBacktest(saved.id);
-      setJob(j);
-      if (j.status !== 'done' && j.status !== 'error') pollJob(j.id);
-    } catch (e) {
-      setError(e.message);
-    }
-  }
-
-  async function handleDemo() {
-    setError('');
-    try {
-      setJob(await runDemoBacktest(draft.symbol));
+      // Hand off to the chart: it polls the job and draws the trades as soon
+      // as the engine finishes, with the assistant open to talk them over.
+      navigate('/chart', {
+        state: {
+          strategyId: saved.id,
+          symbol: saved.symbol,
+          backtestId: j.id,
+          review: true,
+          openChat: true,
+        },
+      });
     } catch (e) {
       setError(e.message);
     }
@@ -325,7 +308,7 @@ export default function StrategyPage({ symbol, setSymbol }) {
         {engineStatus && !engineStatus.installed && (
           <div className="lean-warning">
             NautilusTrader not installed — real backtests unavailable.
-            <br />Run <code>pip install nautilus_trader</code> (see SETUP-ENGINE.md). Demo mode works without it.
+            <br />Run <code>pip install nautilus_trader</code> (see SETUP-ENGINE.md).
           </div>
         )}
         {engineStatus && engineStatus.installed && (
@@ -468,7 +451,6 @@ export default function StrategyPage({ symbol, setSymbol }) {
 
           <div className="run-bar">
             <span className="run-label">Run this strategy over the loaded data.</span>
-            <button className="btn" onClick={handleDemo} title="Built-in sample logic, not the engine — a fast pipeline check">Run demo</button>
             <button
               className="btn btn-primary" onClick={handleRun}
               disabled={engineStatus && !engineStatus.installed}
@@ -477,18 +459,6 @@ export default function StrategyPage({ symbol, setSymbol }) {
               Run backtest
             </button>
           </div>
-
-          {job && (
-            <div className={`job-status job-${job.status}`}>
-              <b>{job.strategyName}</b> — {job.status}
-              {job.source === 'nautilus' ? ' · NautilusTrader' : job.source === 'demo' ? ' · demo' : ''}
-              {job.message ? ` · ${job.message}` : ''}
-              {job.summary && (
-                <span> · {job.summary.trades} trades · {job.summary.winRate}% win · PnL {job.summary.totalPnl}</span>
-              )}
-              {job.status === 'done' && <span> · click the strategy in the list to open it in the chart</span>}
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -172,7 +172,7 @@ def run_backtest(strategy_id: str, timeout_s: float = 180.0) -> dict:
     trades back to analyze next, so it waits rather than returning a job id
     to poll."""
     strategy = get_strategy(strategy_id)
-    job = nautilus_runner.start_backtest(strategy, demo=False)
+    job = nautilus_runner.start_backtest(strategy)
     job_id = job["id"]
 
     import time
@@ -485,7 +485,7 @@ def get_trade_features(job_id: str) -> list[dict]:
     job = get_backtest(job_id)
     strategy_id = job.get("strategyId")
     if not strategy_id:
-        raise ToolError("this job has no strategyId (demo backtests aren't traceable to a saved strategy)")
+        raise ToolError("this job has no strategyId — it isn't traceable to a saved strategy")
     strategy = get_strategy(strategy_id)
     session = strategy.get("session", {"start": "13:30", "end": "19:55"})
 

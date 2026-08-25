@@ -9,7 +9,7 @@ The strategy JSON is the same document the builder UI produces; its condition
 vocabulary (see strategy_spec.py) is interpreted at runtime here — no code
 generation needed since Nautilus is an in-process library.
 
-Trade record schema (unchanged, shared with the demo path):
+Trade record schema:
   { id, direction, qty, entryTime, entryPrice, exitTime, exitPrice,
     stopPrice, targetPrice, pnl, reason }
 """

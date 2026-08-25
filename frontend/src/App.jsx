@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { fetchSymbols } from './api';
 import { HeaderSlotContext } from './headerSlot';
+import { ChatContext } from './chatContext';
 import CandlestickPage from './pages/CandlestickPage';
 import StrategyPage from './pages/StrategyPage';
 import StrategyDashboardPage from './pages/StrategyDashboardPage';
@@ -11,6 +12,7 @@ export default function App() {
   const [symbols, setSymbols] = useState([]);
   const [symbol, setSymbol] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatContext, setChatContext] = useState({});
   // Ref-callbacks into state so the slot nodes are available to child portals
   // once the header mounts.
   const [slot, setSlot] = useState(null);
@@ -18,6 +20,17 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const onChart = location.pathname.startsWith('/chart');
+
+  // Arriving from a run (Run backtest -> chart): honour the symbol the job
+  // belongs to and pop the assistant open, so the trader lands on the trades
+  // with somewhere to talk about them. Keyed on location.key so running a
+  // second backtest re-opens a panel that was closed in between.
+  useEffect(() => {
+    const st = location.state;
+    if (!st) return;
+    if (st.symbol) setSymbol(st.symbol);
+    if (st.openChat) setChatOpen(true);
+  }, [location.key, location.state]);
 
   useEffect(() => {
     fetchSymbols().then((syms) => {
@@ -78,13 +91,15 @@ export default function App() {
       </header>
       <div className="app-body">
         <HeaderSlotContext.Provider value={{ main: slot, trailing: trailingSlot }}>
-          <Routes>
-            <Route path="/" element={<StrategyPage symbol={symbol} setSymbol={setSymbol} />} />
-            <Route path="/strategy/:id" element={<StrategyDashboardPage />} />
-            <Route path="/chart" element={<CandlestickPage symbol={symbol} />} />
-          </Routes>
+          <ChatContext.Provider value={{ chatContext, setChatContext }}>
+            <Routes>
+              <Route path="/" element={<StrategyPage symbol={symbol} setSymbol={setSymbol} />} />
+              <Route path="/strategy/:id" element={<StrategyDashboardPage />} />
+              <Route path="/chart" element={<CandlestickPage symbol={symbol} />} />
+            </Routes>
+            {chatOpen && <ChatPanel symbol={symbol} onClose={() => setChatOpen(false)} />}
+          </ChatContext.Provider>
         </HeaderSlotContext.Provider>
-        {chatOpen && <ChatPanel symbol={symbol} onClose={() => setChatOpen(false)} />}
       </div>
     </div>
   );

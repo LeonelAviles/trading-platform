@@ -15,7 +15,7 @@ pip install nautilus_trader
 A Python 3.13 / Windows wheel is published (v1.230.0 here). The backend
 reports `installed` + `version` at `/api/engine/status`; the Strategies page
 shows a green "Engine: NautilusTrader <version>" badge when it's ready, and
-disables **Run backtest** (falling back to demo mode) if the import fails.
+disables **Run backtest** if the import fails.
 
 ## How a backtest runs
 
@@ -55,12 +55,6 @@ chart renders the trades (and reveals them progressively during replay).
   tool models **decision logic, not liquidity**. (The chart's displayed volume
   is separate, from the real data.)
 - All timestamps are UTC; strategy session windows are UTC.
-
-## Demo mode
-
-**Run demo** computes a fixed sample rule (5-bar-low breakout short) directly
-in Python — clearly labeled, not the engine — as a fast way to exercise the
-chart/replay/comparison pipeline. It needs nothing installed.
 
 ## Adding data
 

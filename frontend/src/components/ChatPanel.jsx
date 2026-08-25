@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { fetchChatStatus, streamChat } from '../api';
+import { ChatContext } from '../chatContext';
 
 // Friendly labels for backend tool calls shown while the assistant works.
 // Keyed by agent_tools tool names (backend/agent_tools.py). Anything not
@@ -22,6 +23,20 @@ const TOOL_LABELS = {
   log_finding: 'Saving a finding',
   get_findings: 'Reading saved findings',
 };
+
+// Backtests already reviewed in this page session. A review turn fires once
+// per job: reopening the panel, or landing back on the same job, shouldn't
+// make the assistant greet the same run twice.
+const reviewedJobs = new Set();
+
+// Opening line for a backtest the trader just launched. Sent as a real user
+// turn (the model needs it in history) but rendered as a note, since the
+// trader didn't type it.
+function reviewPrompt(jobId, strategyName) {
+  return `I just ran backtest ${jobId}${strategyName ? ` on "${strategyName}"` : ''} and I'm looking at its trades on the chart. `
+    + 'Take a look at how it did. If anything you\'d need to decide the next move is unclear, '
+    + 'ask me before revising the strategy or running another backtest.';
+}
 
 const STORAGE_KEY = 'chatMessages';
 const WIDTH_KEY = 'chatWidth';
@@ -48,6 +63,7 @@ function maxWidth() {
 }
 
 export default function ChatPanel({ symbol, interval, onClose }) {
+  const { chatContext } = useContext(ChatContext);
   const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
@@ -98,13 +114,11 @@ export default function ChatPanel({ symbol, interval, onClose }) {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, pending]);
 
-  async function send() {
-    const text = input.trim();
+  async function sendText(text, { seed = false } = {}) {
     if (!text || pending) return;
-    const userMsg = { id: crypto.randomUUID(), role: 'user', content: text };
+    const userMsg = { id: crypto.randomUUID(), role: 'user', content: text, seed };
     const history = [...messages, userMsg];
     setMessages(history);
-    setInput('');
     setPending(true);
     setToolNote(null);
 
@@ -119,7 +133,7 @@ export default function ChatPanel({ symbol, interval, onClose }) {
       // assistant is chart-aware.
       const wire = history.map((m) => ({ role: m.role, content: m.content }));
       setMessages((m) => [...m, { id: replyId, role: 'assistant', content: '' }]);
-      await streamChat(wire, { symbol, interval }, {
+      await streamChat(wire, { symbol, interval, ...chatContext, reviewJobId: undefined }, {
         onDelta: (delta) => {
           setToolNote(null);
           patchReply((msg) => ({ content: msg.content + delta }));
@@ -141,6 +155,27 @@ export default function ChatPanel({ symbol, interval, onClose }) {
       inputRef.current?.focus();
     }
   }
+
+  function send() {
+    const text = input.trim();
+    if (!text || pending) return;
+    setInput('');
+    sendText(text);
+  }
+
+  // A backtest the trader just ran, now finished on the chart behind this
+  // panel: open the conversation instead of waiting to be asked. Held until
+  // the status check says there's an assistant to answer — greeting them with
+  // an "ANTHROPIC_API_KEY is not set" bubble is worse than staying quiet.
+  useEffect(() => {
+    const jobId = chatContext.reviewJobId;
+    if (!jobId || pending || !status?.connected || reviewedJobs.has(jobId)) return;
+    reviewedJobs.add(jobId);
+    sendText(reviewPrompt(jobId, chatContext.strategyName), { seed: true });
+    // sendText closes over the history it should send; re-running on every
+    // message change would re-fire the greeting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatContext.reviewJobId, pending, status]);
 
   function onKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -200,7 +235,7 @@ export default function ChatPanel({ symbol, interval, onClose }) {
         )}
         {messages.map((m) => (
           (m.content || m.role !== 'assistant') && (
-            <div key={m.id} className={`chat-msg ${m.role}${m.error ? ' error' : ''}`}>{m.content}</div>
+            <div key={m.id} className={`chat-msg ${m.seed ? 'seed' : m.role}${m.error ? ' error' : ''}`}>{m.content}</div>
           )
         ))}
         {pending && toolNote && <div className="chat-tool-note">{toolNote}…</div>}

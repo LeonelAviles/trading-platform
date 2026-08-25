@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { fetchOHLCV, fetchRange, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
+import { ChatContext } from '../chatContext';
 import DrawToolbar from '../components/DrawToolbar';
 import DrawingOverlay from '../drawing/DrawingOverlay';
 import SettingsModal from '../components/SettingsModal';
@@ -43,7 +44,13 @@ function formatVol(v) {
 export default function CandlestickPage({ symbol }) {
   const { main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const location = useLocation();
+  const { setChatContext } = useContext(ChatContext);
   const entryStrategyId = location.state?.strategyId || null;
+  // Set when the chart is entered straight off a Run backtest: that job may
+  // still be running, so it's selected by id rather than picked out of the
+  // finished list, and `review` asks the assistant to open the conversation.
+  const entryBacktestId = location.state?.backtestId || null;
+  const entryReview = !!location.state?.review;
   const [interval, setInterval_] = useState('1min');
   const [status, setStatus] = useState('');
   const [activeTool, setActiveTool] = useState('cursor');
@@ -62,7 +69,8 @@ export default function CandlestickPage({ symbol }) {
 
   // Backtest overlay
   const [backtests, setBacktests] = useState([]);
-  const [selectedBacktestId, setSelectedBacktestId] = useState('');
+  const [selectedBacktestId, setSelectedBacktestId] = useState(entryBacktestId || '');
+  const [selectedJob, setSelectedJob] = useState(null);
   const [backtestTrades, setBacktestTrades] = useState([]);
   const [strategies, setStrategies] = useState([]);
   const [cvdData, setCvdData] = useState([]);
@@ -367,36 +375,80 @@ export default function CandlestickPage({ symbol }) {
     refreshBacktests();
   }, [refreshBacktests]);
 
+  // The selected job's trades and live status. A job entered straight off a
+  // Run backtest is still running, so poll until it settles and draw its
+  // trades the moment they exist.
   useEffect(() => {
-    if (!selectedBacktestId) { setBacktestTrades([]); return; }
+    if (!selectedBacktestId) { setSelectedJob(null); setBacktestTrades([]); return; }
     let cancelled = false;
-    fetchBacktest(selectedBacktestId)
-      .then((job) => {
+    let timer = null;
+    let polled = false;
+    async function load() {
+      try {
+        const job = await fetchBacktest(selectedBacktestId);
         if (cancelled) return;
+        setSelectedJob(job);
         setBacktestTrades(job.trades || []);
         // Draw the trades on the bars that produced them: a 15-minute
         // strategy's entries are meaningless against a 1-minute chart. Jobs
         // recorded before interval was stored have none — leave those alone.
         if (job.interval) setInterval_(job.interval);
-      })
-      .catch(() => { if (!cancelled) setBacktestTrades([]); });
-    return () => { cancelled = true; };
-  }, [selectedBacktestId]);
+        if (job.status === 'preparing' || job.status === 'running') {
+          polled = true;
+          timer = setTimeout(load, 2000);
+        } else if (polled) {
+          // It finished under us — the picker only lists finished jobs.
+          refreshBacktests();
+        }
+      } catch {
+        if (!cancelled) { setSelectedJob(null); setBacktestTrades([]); }
+      }
+    }
+    load();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [selectedBacktestId, refreshBacktests]);
 
-  // Backtests belong to a symbol; changing symbol clears the selection.
-  useEffect(() => { setSelectedBacktestId(''); }, [symbol]);
+  // Backtests belong to a symbol; changing symbol drops a selection that no
+  // longer matches it. Keyed off the loaded job rather than firing blind, so
+  // arriving with a job whose symbol the header is still catching up to
+  // doesn't clear the thing we were sent here to show.
+  useEffect(() => {
+    if (selectedJob && selectedJob.symbol !== symbol) {
+      setSelectedBacktestId('');
+      setSelectedJob(null);
+    }
+  }, [symbol, selectedJob]);
 
-  // Entering the chart from a strategy (front door): once the list loads,
-  // auto-select that strategy's most recent completed backtest.
+  // Entering the chart from a strategy (front door) without a specific job:
+  // once the list loads, auto-select that strategy's most recent completed
+  // backtest.
   const appliedEntryRef = useRef(false);
   useEffect(() => {
-    if (!entryStrategyId || appliedEntryRef.current) return;
+    if (!entryStrategyId || entryBacktestId || appliedEntryRef.current) return;
     const match = backtests.find((b) => b.strategyId === entryStrategyId && b.symbol === symbol && b.status === 'done');
     if (match) {
       setSelectedBacktestId(match.id);
       appliedEntryRef.current = true;
     }
-  }, [backtests, entryStrategyId, symbol]);
+  }, [backtests, entryStrategyId, entryBacktestId, symbol]);
+
+  // Publish what's on screen to the assistant, so it can answer about this
+  // job without the trader naming ids. reviewJobId is what makes the panel
+  // open the conversation itself, and only for a just-run backtest.
+  useEffect(() => {
+    setChatContext({
+      symbol,
+      interval,
+      strategyId: selectedJob?.strategyId || entryStrategyId || undefined,
+      backtestId: selectedJob?.id || undefined,
+      backtestStatus: selectedJob?.status || undefined,
+      strategyName: selectedJob?.strategyName || undefined,
+      reviewJobId: entryReview && selectedJob?.status === 'done' ? selectedJob.id : undefined,
+    });
+  }, [setChatContext, symbol, interval, selectedJob, entryStrategyId, entryReview]);
+
+  // Leaving the chart: the assistant is app-wide, so stop claiming a chart.
+  useEffect(() => () => setChatContext({}), [setChatContext]);
 
   const bars = barsRef.current;
   const legendIdx = hoverIdx != null && hoverIdx < bars.length ? hoverIdx : bars.length - 1;
@@ -412,8 +464,12 @@ export default function CandlestickPage({ symbol }) {
     ? backtestTrades
     : backtestTrades.filter((t) => t.entryTime <= revealTime);
   const visibleCvd = revealTime == null ? cvdData : cvdData.filter((p) => p.time <= revealTime);
-  const symbolBacktests = backtests.filter((b) => b.symbol === symbol && b.status === 'done');
-  const selectedBacktestJob = backtests.find((b) => b.id === selectedBacktestId) || null;
+  const doneBacktests = backtests.filter((b) => b.symbol === symbol && b.status === 'done');
+  // A job that's still running isn't in the finished list yet, but it is what
+  // the picker is pointing at — show it so the trigger doesn't read "None".
+  const pendingJob = selectedJob && selectedJob.status !== 'done' ? selectedJob : null;
+  const symbolBacktests = pendingJob ? [pendingJob, ...doneBacktests] : doneBacktests;
+  const selectedBacktestJob = selectedJob || backtests.find((b) => b.id === selectedBacktestId) || null;
   const currentStrategy = selectedBacktestJob?.strategyId
     ? strategies.find((s) => s.id === selectedBacktestJob.strategyId) || null
     : null;
@@ -547,6 +603,13 @@ export default function CandlestickPage({ symbol }) {
 
           {/* Floating backtest control, bottom-left corner of the chart. */}
           <div className="backtest-dock">
+            {pendingJob && (
+              <span className={`compare-chip ${pendingJob.status === 'error' ? 'chip-error' : 'chip-live'}`}>
+                {pendingJob.status === 'error'
+                  ? `Backtest failed${pendingJob.message ? ` · ${pendingJob.message}` : ''}`
+                  : `Running the engine on ${pendingJob.strategyName}…`}
+              </span>
+            )}
             {selectedBacktestId && backtestTrades.length > 0 && (
               <span className="compare-chip">
                 Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}

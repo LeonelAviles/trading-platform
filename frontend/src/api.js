@@ -100,14 +100,6 @@ export async function runBacktest(strategyId) {
   }));
 }
 
-export async function runDemoBacktest(symbol) {
-  return json(await fetch(`${BASE}/backtests`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ demo: true, symbol }),
-  }));
-}
-
 // --- assistant chat ---
 
 export async function fetchChatStatus() {
