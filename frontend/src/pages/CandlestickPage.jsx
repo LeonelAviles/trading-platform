@@ -1,17 +1,16 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { fetchOHLCV, fetchRange, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
+import { fetchOHLCV, fetchRange, fetchBacktest, deleteBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import DrawToolbar from '../components/DrawToolbar';
 import DrawingOverlay from '../drawing/DrawingOverlay';
 import SettingsModal from '../components/SettingsModal';
 import ReplayControls from '../components/ReplayControls';
-import BacktestPicker from '../components/BacktestPicker';
-import StrategyPanel from '../components/StrategyPanel';
 import DomPanel from '../components/DomPanel';
 import AnalysisPanel from '../components/AnalysisPanel';
+import ChatPanel from '../components/ChatPanel';
 import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
@@ -40,14 +39,22 @@ function formatVol(v) {
   return `${Math.round(v)}`;
 }
 
-export default function CandlestickPage({ symbol }) {
-  const { main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
+// A chart is never standalone: this page *is* the review of one backtest,
+// named by the route. The strategy and the symbol both come from that job, so
+// there is nothing to pick here and no way to end up staring at bars that
+// aren't attached to a strategy.
+export default function CandlestickPage() {
+  const { leading: leadingSlot, main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
+  const { backtestId } = useParams();
+  const navigate = useNavigate();
   const location = useLocation();
-  const entryStrategyId = location.state?.strategyId || null;
-  // Set when the chart is entered straight off a Run backtest: that job may
-  // still be running, so it's selected by id rather than picked out of the
-  // finished list, and `review` asks the assistant to open the conversation.
-  const entryBacktestId = location.state?.backtestId || null;
+
+  // The job under review, loaded from the route param. Everything else on the
+  // page hangs off it — including the symbol, which is why the header has no
+  // symbol picker to wander away with.
+  const [selectedJob, setSelectedJob] = useState(null);
+  const symbol = selectedJob?.symbol || '';
+
   const [interval, setInterval_] = useState('1min');
   const [status, setStatus] = useState('');
   const [activeTool, setActiveTool] = useState('cursor');
@@ -64,26 +71,23 @@ export default function CandlestickPage({ symbol }) {
   // OHLCV legend; null means "not hovering" — legend falls back to the last bar.
   const [hoverIdx, setHoverIdx] = useState(null);
 
-  // Backtest overlay
-  const [backtests, setBacktests] = useState([]);
-  const [selectedBacktestId, setSelectedBacktestId] = useState(entryBacktestId || '');
-  const [selectedJob, setSelectedJob] = useState(null);
   const [backtestTrades, setBacktestTrades] = useState([]);
-  const [strategies, setStrategies] = useState([]);
   const [cvdData, setCvdData] = useState([]);
 
-  // Left strategy panel, right DOM dock, bottom analysis dock — all persist
-  // their open/closed state.
-  const [strategyPanelOpen, setStrategyPanelOpen] = useState(
-    () => localStorage.getItem('strategyPanelOpen') !== 'false',
-  );
+  // Right DOM dock, bottom analysis dock, right assistant dock — all persist
+  // their open/closed state. The assistant additionally opens itself when
+  // arriving straight off "Run backtest" (see ReviewPicker), so there's
+  // somewhere to talk about the run the moment it lands.
   const [domOpen, setDomOpen] = useState(() => localStorage.getItem('domOpen') === 'true');
   const [analysisPanelOpen, setAnalysisPanelOpen] = useState(
     () => localStorage.getItem('analysisPanelOpen') !== 'false',
   );
-  useEffect(() => { localStorage.setItem('strategyPanelOpen', String(strategyPanelOpen)); }, [strategyPanelOpen]);
+  const [chatOpen, setChatOpen] = useState(
+    () => Boolean(location.state?.openChat) || localStorage.getItem('chatOpen') === 'true',
+  );
   useEffect(() => { localStorage.setItem('domOpen', String(domOpen)); }, [domOpen]);
   useEffect(() => { localStorage.setItem('analysisPanelOpen', String(analysisPanelOpen)); }, [analysisPanelOpen]);
+  useEffect(() => { localStorage.setItem('chatOpen', String(chatOpen)); }, [chatOpen]);
 
   const chartAreaRef = useRef(null);
   const chartDivRef = useRef(null);
@@ -238,7 +242,7 @@ export default function CandlestickPage({ symbol }) {
           if (head.length) {
             paint(head);
             chartRef.current.timeScale().fitContent();
-            setStatus(`${head.length} bars — loading history…`);
+            setStatus('Loading history…');
             forceUpdate();
           }
         }
@@ -254,7 +258,7 @@ export default function CandlestickPage({ symbol }) {
         if (view) chartRef.current.timeScale().setVisibleRange(view);
         else chartRef.current.timeScale().fitContent();
         reanchor(bars);
-        setStatus(`${bars.length} bars`);
+        setStatus('');
         forceUpdate();
       } catch {
         if (cancelled) return;
@@ -359,30 +363,23 @@ export default function CandlestickPage({ symbol }) {
     };
   }, [replay?.phase]);
 
-  // Backtest list + selected job's trades.
-  const refreshBacktests = useCallback(() => {
-    fetchBacktests().then(setBacktests).catch(() => setBacktests([]));
-  }, []);
-  useEffect(() => { refreshBacktests(); }, [refreshBacktests]);
-  useEffect(() => { fetchStrategies().then(setStrategies).catch(() => setStrategies([])); }, []);
+  // Deleting the run under review deletes the reason for this chart to exist,
+  // so it goes back to the chooser rather than leaving empty bars behind.
+  const handleDeleteBacktest = useCallback(async () => {
+    await deleteBacktest(backtestId).catch(() => {});
+    navigate('/review', { replace: true });
+  }, [backtestId, navigate]);
 
-  const handleDeleteBacktest = useCallback(async (id) => {
-    await deleteBacktest(id).catch(() => {});
-    setSelectedBacktestId((cur) => (cur === id ? '' : cur));
-    refreshBacktests();
-  }, [refreshBacktests]);
-
-  // The selected job's trades and live status. A job entered straight off a
-  // Run backtest is still running, so poll until it settles and draw its
-  // trades the moment they exist.
+  // The reviewed job's trades and live status. Arriving straight off a Run
+  // backtest means the job is still running, so poll until it settles and draw
+  // its trades the moment they exist. A job id that doesn't resolve is not a
+  // chart we're allowed to show — bounce to the chooser.
   useEffect(() => {
-    if (!selectedBacktestId) { setSelectedJob(null); setBacktestTrades([]); return; }
     let cancelled = false;
     let timer = null;
-    let polled = false;
     async function load() {
       try {
-        const job = await fetchBacktest(selectedBacktestId);
+        const job = await fetchBacktest(backtestId);
         if (cancelled) return;
         setSelectedJob(job);
         setBacktestTrades(job.trades || []);
@@ -391,43 +388,15 @@ export default function CandlestickPage({ symbol }) {
         // recorded before interval was stored have none — leave those alone.
         if (job.interval) setInterval_(job.interval);
         if (job.status === 'preparing' || job.status === 'running') {
-          polled = true;
           timer = setTimeout(load, 2000);
-        } else if (polled) {
-          // It finished under us — the picker only lists finished jobs.
-          refreshBacktests();
         }
       } catch {
-        if (!cancelled) { setSelectedJob(null); setBacktestTrades([]); }
+        if (!cancelled) navigate('/review', { replace: true });
       }
     }
     load();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [selectedBacktestId, refreshBacktests]);
-
-  // Backtests belong to a symbol; changing symbol drops a selection that no
-  // longer matches it. Keyed off the loaded job rather than firing blind, so
-  // arriving with a job whose symbol the header is still catching up to
-  // doesn't clear the thing we were sent here to show.
-  useEffect(() => {
-    if (selectedJob && selectedJob.symbol !== symbol) {
-      setSelectedBacktestId('');
-      setSelectedJob(null);
-    }
-  }, [symbol, selectedJob]);
-
-  // Entering the chart from a strategy (front door) without a specific job:
-  // once the list loads, auto-select that strategy's most recent completed
-  // backtest.
-  const appliedEntryRef = useRef(false);
-  useEffect(() => {
-    if (!entryStrategyId || entryBacktestId || appliedEntryRef.current) return;
-    const match = backtests.find((b) => b.strategyId === entryStrategyId && b.symbol === symbol && b.status === 'done');
-    if (match) {
-      setSelectedBacktestId(match.id);
-      appliedEntryRef.current = true;
-    }
-  }, [backtests, entryStrategyId, entryBacktestId, symbol]);
+  }, [backtestId, navigate]);
 
   const bars = barsRef.current;
   const legendIdx = hoverIdx != null && hoverIdx < bars.length ? hoverIdx : bars.length - 1;
@@ -443,15 +412,7 @@ export default function CandlestickPage({ symbol }) {
     ? backtestTrades
     : backtestTrades.filter((t) => t.entryTime <= revealTime);
   const visibleCvd = revealTime == null ? cvdData : cvdData.filter((p) => p.time <= revealTime);
-  const doneBacktests = backtests.filter((b) => b.symbol === symbol && b.status === 'done');
-  // A job that's still running isn't in the finished list yet, but it is what
-  // the picker is pointing at — show it so the trigger doesn't read "None".
   const pendingJob = selectedJob && selectedJob.status !== 'done' ? selectedJob : null;
-  const symbolBacktests = pendingJob ? [pendingJob, ...doneBacktests] : doneBacktests;
-  const selectedBacktestJob = selectedJob || backtests.find((b) => b.id === selectedBacktestId) || null;
-  const currentStrategy = selectedBacktestJob?.strategyId
-    ? strategies.find((s) => s.id === selectedBacktestJob.strategyId) || null
-    : null;
 
   // "Does the engine trade like me": my manual position shapes vs the visible
   // engine trades, matched by direction and entry within 3 bars.
@@ -466,6 +427,22 @@ export default function CandlestickPage({ symbol }) {
 
   return (
     <div className="page">
+      {leadingSlot && createPortal((
+        <div className="review-crumb">
+          <Link className="icon-btn" to="/review" title="Back to strategy reviews">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </Link>
+          <div className="hdr-symbol">
+            {symbol && <span className="symbol-avatar">{symbol[0]}</span>}
+            <div className="review-crumb-text">
+              <span className="review-crumb-name">{selectedJob?.strategyName || 'Loading…'}</span>
+              <span className="review-crumb-sub">{symbol}{selectedJob?.interval ? ` · ${selectedJob.interval}` : ''}</span>
+            </div>
+          </div>
+        </div>
+      ), leadingSlot)}
       {headerSlot && createPortal((
         <div className="chart-tools">
         <div className="toolbar-sep-v" />
@@ -508,6 +485,16 @@ export default function CandlestickPage({ symbol }) {
         </button>
         <span className="status">{status}</span>
         <div className="toolbar-spacer" />
+        <button
+          className={`chat-toggle ${chatOpen ? 'active' : ''}`}
+          title="Stratos" onClick={() => setChatOpen((o) => !o)}
+        >
+          <svg className="chat-toggle-spark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9 2.5l1.4 3.7 3.7 1.4-3.7 1.4L9 12.7 7.6 9 3.9 7.6l3.7-1.4z" />
+            <path d="M17.5 12l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" />
+          </svg>
+          Ask Stratos
+        </button>
         </div>
       ), headerSlot)}
       {trailingSlot && createPortal((
@@ -529,11 +516,6 @@ export default function CandlestickPage({ symbol }) {
           activeTool={activeTool}
           setActiveTool={setActiveTool}
           onClear={() => { setShapes([]); setSelectedId(null); }}
-        />
-        <StrategyPanel
-          strategy={currentStrategy}
-          open={strategyPanelOpen}
-          onToggle={() => setStrategyPanelOpen((o) => !o)}
         />
         <div className="chart-area" ref={chartAreaRef}>
           <div className="chart-inner" ref={chartDivRef} />
@@ -580,7 +562,10 @@ export default function CandlestickPage({ symbol }) {
             />
           )}
 
-          {/* Floating backtest control, bottom-left corner of the chart. */}
+          {/* Floating status for the run under review, bottom-right of the
+              chart. There's no backtest picker any more — switching runs means
+              going back to the chooser, so the URL always names what's on
+              screen. */}
           <div className="backtest-dock">
             {pendingJob && (
               <span className={`compare-chip ${pendingJob.status === 'error' ? 'chip-error' : 'chip-live'}`}>
@@ -589,24 +574,28 @@ export default function CandlestickPage({ symbol }) {
                   : `Running the engine on ${pendingJob.strategyName}…`}
               </span>
             )}
-            {selectedBacktestId && backtestTrades.length > 0 && (
+            {backtestTrades.length > 0 && (
               <span className="compare-chip">
                 Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
               </span>
             )}
-            <BacktestPicker
-              backtests={symbolBacktests}
-              value={selectedBacktestId}
-              onChange={setSelectedBacktestId}
-              onDelete={handleDeleteBacktest}
-            />
-            <button className="icon-btn" title="Refresh backtests" onClick={refreshBacktests}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 4v7h-7" /></svg>
+            <Link className="btn btn-ghost" to="/review">Other reviews</Link>
+            <button className="icon-btn" title="Delete this run" onClick={handleDeleteBacktest}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
             </button>
           </div>
         </div>
         {domOpen && (
           <DomPanel symbol={symbol} asOf={revealTime} onClose={() => setDomOpen(false)} />
+        )}
+        {chatOpen && (
+          <ChatPanel
+            symbol={symbol}
+            interval={interval}
+            backtestId={backtestId}
+            strategyName={selectedJob?.strategyName}
+            backtestStatus={selectedJob?.status}
+          />
         )}
       </div>
       <AnalysisPanel

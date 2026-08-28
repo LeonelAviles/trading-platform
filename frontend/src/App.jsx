@@ -1,54 +1,36 @@
-import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { fetchSymbols } from './api';
+import { useState } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { HeaderSlotContext } from './headerSlot';
 import CandlestickPage from './pages/CandlestickPage';
+import ReviewPicker from './pages/ReviewPicker';
 
+// The app is a strategy-review tool: a chart only ever exists inside
+// /review/:backtestId, so what's on screen always names the strategy it
+// belongs to. There is no free-roaming chart and no symbol picker — the
+// symbol comes from the backtest under review.
 export default function App() {
-  const [symbols, setSymbols] = useState([]);
-  const [symbol, setSymbol] = useState('');
   // Ref-callbacks into state so the slot nodes are available to child portals
   // once the header mounts.
+  const [leadingSlot, setLeadingSlot] = useState(null);
   const [slot, setSlot] = useState(null);
   const [trailingSlot, setTrailingSlot] = useState(null);
-  const location = useLocation();
-
-  // Arriving with a symbol in the route state (e.g. a link to a specific
-  // instrument): honour it over whatever the picker last had.
-  useEffect(() => {
-    if (location.state?.symbol) setSymbol(location.state.symbol);
-  }, [location.key, location.state]);
-
-  useEffect(() => {
-    fetchSymbols().then((syms) => {
-      setSymbols(syms);
-      if (syms.length) setSymbol(syms[0]);
-    });
-  }, []);
 
   return (
     <div className="app">
       <header className="app-header">
-        <div className="hdr-symbol">
-          {symbol && <span className="symbol-avatar">{symbol[0]}</span>}
-          <select className="symbol-select chevron" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
-            {symbols.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-
         {/* Pages portal their route-specific controls into these slots. */}
+        <div className="hdr-leading" ref={setLeadingSlot} />
         <div className="hdr-slot" ref={setSlot} />
         <div className="hdr-trailing" ref={setTrailingSlot} />
       </header>
       <div className="app-body">
-        <HeaderSlotContext.Provider value={{ main: slot, trailing: trailingSlot }}>
+        <HeaderSlotContext.Provider value={{ leading: leadingSlot, main: slot, trailing: trailingSlot }}>
           <Routes>
-            <Route path="/" element={<CandlestickPage symbol={symbol} />} />
-            {/* The chart is the whole app now; old deep links (/chart,
-                /strategies, ...) would otherwise render an empty body. */}
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="/review" element={<ReviewPicker />} />
+            <Route path="/review/:backtestId" element={<CandlestickPage />} />
+            {/* Everything else — including old deep links to a bare chart —
+                lands on the chooser rather than an unattached chart. */}
+            <Route path="*" element={<Navigate to="/review" replace />} />
           </Routes>
         </HeaderSlotContext.Provider>
       </div>

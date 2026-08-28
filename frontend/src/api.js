@@ -56,3 +56,58 @@ export async function fetchBacktest(id) {
 export async function deleteBacktest(id) {
   return json(await fetch(`${BASE}/backtests/${id}`, { method: 'DELETE' }));
 }
+
+// Kicks off an engine run for a strategy and returns the (initially
+// 'preparing') job — the review route polls it from there.
+export async function createBacktest(strategyId) {
+  return json(await fetch(`${BASE}/backtests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ strategyId }),
+  }));
+}
+
+// --- assistant chat ---
+
+export async function fetchChatStatus() {
+  return json(await fetch(`${BASE}/chat/status`));
+}
+
+// Streams the assistant reply over SSE. Calls handlers as events arrive:
+//   onDelta(text)  — a piece of assistant text
+//   onTool(name)   — a backend tool call is running
+//   onError(message)
+// Resolves when the stream ends.
+export async function streamChat(messages, context, { onDelta, onTool, onError }) {
+  const res = await fetch(`${BASE}/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, context }),
+  });
+  if (!res.ok || !res.body) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
+    throw new Error(detail);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // SSE events are separated by a blank line; keep the trailing partial.
+    const events = buf.split('\n\n');
+    buf = events.pop();
+    for (const raw of events) {
+      const line = raw.split('\n').find((l) => l.startsWith('data: '));
+      if (!line) continue;
+      let event;
+      try { event = JSON.parse(line.slice(6)); } catch { continue; }
+      if (event.type === 'delta') onDelta?.(event.text);
+      else if (event.type === 'tool') onTool?.(event.name);
+      else if (event.type === 'error') onError?.(event.message);
+    }
+  }
+}
