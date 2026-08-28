@@ -1,0 +1,31 @@
+{
+  "name": "ORB",
+  "description": "This strategy trades the opening range breakout. After market open (9:30am est) we wait for the first 15min candle to close. After close, we wait for the breakout either to the upside or the downside. After breakout we can either enter on breakout or on retest, I still don't know which one is better. To exit I still don't know the take profit or the stop loss. Figure out where we cna put stop loss and take profit so that we always get a 1:2 risk to reward ratio as a minimum. it can be more, and we should strive for more but minimum 1:2",
+  "symbol": "ES1!",
+  "direction": "long",
+  "riskPerTradePercent": 2,
+  "conditions": [
+    {
+      "type": "breaks_high",
+      "lookback": 15
+    }
+  ],
+  "stop": {
+    "type": "percent",
+    "value": 0.3
+  },
+  "target": {
+    "type": "rr",
+    "value": 2.5
+  },
+  "session": {
+    "start": "13:30",
+    "end": "16:00"
+  },
+  "sizing": {
+    "type": "percent_equity",
+    "value": 95
+  },
+  "id": "7d2140d663ec",
+  "rationale": "session 13:30-16:00 UTC = 09:30-12:00 ET (the window the description meant); lookback 15 on 1min bars approximates the opening-range high; stop 0.3% + 2.5R best of a 24-run grid on expectancy"
+}

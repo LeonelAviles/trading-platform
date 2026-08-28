@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 TOOLSET = "trading"
 
-# Rough grouping so `hermes tools` reads as something other than 16 identical
+# Rough grouping so `hermes tools` reads as something other than 17 identical
 # rows: build/inspect strategies, run backtests, analyze results.
 _EMOJI = {
     "trading_get_condition_vocabulary": "📖",
@@ -40,6 +40,7 @@ _EMOJI = {
     "trading_get_strategy": "🧱",
     "trading_list_strategies": "🧱",
     "trading_propose_strategy_revision": "✏️",
+    "trading_update_strategy": "✏️",
     "trading_run_backtest": "⏱️",
     "trading_get_backtest": "⏱️",
     "trading_get_backtest_analytics": "📊",

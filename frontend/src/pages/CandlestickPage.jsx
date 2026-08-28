@@ -4,7 +4,6 @@ import { useLocation } from 'react-router-dom';
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { fetchOHLCV, fetchRange, fetchBacktests, fetchBacktest, deleteBacktest, fetchStrategies, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import { ChatContext } from '../chatContext';
 import DrawToolbar from '../components/DrawToolbar';
 import DrawingOverlay from '../drawing/DrawingOverlay';
 import SettingsModal from '../components/SettingsModal';
@@ -44,13 +43,11 @@ function formatVol(v) {
 export default function CandlestickPage({ symbol }) {
   const { main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const location = useLocation();
-  const { setChatContext } = useContext(ChatContext);
   const entryStrategyId = location.state?.strategyId || null;
   // Set when the chart is entered straight off a Run backtest: that job may
   // still be running, so it's selected by id rather than picked out of the
   // finished list, and `review` asks the assistant to open the conversation.
   const entryBacktestId = location.state?.backtestId || null;
-  const entryReview = !!location.state?.review;
   const [interval, setInterval_] = useState('1min');
   const [status, setStatus] = useState('');
   const [activeTool, setActiveTool] = useState('cursor');
@@ -431,24 +428,6 @@ export default function CandlestickPage({ symbol }) {
       appliedEntryRef.current = true;
     }
   }, [backtests, entryStrategyId, entryBacktestId, symbol]);
-
-  // Publish what's on screen to the assistant, so it can answer about this
-  // job without the trader naming ids. reviewJobId is what makes the panel
-  // open the conversation itself, and only for a just-run backtest.
-  useEffect(() => {
-    setChatContext({
-      symbol,
-      interval,
-      strategyId: selectedJob?.strategyId || entryStrategyId || undefined,
-      backtestId: selectedJob?.id || undefined,
-      backtestStatus: selectedJob?.status || undefined,
-      strategyName: selectedJob?.strategyName || undefined,
-      reviewJobId: entryReview && selectedJob?.status === 'done' ? selectedJob.id : undefined,
-    });
-  }, [setChatContext, symbol, interval, selectedJob, entryStrategyId, entryReview]);
-
-  // Leaving the chart: the assistant is app-wide, so stop claiming a chart.
-  useEffect(() => () => setChatContext({}), [setChatContext]);
 
   const bars = barsRef.current;
   const legendIdx = hoverIdx != null && hoverIdx < bars.length ? hoverIdx : bars.length - 1;

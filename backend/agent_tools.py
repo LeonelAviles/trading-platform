@@ -162,6 +162,28 @@ def propose_strategy_revision(base_strategy_id: str, changes: dict, rationale: s
     return _save_one(revised)
 
 
+def update_strategy(strategy_id: str, changes: dict, rationale: str | None = None) -> dict:
+    """Edit a saved strategy IN PLACE — same id, same file, no second copy in
+    the trader's list. This is what to use when the trader asks you to change
+    the strategy they already have ("make the target 3R", "move the session to
+    the US open", "tighten the stop"): they want their strategy fixed, and the
+    next run_backtest on this id picks the change up. `changes` is
+    shallow-merged onto the current spec, so pass only the fields you are
+    changing.
+
+    Destructive — the previous values are gone and cannot be compared against.
+    For your OWN A/B experiments, where the point is to keep the original and
+    rank the two, use propose_strategy_revision instead."""
+    current = get_strategy(strategy_id)
+    updated = {**current, **changes}
+    # `changes` must not be able to move the strategy to a different id (that
+    # would write a copy under a new file and leave the original stale).
+    updated["id"] = strategy_id
+    if rationale:
+        updated["rationale"] = rationale
+    return _save_one(updated)
+
+
 # --------------------------------------------------------------------------
 # Backtesting
 # --------------------------------------------------------------------------
@@ -684,6 +706,18 @@ TOOLS = [
         },
     }},
     {"type": "function", "function": {
+        "name": "update_strategy", "description": update_strategy.__doc__,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "strategy_id": {"type": "string"},
+                "changes": {"type": "object", "description": "only the fields to overwrite on the existing strategy (e.g. new conditions/stop/target/session/interval)"},
+                "rationale": {"type": "string", "description": "one line on what changed and why"},
+            },
+            "required": ["strategy_id", "changes"],
+        },
+    }},
+    {"type": "function", "function": {
         "name": "run_backtest", "description": run_backtest.__doc__,
         "parameters": {
             "type": "object",
@@ -760,6 +794,7 @@ TOOL_FUNCS = {
     "get_strategy": get_strategy,
     "list_strategies": list_strategies,
     "propose_strategy_revision": propose_strategy_revision,
+    "update_strategy": update_strategy,
     "run_backtest": run_backtest,
     "get_backtest": get_backtest,
     "get_backtest_analytics": get_backtest_analytics,

@@ -72,7 +72,7 @@ _SCHEMAS = {
                     },
                     "interval": {
                         "type": "string",
-                        "description": "bar interval, default '1min'"
+                        "description": "bar interval \u2014 one of get_condition_vocabulary's `intervals`, default '1min'"
                     }
                 },
                 "required": [
@@ -142,6 +142,33 @@ _SCHEMAS = {
                     "base_strategy_id",
                     "changes",
                     "rationale"
+                ]
+            }
+        }
+    },
+    "trading_update_strategy": {
+        "type": "function",
+        "function": {
+            "name": "trading_update_strategy",
+            "description": "Edit a saved strategy IN PLACE \u2014 same id, same file, no second copy in the trader's list. This is what to use when the trader asks you to change the strategy they already have (\"make the target 3R\", \"move the session to the US open\", \"tighten the stop\"): they want their strategy fixed, and the next run_backtest on this id picks the change up. `changes` is shallow-merged onto the current spec, so pass only the fields you are changing. Destructive \u2014 the previous values are gone and cannot be compared against. For your OWN A/B experiments, where the point is to keep the original and rank the two, use propose_strategy_revision instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "strategy_id": {
+                        "type": "string"
+                    },
+                    "changes": {
+                        "type": "object",
+                        "description": "only the fields to overwrite on the existing strategy (e.g. new conditions/stop/target/session/interval)"
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "one line on what changed and why"
+                    }
+                },
+                "required": [
+                    "strategy_id",
+                    "changes"
                 ]
             }
         }
