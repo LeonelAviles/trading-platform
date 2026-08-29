@@ -14,6 +14,8 @@ import ChatPanel from '../components/ChatPanel';
 import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
+import DomHeatmapLayer from '../orderflow/DomHeatmapLayer';
+import useOrderFlowData from '../orderflow/useOrderFlowData';
 
 // Bars requested for the first paint. Aggregating every tick in the store
 // takes ~16s regardless of how few bars come back, while a window this size
@@ -85,9 +87,11 @@ export default function CandlestickPage() {
   const [chatOpen, setChatOpen] = useState(
     () => Boolean(location.state?.openChat) || localStorage.getItem('chatOpen') === 'true',
   );
+  const [orderFlowOn, setOrderFlowOn] = useState(() => localStorage.getItem('orderFlowOn') === 'true');
   useEffect(() => { localStorage.setItem('domOpen', String(domOpen)); }, [domOpen]);
   useEffect(() => { localStorage.setItem('analysisPanelOpen', String(analysisPanelOpen)); }, [analysisPanelOpen]);
   useEffect(() => { localStorage.setItem('chatOpen', String(chatOpen)); }, [chatOpen]);
+  useEffect(() => { localStorage.setItem('orderFlowOn', String(orderFlowOn)); }, [orderFlowOn]);
 
   const chartAreaRef = useRef(null);
   const chartDivRef = useRef(null);
@@ -191,13 +195,24 @@ export default function CandlestickPage() {
       wickVisible: settings.wickVisible, wickUpColor: settings.wickUpColor, wickDownColor: settings.wickDownColor,
     });
     chartRef.current.applyOptions({
-      layout: { background: { color: settings.background } },
+      // Keep the chart transparent whenever Flow is active. Applying the
+      // configured background unconditionally here could run after the Flow
+      // effect and cover the correctly painted heatmap canvas underneath.
+      layout: { background: { color: orderFlowOn ? 'rgba(0,0,0,0)' : settings.background } },
       grid: {
         vertLines: { visible: settings.vertGridVisible, color: settings.gridColor },
         horzLines: { visible: settings.horzGridVisible, color: settings.gridColor },
       },
     });
-  }, [settings]);
+  }, [settings, orderFlowOn]);
+
+  // Candles and volume stay visible above the heatmap in Flow mode. The
+  // settings effect above owns the background so two effects cannot race.
+  useEffect(() => {
+    if (!chartRef.current || !candleSeriesRef.current || !volumeSeriesRef.current) return;
+    candleSeriesRef.current.applyOptions({ visible: true });
+    volumeSeriesRef.current.applyOptions({ visible: true });
+  }, [orderFlowOn]);
 
   // Two-phase load: a recent window first so the chart is usable straight
   // away, then the full history swapped in underneath the same view. Asking
@@ -408,6 +423,27 @@ export default function CandlestickPage() {
   const legendSign = legendChange >= 0 ? 'pos' : 'neg';
   const intervalSeconds = intervalToSeconds(interval);
   const revealTime = replay?.phase === 'active' ? (bars[replay.idx]?.time ?? null) : null;
+  // Recomputed every render off the same forceUpdate tick that drives
+  // DrawingOverlay's redraws (subscribeVisibleLogicalRangeChange + the drag
+  // rAF loop, both wired in the chart-creation effect above) — the hook's
+  // own effect only actually refetches when from/to change.
+  const orderFlowVisibleRange = chartRef.current ? chartRef.current.timeScale().getVisibleRange() : null;
+  const priceSeries = candleSeriesRef.current;
+  const chartHeight = chartAreaRef.current?.clientHeight;
+  const topPrice = priceSeries && chartHeight ? priceSeries.coordinateToPrice(0) : null;
+  const bottomPrice = priceSeries && chartHeight ? priceSeries.coordinateToPrice(chartHeight) : null;
+  const orderFlowPriceRange = topPrice != null && bottomPrice != null
+    ? {
+      min: Number(Math.min(topPrice, bottomPrice).toFixed(4)),
+      max: Number(Math.max(topPrice, bottomPrice).toFixed(4)),
+    }
+    : null;
+  const { heatmapData, heatmapLoading, tooWideForHeatmap } = useOrderFlowData(
+    symbol,
+    orderFlowOn,
+    orderFlowVisibleRange,
+    orderFlowPriceRange,
+  );
   const visibleTrades = revealTime == null
     ? backtestTrades
     : backtestTrades.filter((t) => t.entryTime <= revealTime);
@@ -483,6 +519,20 @@ export default function CandlestickPage() {
           </svg>
           DOM
         </button>
+        <button
+          className={`replay-toggle ${orderFlowOn ? 'active' : ''}`}
+          title="Persistent resting-liquidity heatmap"
+          onClick={() => setOrderFlowOn((o) => !o)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M3 17l5-6 4 3 8-9" />
+            <circle cx="3" cy="17" r="1.6" fill="currentColor" stroke="none" />
+            <circle cx="8" cy="11" r="1.6" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="14" r="1.6" fill="currentColor" stroke="none" />
+            <circle cx="20" cy="5" r="1.6" fill="currentColor" stroke="none" />
+          </svg>
+          Flow
+        </button>
         <span className="status">{status}</span>
         <div className="toolbar-spacer" />
         <button
@@ -517,8 +567,31 @@ export default function CandlestickPage() {
           setActiveTool={setActiveTool}
           onClear={() => { setShapes([]); setSelectedId(null); }}
         />
-        <div className="chart-area" ref={chartAreaRef}>
+        <div className={`chart-area ${orderFlowOn ? 'order-flow-active' : ''}`} ref={chartAreaRef}>
           <div className="chart-inner" ref={chartDivRef} />
+          {orderFlowOn && (
+            <DomHeatmapLayer
+              chart={chartRef.current}
+              series={candleSeriesRef.current}
+              heatmapData={heatmapData}
+              bars={bars}
+              intervalSeconds={intervalSeconds}
+            />
+          )}
+          {orderFlowOn && tooWideForHeatmap && (
+            <div className="order-flow-hint">Zoom in to see order flow</div>
+          )}
+          {orderFlowOn && heatmapLoading && !heatmapData && !tooWideForHeatmap && (
+            <div className="order-flow-hint">Loading liquidity…</div>
+          )}
+          {orderFlowOn && heatmapData?.buckets?.length > 0 && (
+            <div className="order-flow-scale" aria-label="Liquidity intensity scale">
+              <span>Liquidity</span>
+              <i />
+              <small>low</small>
+              <small>high</small>
+            </div>
+          )}
           {legendBar && (
             <div className="chart-legend">
               <div className="legend-top">

@@ -95,7 +95,7 @@ export default function DomPanel({ symbol, asOf, onClose }) {
 
       {snap && (
         <div className="dom-panel-foot">
-          Approximate — reconstructed from the last {snap.windowMinutes} min of order-flow events.
+          Resting MBO state persists until cancel, modify, fill-related cancel, or book clear.
         </div>
       )}
     </div>

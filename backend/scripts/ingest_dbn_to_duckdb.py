@@ -25,7 +25,7 @@ saving dramatic amounts of space.
 
 import re
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,6 +34,7 @@ import databento as db
 import polars as pl
 
 from duckdb_store import get_connection, refresh_bars_1m
+from liquidity_store import get_connection as get_liquidity_connection, materialize_dbn_file
 
 RAW_DIR = Path(__file__).resolve().parent.parent.parent / "market-data" / "apr-jul-databento"
 CHUNK_ROWS = 2_000_000
@@ -90,7 +91,7 @@ def relevant_symbols(df: pl.DataFrame) -> list[str]:
     return volumes["symbol"].to_list()
 
 
-def ingest_file(con, path: Path) -> int:
+def ingest_file(con, liquidity, path: Path) -> int:
     print(f"[{path.name}] decoding...", flush=True)
     raw = decode_day(path)
     keep = relevant_symbols(raw)
@@ -125,12 +126,39 @@ def ingest_file(con, path: Path) -> int:
     # Bounded by the file's own span, so the cost is per-day, not per-store.
     lo, hi = df["ts_event"].min(), df["ts_event"].max()
     bars = refresh_bars_1m(con, lo, hi + timedelta(minutes=1))
+    liquidity_rows = materialize_dbn_file(liquidity, path, keep[0])
     print(
         f"[{path.name}] done: {df.height:,} events ingested, "
-        f"bars_1m now {bars:,} rows",
+        f"bars_1m now {bars:,} rows, {liquidity_rows:,} liquidity changes",
         flush=True,
     )
     return df.height
+
+
+def materialized_front_symbol(con, path: Path) -> str:
+    """Front contract for a file whose raw insertion already committed.
+
+    If liquidity materialisation was interrupted, the next run can finish
+    the missing read model without duplicating raw MBO events.
+    """
+    match = re.search(r"(20\d{6})", path.name)
+    if not match:
+        raise ValueError(f"Cannot find YYYYMMDD date in {path.name}")
+    day = datetime.strptime(match.group(1), "%Y%m%d")
+    row = con.execute(
+        """
+        SELECT symbol, sum(volume) AS volume
+        FROM bars_1m
+        WHERE ts >= ? AND ts < ?
+        GROUP BY symbol
+        ORDER BY volume DESC, symbol
+        LIMIT 1
+        """,
+        [day, day + timedelta(days=1)],
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"No minute bars found for {path.name}")
+    return row[0]
 
 
 def main():
@@ -144,15 +172,30 @@ def main():
     )
 
     con = get_connection(read_only=False)
+    liquidity = get_liquidity_connection(read_only=False)
     done = {r[0] for r in con.execute("SELECT filename FROM ingested_files").fetchall()}
+    liquidity_done = {
+        r[0] for r in liquidity.execute("SELECT filename FROM liquidity_files").fetchall()
+    }
+    liquidity_pending = [p for p in files if p.name in done and p.name not in liquidity_done]
     pending = [p for p in files if p.name not in done]
     if done:
         print(f"resuming: {len(done)} file(s) already ingested, {len(pending)} to go\n", flush=True)
 
+    for i, path in enumerate(liquidity_pending, 1):
+        symbol = materialized_front_symbol(con, path)
+        print(
+            f"=== liquidity recovery [{i}/{len(liquidity_pending)}] "
+            f"{path.name}: {symbol} ===",
+            flush=True,
+        )
+        materialize_dbn_file(liquidity, path, symbol)
+
     total = 0
     for i, path in enumerate(pending, 1):
         print(f"=== [{i}/{len(pending)}] {path.name} ===", flush=True)
-        total += ingest_file(con, path)
+        total += ingest_file(con, liquidity, path)
+    liquidity.close()
     con.close()
     print(f"\nAll done: {total:,} events ingested across {len(pending)} files.")
 

@@ -100,6 +100,47 @@ def get_dom(
     return data_store.order_book_snapshot(symbol, as_of, depth)
 
 
+# One-second snapshots preserve order-removal timing on the intraday views
+# where traders inspect touches and absorptions. Wider views coarsen
+# automatically, keeping the total number of time buckets bounded.
+_MAX_HEATMAP_BUCKETS = 7200
+
+# The materialised read model makes request cost proportional to visible
+# buckets, not to the number of raw order messages preceding the viewport.
+# Keep the span clamp as a payload/canvas guardrail.
+_MAX_HEATMAP_SPAN_SECONDS = 6 * 3600
+
+
+@app.get("/api/dom-heatmap")
+def get_dom_heatmap(
+    symbol: str = Query(...),
+    start: int = Query(...),
+    end: int = Query(...),
+    depth: int = Query(30, ge=1, le=50),
+    min_price: float | None = Query(None),
+    max_price: float | None = Query(None),
+):
+    """Persistent resting size from the materialised one-second read model."""
+    if end < start:
+        raise HTTPException(400, "end must be greater than or equal to start")
+    if (min_price is None) != (max_price is None):
+        raise HTTPException(400, "min_price and max_price must be provided together")
+    if min_price is not None and min_price >= max_price:
+        raise HTTPException(400, "min_price must be less than max_price")
+    end = min(end, start + _MAX_HEATMAP_SPAN_SECONDS)
+    span = max(1, end - start)
+    bucket_seconds = max(1, -(-span // _MAX_HEATMAP_BUCKETS))  # ceil div, min 1s
+    return data_store.get_dom_heatmap(
+        symbol,
+        start,
+        end,
+        bucket_seconds,
+        depth,
+        min_price,
+        max_price,
+    )
+
+
 # --------------------------------------------------------------------------
 # Strategies (stored as JSON files the backtest worker reads directly)
 # --------------------------------------------------------------------------

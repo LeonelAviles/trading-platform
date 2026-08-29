@@ -4,26 +4,26 @@
 :root {
   color-scheme: dark;
 
-  --bg: #06080e;
-  --bg-deep: #04060b;
-  --surface-1: #080a11;   /* sidebar, header, rails */
-  --surface-2: #0e1119;   /* inputs, list items */
-  --surface-3: #141822;   /* cards, hover */
-  --surface-4: #1c212d;   /* active / pressed */
-  --border: #171b25;
-  --border-strong: #232936;
+  --bg: #0a0a0a;
+  --bg-deep: #060606;
+  --surface-1: #0d0d0d;   /* sidebar, header, rails */
+  --surface-2: #131313;   /* inputs, list items */
+  --surface-3: #1a1a1a;   /* cards, hover */
+  --surface-4: #242424;   /* active / pressed */
+  --border: #1c1c1c;
+  --border-strong: #2a2a2a;
 
   --text: #ececf3;
   --text-muted: #8a8a9b;
   --text-faint: #575765;
 
-  /* Violet is the primary action colour; cyan is the "intelligence" accent
+  /* Blue is the primary action colour; cyan is the "intelligence" accent
      used for sparkles, the logo glow and plan/status text. */
-  --accent: #7c5cff;
-  --accent-hover: #907aff;
+  --accent: #4d8eff;
+  --accent-hover: #6ba3ff;
   --accent-ink: #ffffff;   /* text/icon color on top of the solid accent */
-  --accent-soft: rgba(124, 92, 255, 0.16);
-  --accent-line: rgba(124, 92, 255, 0.42);
+  --accent-soft: rgba(77, 142, 255, 0.16);
+  --accent-line: rgba(77, 142, 255, 0.4);
 
   --cyan: #35d6f0;
   --cyan-soft: rgba(53, 214, 240, 0.14);
@@ -67,7 +67,7 @@ body {
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--surface-4); border-radius: var(--r-pill); border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: #33323b; }
+::-webkit-scrollbar-thumb:hover { background: #2e2e2e; }
 
 .mono { font-family: "SF Mono", "Cascadia Code", ui-monospace, Menlo, Consolas, monospace; }
 .tnum { font-variant-numeric: tabular-nums; }
@@ -111,7 +111,7 @@ select.chevron {
   white-space: nowrap;
 }
 .btn svg { width: 15px; height: 15px; }
-.btn:hover { background: var(--surface-4); border-color: #33323b; }
+.btn:hover { background: var(--surface-4); border-color: #2e2e2e; }
 .btn:active { transform: translateY(0.5px); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn:disabled:hover { background: var(--surface-3); border-color: var(--border-strong); }
@@ -469,7 +469,31 @@ select.chevron {
 .analysis-stats-row .neg { color: var(--red); }
 
 .chart-area { position: relative; flex: 1; min-width: 0; background: var(--bg); }
+.chart-area.order-flow-active { background: #061820; }
 .chart-inner { position: absolute; inset: 0; z-index: 1; }
+
+/* Order-flow overlay: the DOM heatmap sits behind the transparent chart
+   canvas, so candles and drawings remain visible above resting liquidity. */
+.dom-heatmap-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.order-flow-scale {
+  position: absolute; top: 11px; right: 76px; z-index: 2; pointer-events: none;
+  display: grid; grid-template-columns: auto 112px; align-items: center; gap: 3px 8px;
+  color: rgba(235, 245, 248, 0.72); font-size: 9px; letter-spacing: 0.08em;
+  text-transform: uppercase; text-shadow: 0 1px 2px #000;
+}
+.order-flow-scale i {
+  width: 112px; height: 7px; border: 1px solid rgba(255, 255, 255, 0.22);
+  background: linear-gradient(90deg, #041922, #034660, #0091d3, #41d6ff, #ebf9f4, #fff100, #ff7000, #ff2600);
+}
+.order-flow-scale small { grid-row: 2; font-size: 8px; color: rgba(235, 245, 248, 0.5); }
+.order-flow-scale small:first-of-type { grid-column: 2; justify-self: start; }
+.order-flow-scale small:last-of-type { grid-column: 2; justify-self: end; }
+.order-flow-hint {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1;
+  color: var(--text-faint); font-size: 12.5px; pointer-events: none;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 6px 14px;
+}
 
 /* Price readout pinned to the top-left of the chart: bold symbol + large
    last price + change on top, a smaller OHLCV row underneath — updates with
@@ -518,7 +542,7 @@ select.chevron {
 .shape-toolbar .color-trigger-btn:hover { background: var(--surface-3); color: var(--text); }
 .shape-toolbar .color-trigger-icon { display: flex; }
 .shape-toolbar .color-trigger-icon svg { width: 15px; height: 15px; }
-.shape-toolbar .color-trigger-bar { width: 16px; height: 3px; border-radius: 2px; background-color: #294662; }
+.shape-toolbar .color-trigger-bar { width: 16px; height: 3px; border-radius: 2px; background-color: #3a3a3a; }
 .shape-toolbar .width-btn {
   width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; border-radius: var(--r-xs); cursor: pointer; color: var(--text-muted);
@@ -572,7 +596,7 @@ select.chevron {
 .color-cell { width: 20px; height: 20px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.08); padding: 0; cursor: pointer; }
 .color-cell.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
 .color-custom-row { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
-.color-plus { width: 20px; height: 20px; border-radius: 3px; border: 1px dashed #3d5876; background: none; color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1; }
+.color-plus { width: 20px; height: 20px; border-radius: 3px; border: 1px dashed #4a4a4a; background: none; color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1; }
 .color-plus:hover { color: var(--text); border-color: var(--text-muted); }
 .opacity-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-muted); }
 .opacity-row input[type="range"] { flex: 1; }

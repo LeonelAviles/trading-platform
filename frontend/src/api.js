@@ -37,6 +37,21 @@ export async function fetchDom(symbol, asOf) {
   return json(await fetch(`${BASE}/dom?symbol=${encodeURIComponent(symbol)}${asOfParam}`));
 }
 
+// Time-bucketed resting-book depth in [start, end] unix seconds — the
+// order-flow heatmap overlay's data source.
+export async function fetchDomHeatmap(symbol, start, end, {
+  depth, minPrice, maxPrice, signal,
+} = {}) {
+  const depthParam = depth != null ? `&depth=${depth}` : '';
+  const priceParams = minPrice != null && maxPrice != null
+    ? `&min_price=${encodeURIComponent(minPrice)}&max_price=${encodeURIComponent(maxPrice)}`
+    : '';
+  return json(await fetch(
+    `${BASE}/dom-heatmap?symbol=${encodeURIComponent(symbol)}&start=${Math.floor(start)}&end=${Math.ceil(end)}${depthParam}${priceParams}`,
+    { signal },
+  ));
+}
+
 // --- strategies ---
 
 export async function fetchStrategies() {

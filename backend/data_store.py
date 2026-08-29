@@ -21,12 +21,16 @@ still supported as a fallback for any symbol DuckDB doesn't cover.
 """
 
 import threading
+from functools import lru_cache
+from heapq import nlargest, nsmallest
+from operator import itemgetter
 from pathlib import Path
 
 import pandas as pd
 from fastapi import HTTPException
 
 import duckdb_store
+import liquidity_store
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "mbo-data"
 
@@ -313,66 +317,173 @@ def get_cvd(symbol: str, interval: str, start: int | None = None, end: int | Non
     return _clip(series, start, end)
 
 
-def load_book_events(symbol: str) -> pd.DataFrame:
-    """Every book-affecting MBO event (Add/Cancel/Fill/Trade) for one symbol,
-    in time order — raw material for reconstructing the resting order book.
-    Cached under its own key: it needs `order_id`, which `load_trades` (a
-    different column subset) doesn't load.
+def load_book_events(
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_ts: pd.Timestamp,
+    *,
+    include_trades: bool = True,
+    end_inclusive: bool = True,
+) -> pd.DataFrame:
+    """State-changing MBO events in ``[start_ts, end_ts]``, in feed order.
+
+    Adds, cancels, modifies and clears are the only records that mutate a
+    Databento MBO book. Trade records are optionally included solely to track
+    the last traded price; Fill records must not be applied because Databento
+    emits accompanying Cancel records that perform the actual size change.
+
+    Time-bounded at the SQL level, not loaded whole-symbol-then-filtered in
+    pandas: the unbounded query (every book event across this continuous
+    ticker's multi-month history) OOMs DuckDB outright on this store —
+    measured, ~22.7 GiB used before DuckDB gives up trying to offload a
+    32 KiB block (see uvicorn.log). Every caller only ever needs a bounded
+    window anyway, so that bound is pushed into the WHERE clause instead of
+    filtering after the fact.
     """
     where, params = _symbol_filter(symbol)
+    actions = "'A', 'C', 'M', 'R', 'T'" if include_trades else "'A', 'C', 'M', 'R'"
+    end_operator = "<=" if end_inclusive else "<"
     df = _duck().execute(
-        f"SELECT ts_event, action, side, price, size, order_id, symbol FROM mbo_events "
-        f"WHERE {where} ORDER BY ts_event",
-        params,
+        f"SELECT ts_event, action, side, price, size, order_id, sequence, flags FROM mbo_events "
+        f"WHERE ({where}) AND action IN ({actions}) "
+        f"AND ts_event >= ? AND ts_event {end_operator} ? "
+        f"ORDER BY ts_event, sequence, (flags & 128), size DESC, "
+        f"CASE action WHEN 'R' THEN 0 WHEN 'A' THEN 1 WHEN 'M' THEN 2 "
+        f"WHEN 'C' THEN 3 ELSE 4 END",
+        params + [start_ts.tz_localize(None), end_ts.tz_localize(None)],
     ).df()
     if df.empty:
-        raise HTTPException(404, f"No book events found for symbol '{symbol}'")
+        return df
     df["ts_event"] = pd.to_datetime(df["ts_event"], utc=True)
     return df.reset_index(drop=True)
 
 
-# How far back to replay book events for a DOM snapshot. This is synthetic
-# data whose resting orders never naturally expire, so replaying the full
-# history produces a nonsensical book spanning the entire multi-month price
-# range; a bounded lookback keeps the reconstruction fast and the resulting
-# ladder tight around the current price, like a real DOM.
-DOM_LOOKBACK_MINUTES = 60
+def _latest_book_clear(symbol: str, cutoff: pd.Timestamp) -> pd.Timestamp:
+    """Latest exchange/synthetic clear before ``cutoff``.
 
-
-def order_book_snapshot(symbol: str, as_of: int | None = None, depth: int = 12) -> dict:
-    """Reconstruct an approximate resting order book from Add/Cancel/Fill
-    events in the `DOM_LOOKBACK_MINUTES` window ending at `as_of` (unix
-    seconds; defaults to the latest event). Approximate, not exchange-
-    certified: orders added before the window are invisible to it, same as
-    a DOM that only ever showed you the last hour of activity.
+    Historical MBO files begin with a synthetic book snapshot. Replaying from
+    its clear record gives the exact starting state without inventing a time-
+    based expiry for resting orders.
     """
-    events = load_book_events(symbol)
-    cutoff = pd.Timestamp(as_of, unit="s", tz="UTC") if as_of is not None else events["ts_event"].iloc[-1]
-    window = events[
-        (events["ts_event"] <= cutoff)
-        & (events["ts_event"] > cutoff - pd.Timedelta(minutes=DOM_LOOKBACK_MINUTES))
+    where, params = _symbol_filter(symbol)
+    row = _duck().execute(
+        f"SELECT max(ts_event) FROM mbo_events "
+        f"WHERE ({where}) AND action = 'R' AND ts_event <= ?",
+        params + [cutoff.tz_localize(None)],
+    ).fetchone()
+    if row and row[0] is not None:
+        return pd.Timestamp(row[0], tz="UTC")
+    first, _ = data_range(symbol)
+    return pd.Timestamp(first, unit="s", tz="UTC")
+
+
+_BOOK_REPLAY_CHUNK = pd.Timedelta(hours=1)
+_book_state_build_lock = threading.Lock()
+_book_state_snapshots: dict[tuple[str, int], tuple[tuple[int, str, float, float], ...]] = {}
+_BOOK_STATE_SNAPSHOT_LIMIT = 8
+
+
+@lru_cache(maxsize=8)
+def _cached_book_state_at(symbol: str, checkpoint: int) -> tuple[tuple[int, str, float, float], ...]:
+    """Active orders immediately before a unix-second checkpoint.
+
+    Replays bounded, ordered chunks since the last real/synthetic clear.
+    The former single SQL query materialised tens of millions of events,
+    two hash aggregates and a self-join at once; on this dataset that used
+    DuckDB's entire 6.3 GiB allowance and returned HTTP 500. Hour chunks
+    keep peak memory bounded while preserving exact feed order. Returning
+    an immutable tuple makes the checkpoint reusable across nearby pans.
+    """
+    cutoff = pd.Timestamp(checkpoint, unit="s", tz="UTC")
+    replay_start = _latest_book_clear(symbol, cutoff)
+    # A neighboring 15-minute viewport checkpoint should replay only the
+    # difference from a state we already paid to construct, not the entire
+    # history since the book clear again. The outer lock makes this small
+    # manual cache safe and lets queued requests benefit from the first one.
+    replay_start_seconds = int(replay_start.timestamp())
+    candidates = [
+        key
+        for key in _book_state_snapshots
+        if key[0] == symbol and replay_start_seconds <= key[1] <= checkpoint
     ]
-
-    book: dict[int, tuple[str, float, float]] = {}  # order_id -> (side, price, size)
-    last_price = None
-    last_time = None
-    for row in window.itertuples(index=False):
-        if row.action == "A":
-            book[row.order_id] = (row.side, row.price, row.size)
-        elif row.action == "F":
-            existing = book.get(row.order_id)
-            if existing:
-                side, price, size = existing
-                remaining = size - row.size
-                if remaining > 0:
-                    book[row.order_id] = (side, price, remaining)
+    nearest = max(candidates, key=itemgetter(1), default=None)
+    if nearest is not None:
+        book = {
+            order_id: (side, price, size)
+            for order_id, side, price, size in _book_state_snapshots[nearest]
+        }
+        cursor = pd.Timestamp(nearest[1], unit="s", tz="UTC")
+    else:
+        book: dict[int, tuple[str, float, float]] = {}
+        cursor = replay_start
+    while cursor < cutoff:
+        chunk_end = min(cursor + _BOOK_REPLAY_CHUNK, cutoff)
+        events = load_book_events(
+            symbol,
+            cursor,
+            chunk_end,
+            include_trades=False,
+            end_inclusive=False,
+        )
+        for _ts, action, side, price, size, order_id, _sequence, _flags in events.itertuples(
+            index=False,
+            name=None,
+        ):
+            if action == "A":
+                if size > 0 and price is not None and side in ("A", "B"):
+                    book[order_id] = (side, price, size)
                 else:
-                    del book[row.order_id]
-        elif row.action == "C":
-            book.pop(row.order_id, None)
-        elif row.action == "T":
-            last_price, last_time = row.price, row.ts_event
+                    book.pop(order_id, None)
+            elif action == "C":
+                existing = book.get(order_id)
+                if existing is not None:
+                    order_side, order_price, order_size = existing
+                    remaining = order_size - size
+                    if remaining > 0:
+                        book[order_id] = (order_side, order_price, remaining)
+                    else:
+                        book.pop(order_id, None)
+            elif action == "M":
+                if size > 0 and price is not None and side in ("A", "B"):
+                    book[order_id] = (side, price, size)
+                else:
+                    book.pop(order_id, None)
+            elif action == "R":
+                book.clear()
+        cursor = chunk_end
 
+    result = tuple(
+        (int(order_id), side, float(price), float(size))
+        for order_id, (side, price, size) in book.items()
+    )
+    cache_key = (symbol, checkpoint)
+    _book_state_snapshots[cache_key] = result
+    while len(_book_state_snapshots) > _BOOK_STATE_SNAPSHOT_LIMIT:
+        _book_state_snapshots.pop(next(iter(_book_state_snapshots)))
+    return result
+
+
+def _book_state_at(symbol: str, checkpoint: int) -> tuple[tuple[int, str, float, float], ...]:
+    # React may replace an in-flight request while the chart settles. FastAPI
+    # cannot stop a sync DuckDB call after the browser aborts, so concurrent
+    # cache misses used to build the same costly checkpoint twice. Serialise
+    # misses and check the cache only after acquiring the lock.
+    with _book_state_build_lock:
+        return _cached_book_state_at(symbol, checkpoint)
+
+
+_BOOK_CHECKPOINT_SECONDS = 15 * 60
+_HEATMAP_COLOR_GAMMA = 1.35
+_HEATMAP_MIN_INTENSITY = 0.90
+_HEATMAP_MIN_SIZE_RATIO = _HEATMAP_MIN_INTENSITY ** (1 / _HEATMAP_COLOR_GAMMA)
+_HEATMAP_MAX_CANDIDATE_LEVELS = 64
+_HEATMAP_SCALE_SAMPLE_SECONDS = 60
+
+
+def _aggregate_book(book: dict[int, tuple[str, float, float]], depth: int) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """Collapse a running order_id -> (side, price, size) book into top-`depth`
+    bid/ask levels for a point-in-time DOM snapshot.
+    """
     bids: dict[float, float] = {}
     asks: dict[float, float] = {}
     # `side` here is the resting order's own side — not the aggressor sense
@@ -381,25 +492,296 @@ def order_book_snapshot(symbol: str, as_of: int | None = None, depth: int = 12) 
         levels = bids if side == "B" else asks
         levels[price] = levels.get(price, 0) + size
 
-    # This synthetic data has no matching-engine consistency guarantee, so
-    # resting orders can leave a "crossed" book (best bid >= best ask).
-    # Anchor both sides to the last traded price instead — the only price
-    # point we know actually happened — which also centers the ladder where
-    # a DOM should be.
-    if last_price is not None:
-        bids = {p: s for p, s in bids.items() if p <= last_price}
-        asks = {p: s for p, s in asks.items() if p >= last_price}
-
     bid_levels = sorted(bids.items(), key=lambda kv: -kv[0])[:depth]
     ask_levels = sorted(asks.items(), key=lambda kv: kv[0])[:depth]
+    return bid_levels, ask_levels
+
+
+def order_book_snapshot(symbol: str, as_of: int | None = None, depth: int = 12) -> dict:
+    """Reconstruct persistent MBO state at ``as_of`` (unix seconds)."""
+    if as_of is not None:
+        cutoff = pd.Timestamp(as_of, unit="s", tz="UTC")
+    else:
+        # data_range() answers from min/max timestamps only — cheap, unlike
+        # loading every event just to find the last one.
+        _, last = data_range(symbol)
+        cutoff = pd.Timestamp(last, unit="s", tz="UTC")
+    cutoff_seconds = int(cutoff.timestamp())
+    checkpoint = cutoff_seconds - (cutoff_seconds % _BOOK_CHECKPOINT_SECONDS)
+    book = {
+        oid: (side, price, size)
+        for oid, side, price, size in _book_state_at(symbol, checkpoint)
+    }
+    window = load_book_events(
+        symbol,
+        pd.Timestamp(checkpoint, unit="s", tz="UTC"),
+        cutoff,
+    )
+    last_price = None
+    for row in window.itertuples(index=False):
+        if row.action == "A":
+            book[row.order_id] = (row.side, row.price, row.size)
+        elif row.action == "C":
+            existing = book.get(row.order_id)
+            if existing:
+                side, price, size = existing
+                remaining = size - row.size
+                if remaining > 0:
+                    book[row.order_id] = (side, price, remaining)
+                else:
+                    del book[row.order_id]
+        elif row.action == "M":
+            if row.size > 0 and row.price is not None and row.side in ("A", "B"):
+                book[row.order_id] = (row.side, row.price, row.size)
+            else:
+                book.pop(row.order_id, None)
+        elif row.action == "R":
+            book.clear()
+        elif row.action == "T":
+            last_price = row.price
+
+    bid_levels, ask_levels = _aggregate_book(book, depth)
 
     return {
         "bids": [{"price": round(p, 4), "size": int(s)} for p, s in bid_levels],
         "asks": [{"price": round(p, 4), "size": int(s)} for p, s in ask_levels],
         "lastPrice": round(last_price, 4) if last_price is not None else None,
         "asOf": int(cutoff.timestamp()),
-        "windowMinutes": DOM_LOOKBACK_MINUTES,
+        "stateSource": "persistent MBO state since the latest book clear",
     }
+
+
+def _get_dom_heatmap_replay(
+    symbol: str,
+    start: int,
+    end: int,
+    bucket_seconds: int,
+    depth: int = 30,
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> dict:
+    """Persistent resting size at each price level over time.
+
+    Orders remain in both the order-id map and their aggregated price level
+    until a Cancel, Modify or book Clear record changes them. No time-based
+    expiry is applied. When a visible price range is supplied, every active
+    level in that range is emitted; ``depth`` is only the fallback for callers
+    without vertical viewport bounds.
+    """
+    end_ts = pd.Timestamp(end, unit="s", tz="UTC")
+    checkpoint = start - (start % _BOOK_CHECKPOINT_SECONDS)
+    initial_state = _book_state_at(symbol, checkpoint)
+
+    book: dict[int, tuple[str, float, float]] = {}
+    bids: dict[float, float] = {}
+    asks: dict[float, float] = {}
+    for order_id, side, price, size in initial_state:
+        book[order_id] = (side, price, size)
+        levels = bids if side == "B" else asks
+        levels[price] = levels.get(price, 0) + size
+
+    window = load_book_events(
+        symbol,
+        pd.Timestamp(checkpoint, unit="s", tz="UTC"),
+        end_ts,
+        include_trades=True,
+    )
+
+    nanos_per_second = 1_000_000_000
+    bucket_ns = bucket_seconds * nanos_per_second
+    end_ns = end * nanos_per_second
+    bucket_start = start - (start % bucket_seconds)
+    next_boundary_ns = (bucket_start + bucket_seconds) * nanos_per_second
+    buckets: list[dict] = []
+    scale_candidates: list[float] = []
+    last_trade_price: float | None = None
+    last_scale_sample_ns: int | None = None
+
+    def adjust_level(side: str, price: float, delta: float):
+        levels = bids if side == "B" else asks
+        size = levels.get(price, 0) + delta
+        if size > 0:
+            levels[price] = size
+        else:
+            levels.pop(price, None)
+
+    def remove_order(order_id: int):
+        existing = book.pop(order_id, None)
+        if existing is None:
+            return
+        side, price, size = existing
+        adjust_level(side, price, -size)
+
+    def terminate_crossed_levels(trade_price: float):
+        """Drop liquidity that can no longer be resting after a price cross.
+
+        The normal C/M records remain the source of truth for fills and
+        cancels. This guard handles incomplete/corrupt historical sequences:
+        an ask strictly below a later trade, or a bid strictly above it,
+        cannot still be resting. Removing the underlying orders (rather than
+        merely hiding one snapshot) prevents a stale line from reappearing if
+        price later reverses through the same area.
+        """
+        crossed_asks = {price for price in asks if price < trade_price}
+        crossed_bids = {price for price in bids if price > trade_price}
+        if not crossed_asks and not crossed_bids:
+            return
+        crossed = [
+            order_id
+            for order_id, (side, price, _size) in book.items()
+            if (side == "A" and price in crossed_asks)
+            or (side == "B" and price in crossed_bids)
+        ]
+        for order_id in crossed:
+            remove_order(order_id)
+
+    def snapshot(boundary_ns: int):
+        nonlocal last_scale_sample_ns
+        # Base the color ceiling on the whole live book, not just whichever
+        # narrow price slice the chart happens to show. Otherwise one tiny
+        # visible order would incorrectly become red merely because it was
+        # the only visible level. The scale changes much more slowly than
+        # order state; sampling it once per minute avoids sorting the entire
+        # book thousands of times in a one-second request.
+        scale_sample_ns = _HEATMAP_SCALE_SAMPLE_SECONDS * nanos_per_second
+        if last_scale_sample_ns is None or boundary_ns - last_scale_sample_ns >= scale_sample_ns:
+            all_sizes = list(bids.values()) + list(asks.values())
+            if all_sizes:
+                all_sizes.sort()
+                scale_candidates.append(
+                    all_sizes[min(len(all_sizes) - 1, int(0.95 * len(all_sizes)))]
+                )
+            last_scale_sample_ns = boundary_ns
+
+        if min_price is not None and max_price is not None:
+            # A one-second grid can contain thousands of snapshots. Retain a
+            # generous top-liquidity candidate set here instead of first
+            # materialising every ordinary price level in every bucket; the
+            # final global orange/red threshold below narrows it further.
+            candidates = (
+                [(price, size, "B") for price, size in bids.items() if min_price <= price <= max_price]
+                + [(price, size, "A") for price, size in asks.items() if min_price <= price <= max_price]
+            )
+            strongest = nlargest(
+                _HEATMAP_MAX_CANDIDATE_LEVELS,
+                candidates,
+                key=itemgetter(1),
+            )
+            levels = [
+                {"p": round(price, 4), "s": int(size), "side": side}
+                for price, size, side in strongest
+            ]
+        else:
+            bid_levels = nlargest(depth, bids.items(), key=itemgetter(0))
+            ask_levels = nsmallest(depth, asks.items(), key=itemgetter(0))
+            levels = (
+                [{"p": round(p, 4), "s": int(s), "side": "B"} for p, s in bid_levels]
+                + [{"p": round(p, 4), "s": int(s), "side": "A"} for p, s in ask_levels]
+            )
+        buckets.append({
+            "t": (boundary_ns - bucket_ns) // nanos_per_second,
+            "levels": levels,
+        })
+
+    # name=None avoids constructing a namedtuple object for every raw event;
+    # this loop commonly processes millions of rows for one request.
+    for ts_event, action, side, price, event_size, order_id, _sequence, _flags in window.itertuples(index=False, name=None):
+        # Emit a snapshot for every bucket boundary crossed since the last event.
+        event_ns = ts_event.value
+        while event_ns >= next_boundary_ns and next_boundary_ns <= end_ns:
+            snapshot(next_boundary_ns)
+            next_boundary_ns += bucket_ns
+
+        if action == "A":
+            remove_order(order_id)
+            if event_size > 0 and price is not None and side in ("A", "B"):
+                book[order_id] = (side, price, event_size)
+                adjust_level(side, price, event_size)
+        elif action == "C":
+            existing = book.get(order_id)
+            if existing:
+                order_side, order_price, order_size = existing
+                remaining = order_size - event_size
+                if remaining > 0:
+                    book[order_id] = (order_side, order_price, remaining)
+                    adjust_level(order_side, order_price, -event_size)
+                else:
+                    remove_order(order_id)
+        elif action == "M":
+            remove_order(order_id)
+            if event_size > 0 and price is not None and side in ("A", "B"):
+                book[order_id] = (side, price, event_size)
+                adjust_level(side, price, event_size)
+        elif action == "R":
+            book.clear()
+            bids.clear()
+            asks.clear()
+        elif action == "T" and price is not None and price != last_trade_price:
+            last_trade_price = price
+            terminate_crossed_levels(last_trade_price)
+
+    while next_boundary_ns <= end_ns:
+        snapshot(next_boundary_ns)
+        next_boundary_ns += bucket_ns
+
+    scale_candidates.sort()
+    scale_max = (
+        scale_candidates[min(len(scale_candidates) - 1, int(0.95 * len(scale_candidates)))]
+        if scale_candidates
+        else 1
+    )
+    # The UI is intentionally a liquidity-zones view, not a full-depth blue
+    # field. Keep only values whose color falls in the orange/red end of the
+    # shared ramp. Filtering before JSON encoding cuts the payload and canvas
+    # work by roughly the same large factor.
+    display_min = scale_max * _HEATMAP_MIN_SIZE_RATIO
+    for bucket in buckets:
+        bucket["levels"] = [level for level in bucket["levels"] if level["s"] >= display_min]
+    return {
+        "bucketSeconds": bucket_seconds,
+        "scaleMax": scale_max,
+        "displayMin": display_min,
+        "buckets": buckets,
+    }
+
+
+def get_dom_heatmap(
+    symbol: str,
+    start: int,
+    end: int,
+    bucket_seconds: int,
+    depth: int = 30,
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> dict:
+    """Serve heatmap cells from the sparse materialised one-second model.
+
+    ``depth`` remains in the public signature for API compatibility.  The
+    read model already contains only major liquidity candidates, so vertical
+    viewport bounds—not top-of-book depth—determine which levels are sent.
+    """
+    del depth
+    if symbol == CONTINUOUS_SYMBOL:
+        windows: list[tuple[str, int, int]] = []
+        for actual_symbol, lo, hi in _front_month_ranges():
+            lo_utc = pd.Timestamp(lo).tz_localize("UTC") if pd.Timestamp(lo).tzinfo is None else pd.Timestamp(lo)
+            hi_utc = pd.Timestamp(hi).tz_localize("UTC") if pd.Timestamp(hi).tzinfo is None else pd.Timestamp(hi)
+            lo_seconds = int(lo_utc.timestamp())
+            hi_seconds = int(hi_utc.timestamp())
+            if hi_seconds > start and lo_seconds <= end:
+                windows.append((actual_symbol, lo_seconds, hi_seconds))
+    else:
+        replay_start = (start // 86_400) * 86_400
+        windows = [(symbol, replay_start, end + 1)]
+
+    return liquidity_store.get_heatmap(
+        windows,
+        start,
+        end,
+        bucket_seconds,
+        min_price,
+        max_price,
+    )
 
 
 def _bars_from_1m(symbol: str, bucket: str, interval: str,
