@@ -87,7 +87,23 @@ refused second, OOS guard, budget_exhausted, restart resume).
 
 ## Acceptance run
 
-{{ACCEPTANCE}}
+Prompt: the owner's ORB idea verbatim (§8.1), symbol `ES1!`, direction left to the agent. Run
+`58633c95b047` on the real Apr–Jul store, unattended (the script answers the first `ask_user` with the
+first offered option):
+
+| Step | What happened |
+|---|---|
+| Phase 0 | `declare_variants`: dimension *entry timing* → breakout / retest (quoting the prompt) |
+| Phase 1 | `ORB 15m — Breakout` and `ORB 15m — Retest` created (direction `both`, structure stop at the opposite OR boundary, 2R target); `propose_risk_profile` accepted (0.5 %/trade, 2 % daily); both run IS + WF1–3; compared — identical trade sets, breakout kept |
+| Phase 2 | 3 of 5 changes: `filters` + `delta > 0` (no change), `session.entryWindow.end` 11:30 → 15:30 (no change), `exit.target.value` 2.0 → 2.5 (worse: net +3,176 → −512) — each with a `log_finding`; then `ask_user` paused the run with the thin-sample caveat |
+| Finalize | one OOS look: IS 61 trades, PF 1.16, expectancy 0.12 R, max DD 3.3 %; WF windows −1,157 / −1,082 / +2,453; OOS 26 trades, PF 1.10, 0.09 R; Monte Carlo DD p95 9.6 %; DSR 0.26 (5 trials); **verdict: untestable** (61 < 100 in-sample trades) → status `draft` |
+| Report | **not written**: the closing model call failed with "Your credit balance is too low to access the Anthropic API" — an account-billing limit, not a platform error. The scaffold (numbers above, the knowledge facts retrieved for the prompt) is stored on the run. |
+
+Cost: ≈ $2.4 for the run at placeholder prices (787 k input tokens, 203 k of them cache reads, 22 k output).
+Research: 3 seed topics → 15 sources scored (one tier 2 at 0.85, the rest tier 3/4) → 166 facts, $0.37.
+Restart-resume, pause/answer, the change budget, OOS blindness and the second-finalize refusal are
+covered by `test_agent_runs.py`; the knowledge citation in the written report remains to be seen on a
+run with credits.
 
 ## Deferred
 

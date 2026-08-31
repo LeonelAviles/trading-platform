@@ -138,10 +138,10 @@ def test_pause_answer_resume_budget_and_oos(store):
 def test_oos_guard_blocks_hidden_rows(store):
     from agent import tools_v2
 
-    oos = next(j for j in jobs.list_jobs() if j["windowKind"] == "oos")
+    oos = next((j for j in jobs.list_jobs() if j["windowKind"] == "oos"), None) or jobs.run_sync(SPEC, window_kind="oos", timeout_s=300)
     assert tools_v2.oos_guard(oos["id"], {"oosRevealed": []}) == tools_v2.OOS_ERROR
     assert tools_v2.oos_guard(oos["id"], {"oosRevealed": [oos["id"]]}) is None
-    is_row = next(j for j in jobs.list_jobs() if j["windowKind"] == "is")
+    is_row = next((j for j in jobs.list_jobs() if j["windowKind"] == "is"), None) or jobs.run_sync(SPEC, window_kind="is", timeout_s=300)
     assert tools_v2.oos_guard(is_row["id"], {}) is None
 
 

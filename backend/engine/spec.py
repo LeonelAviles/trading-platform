@@ -166,6 +166,7 @@ class RiskProfile(_M):
     stopAfterConsecutiveLosses: int = 3
     weeklyTargetPct: float | None = None
     passCriteria: PassCriteria = Field(default_factory=PassCriteria)
+    agentProposal: dict[str, Any] | None = None   # the agent's numbers, kept for "Reset to agent proposal"
 
 
 class StrategySpec(_M):

@@ -46,17 +46,28 @@ SUMMARY_PROMPT = """Extract knowledge from this document for a futures-trading r
              "tags": ["concept", ...], "instruments": ["ES", ...], "regimes": ["trend", ...]}],
  "definitions": [{"term": "...", "definition": "..."}], "parameters": [{"name": "...", "typicalValue": "...", "context": "..."}],
  "caveats": ["..."]}
-Keep at most 12 claims, each under 40 words, precise enough to act on."""
+Keep at most 8 claims, each under 35 words, precise enough to act on. Definitions: at most 4."""
 
 
 def _json_from(text: str) -> dict:
+    """Parse the model's JSON, tolerating ``` fences and a truncated tail
+    (recovers the complete claim objects that were emitted)."""
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return {}
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    # Truncated output: salvage complete {"text": ..., "evidenceType": ..., "tags": [...]} objects.
+    claims = []
+    for obj in re.finditer(r"\{\s*\"text\"\s*:\s*\"((?:[^\"\\\\]|\\\\.)*)\"(.*?)\}", text, re.S):
+        body = obj.group(0)
+        try:
+            claims.append(json.loads(body))
+        except json.JSONDecodeError:
+            claims.append({"text": obj.group(1), "evidenceType": "theory", "tags": []})
+    return {"claims": claims, "definitions": [], "truncated": True} if claims else {}
 
 
 # ----------------------------------------------------------------------------
@@ -198,7 +209,7 @@ def score_source(url: str, title: str, text: str, llm: llm_client.LLM) -> dict:
 
 
 def summarize(url: str, title: str, text: str, llm: llm_client.LLM) -> dict:
-    response = llm.create(purpose="research.summarize", tier="fast", max_tokens=1200, system=SUMMARY_PROMPT, cache=True,
+    response = llm.create(purpose="research.summarize", tier="fast", max_tokens=4000, system=SUMMARY_PROMPT, cache=True,
                           messages=[{"role": "user", "content": f"Title: {title}\nURL: {url}\n\n{text[:12000]}"}])
     return _json_from("".join(getattr(b, "text", "") for b in response.content))
 
@@ -222,10 +233,15 @@ def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client
             db.add(src)
             db.flush()
         source_id = src.id
-        already = db.query(ResearchDoc).filter(ResearchDoc.source_id == source_id, ResearchDoc.topic == topic).count()
+        prev = db.query(ResearchDoc).filter(ResearchDoc.source_id == source_id, ResearchDoc.topic == topic).all()
+        already = any(d.chunk_count > 0 or (src.tier == 4) for d in prev)
+        prior_scored = dict(src.scored_json) if src.scored_json else None
+        for d in prev:
+            if d.chunk_count == 0 and src.tier != 4:
+                db.delete(d)            # a summary that produced nothing is retried
     if already:
         return {"sourceId": source_id, "skipped": "already ingested for this topic"}
-    scored = score_source(url, title, text, llm)
+    scored = prior_scored if prior_scored and prior_scored.get("credibility") is not None else score_source(url, title, text, llm)
     with database.session_scope() as db:
         src = db.get(ResearchSource, source_id)
         src.tier = int(scored.get("tier") or 3)

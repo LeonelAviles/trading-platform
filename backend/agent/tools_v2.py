@@ -234,6 +234,8 @@ def finalize(strategy_id: str | None, reason: str, state: dict, *, run_id: str |
         "trials": trials, "inSample": is_m, "walkForward": rep.get("walkForward"), "outOfSample": rep.get("outOfSample"),
         "monteCarlo": {k: v_ for k, v_ in (rep.get("monteCarlo") or {}).items()}, "deflatedSharpe": rep.get("deflatedSharpe"),
         "verdict": v, "risk": rep.get("risk"), "citations": state.get("citations", []),
+        "knowledgeAvailable": [{"credibility": f.get("credibility"), "source": f.get("source"), "text": f.get("text")}
+                               for f in (state.get("knowledge") or [])[:8]],
         "reportOutline": ["ambiguity table", "phase 1 variants and winner", "experiments (variable, change, effect, kept/discarded)",
                           "final rules in plain English", "IS / WF / OOS / MC / DSR numbers", "verdict vs risk profile", "knowledge cited"],
     }

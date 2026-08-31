@@ -157,7 +157,8 @@ class GenerateFlow:
         state["report"] = {
             "text": text, "championId": state.get("championId"), "createdIds": state["createdIds"], "revisedIds": state["revisedIds"],
             "ambiguity": state.get("ambiguity"), "changesUsed": state["changesUsed"], "finalized": state.get("finalized"),
-            "finalizeResult": state.get("finalizeResult"), "citations": state.get("citations"), "jobs": state["jobs"],
+            "finalizeResult": state.get("finalizeResult"), "citations": state.get("citations"),
+            "knowledgeAvailable": state.get("knowledge"), "jobs": state["jobs"],
         }
         state["phase"] = "done"
         return state

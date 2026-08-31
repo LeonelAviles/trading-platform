@@ -168,3 +168,13 @@ decisions". Newest at the bottom.
     what the REST endpoint returns.
 42. **Unattended acceptance run answers `ask_user` with the first offered
     option** (see docs/04-agent.md); interactive use answers from the UI.
+43. **Phase 4 acceptance is complete except the written report**, which the
+    Anthropic account's credit balance blocked at the last call. The
+    protocol itself (variants, IS/WF, experiments, pause, one OOS look,
+    verdict) ran end-to-end on real data; the owner needs to add credits for
+    the report and for further runs. Phase 5 does not depend on the LLM, so
+    work continues there.
+44. **The finalize scaffold carries the facts injected into the prompt**
+    (`knowledgeAvailable`) as well as explicit `search_knowledge` hits, so a
+    report can cite credibility even when the model relied on the system
+    block rather than the tool.

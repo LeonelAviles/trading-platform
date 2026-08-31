@@ -165,7 +165,7 @@ def cancel(run_id: str) -> dict:
     _cancel.add(run_id)
     with database.session_scope() as db:
         r = db.get(AgentRunRow, run_id)
-        if r and r.status in ("queued", "paused_for_user"):
+        if r and r.status in ("queued", "paused_for_user", "running"):
             st = dict(r.state_json or {})
             _emit(st, run_id, "cancelled")
             r.state_json = st
@@ -210,7 +210,8 @@ def _loop(run_id: str) -> None:
     _save(run_id, state, status="running")
     try:
         for _ in range(MAX_ROUNDS):
-            if run_id in _cancel:
+            # Cancel may come from this process (flag) or from another one (row status).
+            if run_id in _cancel or (get(run_id) or {}).get("status") == "cancelled":
                 _cancel.discard(run_id)
                 _emit(state, run_id, "cancelled")
                 _save(run_id, state, status="cancelled")
