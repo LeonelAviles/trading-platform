@@ -1,243 +1,282 @@
-"""ORM models for the Stratify platform ERD (users, strategies, backtests,
-market data, AI research sessions, reports, ...).
+"""ORM models for the platform metadata store (PLATFORM-SPEC.md §4.7).
 
-`symbol` columns (market_data, backtests, trades, reference_data) are plain
-indexed strings, not hard foreign keys — there's no symbols dimension table
-in the schema, so they're a soft/logical link, matched by value rather than
-a DB constraint. Every other "(FK)" annotated in the ERD is a real
-ForeignKey below.
+Conventions:
+- ids are 12-char hex strings (uuid4().hex[:12]) like the JSON-file ids the
+  app used before, so nothing has to be re-keyed;
+- timestamps are ISO-8601 UTC strings (`utc_now()`), which sort correctly,
+  survive SQLite's lack of a datetime type, and match what the frontend
+  already receives from job.json;
+- free-form documents (specs, risk profiles, metrics, agent state) are JSON
+  columns — SQLite stores them as text, SQLAlchemy (de)serialises.
 
-One documented gap: the ERD draws a "configures" edge from users to
-data_sources, but data_sources' column list has no user_id — so that
-relationship isn't materialized as a constraint here either. Add
-`owner_user_id` to DataSource if that edge needs to be enforced later.
+Trade lists stay on disk (`backtests/<id>/trades.json`); `Backtest.trades_path`
+points at them because they can be large.
 """
 
-import enum
-import uuid
-from datetime import datetime
+from __future__ import annotations
 
-from sqlalchemy import (
-    Enum,
-    ForeignKey,
-    Numeric,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
 
 
-def _uuid_pk() -> Mapped[uuid.UUID]:
-    return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+def new_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
-class TradeSide(str, enum.Enum):
-    BUY = "BUY"
-    SELL = "SELL"
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _id() -> Mapped[str]:
+    return mapped_column(String(12), primary_key=True, default=new_id)
+
+
+def _ts(**kw) -> Mapped[str]:
+    return mapped_column(String(32), default=utc_now, **kw)
 
 
 # --------------------------------------------------------------------------
-# Core entities
+# Strategies, backtests, agent runs, findings
 # --------------------------------------------------------------------------
-
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    name: Mapped[str] = mapped_column(String(255))
-    subscription_tier: Mapped[str] = mapped_column(String(32), default="free")
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    strategies: Mapped[list["Strategy"]] = relationship(back_populates="user")
-    ai_sessions: Mapped[list["AISession"]] = relationship(back_populates="user")
-    reports: Mapped[list["Report"]] = relationship(back_populates="user")
-
 
 class Strategy(Base):
     __tablename__ = "strategies"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = _id()
     name: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(32), default="draft")
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    user: Mapped["User"] = relationship(back_populates="strategies")
-    versions: Mapped[list["StrategyVersion"]] = relationship(
-        back_populates="strategy", cascade="all, delete-orphan"
+    # draft | testing | candidate | forward_test | live | rejected | retired
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    # prompt | teaching | manual
+    origin_type: Mapped[str] = mapped_column(String(32), default="manual")
+    origin_id: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    ai_sessions: Mapped[list["AISession"]] = relationship(back_populates="strategy")
-    reports: Mapped[list["Report"]] = relationship(back_populates="strategy")
+    spec_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    risk_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = _ts()
+    updated_at: Mapped[str] = _ts(onupdate=utc_now)
 
-
-class StrategyVersion(Base):
-    __tablename__ = "strategy_versions"
-    __table_args__ = (UniqueConstraint("strategy_id", "version", name="uq_strategy_version"),)
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    strategy_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("strategies.id", ondelete="CASCADE"), index=True
-    )
-    version: Mapped[int] = mapped_column()
-    rule_definition: Mapped[dict] = mapped_column(JSONB)
-    parameters: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    strategy: Mapped["Strategy"] = relationship(back_populates="versions")
-    backtests: Mapped[list["Backtest"]] = relationship(back_populates="strategy_version")
-    performance_metrics: Mapped[list["PerformanceMetric"]] = relationship(
-        back_populates="strategy_version"
-    )
-
-
-# --------------------------------------------------------------------------
-# Market data (raw MBO ticks + derived bars) lives in DuckDB, not here —
-# see backend/duckdb_store.py and scripts/ingest_dbn_to_duckdb.py. Real,
-# measured evidence on the same file: Postgres/TimescaleDB took 18+ minutes
-# and still hadn't finished ingesting one busy day (11.26M rows, 5 live
-# indexes, a UUID generated per row); DuckDB + polars + Parquet decoded,
-# loaded, and queried the identical file in 22.2 seconds, at ~3x better
-# compression. The former DataSource/MarketData/MboEvent/Bar models (and
-# their tables) were dropped in migration 90bc011f231e — they never held
-# real data, every ingestion attempt into them was a truncated test.
-# --------------------------------------------------------------------------
-
-
-# --------------------------------------------------------------------------
-# Execution
-# --------------------------------------------------------------------------
 
 class Backtest(Base):
     __tablename__ = "backtests"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    strategy_version_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("strategy_versions.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = _id()
+    strategy_id: Mapped[str | None] = mapped_column(
+        ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    timeframe: Mapped[str] = mapped_column(String(16))
-    start_date: Mapped[datetime]
-    end_date: Mapped[datetime]
-    initial_capital: Mapped[float] = mapped_column(Numeric(18, 2))
-    metrics: Mapped[dict | None] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    strategy_version: Mapped["StrategyVersion"] = relationship(back_populates="backtests")
-    trades: Mapped[list["Trade"]] = relationship(back_populates="backtest", cascade="all, delete-orphan")
-
-
-class Trade(Base):
-    __tablename__ = "trades"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    backtest_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("backtests.id", ondelete="CASCADE"), index=True
-    )
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    entry_time: Mapped[datetime]
-    exit_time: Mapped[datetime | None]
-    side: Mapped[TradeSide] = mapped_column(Enum(TradeSide, name="trade_side"))
-    entry_price: Mapped[float] = mapped_column(Numeric(18, 6))
-    exit_price: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    size: Mapped[float] = mapped_column(Numeric(24, 6))
-    pnl: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    rr: Mapped[float | None] = mapped_column(Numeric(10, 4))
-    status: Mapped[str] = mapped_column(String(16), default="open")
-
-    backtest: Mapped["Backtest"] = relationship(back_populates="trades")
-
-
-class PerformanceMetric(Base):
-    __tablename__ = "performance_metrics"
-    __table_args__ = (
-        UniqueConstraint("strategy_version_id", "metric_name", "period", name="uq_metric_period"),
+    mode: Mapped[str] = mapped_column(String(16), default="bars")  # bars | ticks | l3
+    # is | wf1 | wf2 | wf3 | oos | full | teaching
+    window_kind: Mapped[str] = mapped_column(String(16), default="full")
+    date_from: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    date_to: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trades_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = _ts()
+    finished_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    strategy_version_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("strategy_versions.id", ondelete="CASCADE"), index=True
-    )
-    metric_name: Mapped[str] = mapped_column(String(64))
-    metric_value: Mapped[float] = mapped_column(Numeric(18, 6))
-    period: Mapped[str] = mapped_column(String(32))  # e.g. "2026-04", "all-time"
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    strategy_version: Mapped["StrategyVersion"] = relationship(back_populates="performance_metrics")
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = _id()
+    # generate | teaching_compile | research | chat_action
+    kind: Mapped[str] = mapped_column(String(32))
+    # queued | running | paused_for_user | done | error | budget_exhausted
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    input_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    question_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    answer_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[str] = _ts()
+    updated_at: Mapped[str] = _ts(onupdate=utc_now)
+
+
+class Finding(Base):
+    __tablename__ = "findings"
+
+    id: Mapped[str] = _id()
+    backtest_id: Mapped[str | None] = mapped_column(
+        ForeignKey("backtests.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    strategy_id: Mapped[str | None] = mapped_column(
+        ForeignKey("strategies.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    category: Mapped[str] = mapped_column(String(64))
+    summary: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = _ts()
 
 
 # --------------------------------------------------------------------------
-# AI / analysis
+# Teaching mode
 # --------------------------------------------------------------------------
 
-class AISession(Base):
-    __tablename__ = "ai_sessions"
+class TeachingSession(Base):
+    __tablename__ = "teaching_sessions"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    strategy_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("strategies.id", ondelete="SET NULL"), index=True
+    id: Mapped[str] = _id()
+    symbol: Mapped[str] = mapped_column(String(16))
+    root: Mapped[str] = mapped_column(String(8))
+    date_from: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    date_to: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    compiled_strategy_id: Mapped[str | None] = mapped_column(
+        ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True
     )
-    type: Mapped[str] = mapped_column(String(32))  # "research" | "analysis"
-    prompt: Mapped[str] = mapped_column(Text)
-    response: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    similarity_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = _ts()
 
-    user: Mapped["User"] = relationship(back_populates="ai_sessions")
-    strategy: Mapped["Strategy | None"] = relationship(back_populates="ai_sessions")
-    findings: Mapped[list["AnalysisFinding"]] = relationship(
-        back_populates="ai_session", cascade="all, delete-orphan"
+
+class TeachingTrade(Base):
+    __tablename__ = "teaching_trades"
+
+    id: Mapped[str] = _id()
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("teaching_sessions.id", ondelete="CASCADE"), index=True
     )
+    direction: Mapped[str] = mapped_column(String(8))
+    entry_ts: Mapped[int] = mapped_column(Integer)  # unix ns
+    entry_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_ts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pnl_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    contracts: Mapped[int] = mapped_column(Integer, default=1)
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class AnalysisFinding(Base):
-    __tablename__ = "analysis_findings"
+class TeachingEvent(Base):
+    __tablename__ = "teaching_events"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    ai_session_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("ai_sessions.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = _id()
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("teaching_sessions.id", ondelete="CASCADE"), index=True
     )
-    category: Mapped[str] = mapped_column(String(64))  # e.g. "pattern", "risk"
+    ts: Mapped[int] = mapped_column(Integer)  # unix ns (replay clock)
+    # skipped_setup | level | annotation | hypothesis_update
+    type: Mapped[str] = mapped_column(String(32))
+    payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class TeachingQuestion(Base):
+    __tablename__ = "teaching_questions"
+
+    id: Mapped[str] = _id()
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("teaching_sessions.id", ondelete="CASCADE"), index=True
+    )
+    trade_id: Mapped[str | None] = mapped_column(
+        ForeignKey("teaching_trades.id", ondelete="SET NULL"), nullable=True
+    )
+    replay_ts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    asked_at: Mapped[str] = _ts()
+    answered_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+# --------------------------------------------------------------------------
+# Research / knowledge
+# --------------------------------------------------------------------------
+
+class ResearchSource(Base):
+    __tablename__ = "research_sources"
+
+    id: Mapped[str] = _id()
+    url: Mapped[str] = mapped_column(Text, unique=True)
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    credibility: Mapped[float | None] = mapped_column(Float, nullable=True)
+    scored_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fetched_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class ResearchDoc(Base):
+    __tablename__ = "research_docs"
+
+    id: Mapped[str] = _id()
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("research_sources.id", ondelete="CASCADE"), index=True
+    )
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    ingested_to_graph: Mapped[int] = mapped_column(Integer, default=0)  # bool
+    created_at: Mapped[str] = _ts()
+
+
+class ResearchQueueItem(Base):
+    __tablename__ = "research_queue"
+
+    id: Mapped[str] = _id()
+    topic: Mapped[str] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    requested_by: Mapped[str] = mapped_column(String(16), default="seed")  # seed | agent | user
+    created_at: Mapped[str] = _ts()
+
+
+class PrimitiveRequest(Base):
+    __tablename__ = "primitive_requests"
+
+    id: Mapped[str] = _id()
+    name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)
-    confidence: Mapped[float | None] = mapped_column(Numeric(4, 3))  # 0..1
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    ai_session: Mapped["AISession"] = relationship(back_populates="findings")
+    params_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    pseudocode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sources_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    created_at: Mapped[str] = _ts()
 
 
 # --------------------------------------------------------------------------
-# Reference data / reports
+# LLM usage and settings
 # --------------------------------------------------------------------------
 
-class ReferenceData(Base):
-    __tablename__ = "reference_data"
+class LlmUsage(Base):
+    __tablename__ = "llm_usage"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    type: Mapped[str] = mapped_column(String(32))  # e.g. "earnings", "FOMC", "news"
-    symbol: Mapped[str | None] = mapped_column(String(32), index=True)
-    event_time: Mapped[datetime] = mapped_column(index=True)
-    impact: Mapped[str | None] = mapped_column(String(16))
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-
-class Report(Base):
-    __tablename__ = "reports"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    strategy_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("strategies.id", ondelete="SET NULL"), index=True
+    id: Mapped[str] = _id()
+    ts: Mapped[str] = _ts(index=True)
+    model: Mapped[str] = mapped_column(String(64))
+    purpose: Mapped[str] = mapped_column(String(64))
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read: Mapped[int] = mapped_column(Integer, default=0)
+    cache_write: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    agent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    type: Mapped[str] = mapped_column(String(32))  # e.g. "backtest", "research"
-    file_url: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="reports")
-    strategy: Mapped["Strategy | None"] = relationship(back_populates="reports")
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value_json: Mapped[object] = mapped_column(JSON, nullable=True)
+
+
+Index("ix_backtests_strategy_window", Backtest.strategy_id, Backtest.window_kind)

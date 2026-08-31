@@ -2,20 +2,24 @@
 backend/.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Backtest job outputs (strategy.json, trades.json, worker.log per run) —
-# regenerable.
+# Derived data (regenerable) — see PLATFORM-SPEC.md §4.1
+data/
 backtests/
-
-# Raw market data dumps (large binary files)
 market-data/
-
-# CSVs derived from market-data/ for the backend to serve — regenerable.
 mbo-data/
+*.duckdb
+*.duckdb.tmp
+*.duckdb.wal
+research_cache/
 
-# Local Postgres cluster (Postgres.app CLI, backend/.pgdata) — dev-only.
+# Legacy local Postgres cluster (removed in Phase 0; ignore leftovers)
 backend/.pgdata/
 backend/*.log
 
 # Local secrets — API keys, DB URLs. See backend/.env.example.
 .env
+
+# OS / editor
+.DS_Store

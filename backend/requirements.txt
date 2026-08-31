@@ -2,17 +2,22 @@ fastapi
 uvicorn[standard]
 python-dotenv
 pandas
+numpy
+pyyaml
 nautilus_trader
 anthropic
 
-# Market data: raw MBO ticks live in DuckDB (backend/duckdb_store.py), and
-# scripts/ingest_dbn_to_duckdb.py decodes Databento .dbn files with polars.
+# Market data: DuckDB over Parquet (data_store.py); scripts/ingest.py decodes
+# Databento .dbn files with polars.
 duckdb
 polars
+pyarrow
 databento
 
-# Strategy/backtest metadata only. The market-data tables these used to
-# carry were dropped when ticks moved to DuckDB — see backend/models.py.
+# Platform metadata: SQLite via SQLAlchemy, Alembic migrations (models.py).
 sqlalchemy
 alembic
-psycopg[binary]
+
+# Tests
+pytest
+httpx
