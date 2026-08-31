@@ -52,6 +52,46 @@ export async function fetchDomHeatmap(symbol, start, end, {
   ));
 }
 
+// --- instruments / data coverage (Phase 1) ---
+
+export async function fetchInstruments() {
+  return json(await fetch(`${BASE}/instruments`));
+}
+
+export async function fetchDataCoverage() {
+  return json(await fetch(`${BASE}/data/coverage`));
+}
+
+// Prints in [start, end) unix seconds.
+export async function fetchTrades(symbol, start, end, { minSize, limit, signal } = {}) {
+  const extra = (minSize != null ? `&min_size=${minSize}` : '') + (limit != null ? `&limit=${limit}` : '');
+  return json(await fetch(
+    `${BASE}/trades?symbol=${encodeURIComponent(symbol)}&start=${Math.floor(start)}&end=${Math.ceil(end)}${extra}`,
+    { signal },
+  ));
+}
+
+// Per-bar bid×ask volume ladders for the footprint layer.
+export async function fetchFootprint(symbol, tf, start, end, { signal } = {}) {
+  return json(await fetch(
+    `${BASE}/footprint?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&start=${Math.floor(start)}&end=${Math.ceil(end)}`,
+    { signal },
+  ));
+}
+
+export async function fetchVolumeProfile(symbol, start, end, { bins, signal } = {}) {
+  const b = bins != null ? `&bins=${bins}` : '';
+  return json(await fetch(
+    `${BASE}/volume-profile?symbol=${encodeURIComponent(symbol)}&start=${Math.floor(start)}&end=${Math.ceil(end)}${b}`,
+    { signal },
+  ));
+}
+
+// `date` is the New York session date, YYYY-MM-DD.
+export async function fetchSessionLevels(symbol, date) {
+  return json(await fetch(`${BASE}/session-levels?symbol=${encodeURIComponent(symbol)}&date=${date}`));
+}
+
 // --- strategies ---
 
 export async function fetchStrategies() {

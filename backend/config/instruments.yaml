@@ -1,0 +1,20 @@
+# Single source of truth for tradable futures roots, session and cost model
+# (PLATFORM-SPEC.md §4.2). The frontend fetches it via /api/instruments.
+# Commissions are all-in retail estimates (exchange + NFA + broker), editable.
+roots:
+  ES:  { name: E-mini S&P 500,     tick_size: 0.25, tick_value: 12.50, multiplier: 50, currency: USD, continuous: "ES1!",  outright_regex: "^ES[HMUZ]\\d$",  commission_per_side: 2.25, initial_margin: 15000 }
+  NQ:  { name: E-mini Nasdaq-100,  tick_size: 0.25, tick_value: 5.00,  multiplier: 20, currency: USD, continuous: "NQ1!",  outright_regex: "^NQ[HMUZ]\\d$",  commission_per_side: 2.25, initial_margin: 20000 }
+  MES: { name: Micro E-mini S&P,   tick_size: 0.25, tick_value: 1.25,  multiplier: 5,  currency: USD, continuous: "MES1!", outright_regex: "^MES[HMUZ]\\d$", commission_per_side: 0.75, initial_margin: 1500 }
+  MNQ: { name: Micro E-mini Nasdaq, tick_size: 0.25, tick_value: 0.50, multiplier: 2,  currency: USD, continuous: "MNQ1!", outright_regex: "^MNQ[HMUZ]\\d$", commission_per_side: 0.75, initial_margin: 2000 }
+session:
+  timezone: America/New_York
+  rth: { start: "09:30", end: "16:00" }
+  flatten_before_close_minutes: 2      # default forced flat at 15:58 ET unless the strategy overrides
+costs:
+  slippage_ticks_market: 1             # applied to market and stop-market fills in bar/L1 modes
+  slippage_ticks_stop: 1
+  limit_fill_rule: "trade_through"      # bar/tick modes: a resting limit fills only when price trades THROUGH it.
+                                        # L3 mode: NautilusTrader's book handles it; prob_fill_on_limit=0.5 for touch-only fills.
+defaults:
+  starting_equity: 100000
+  min_daily_volume: 1000               # an outright needs this much traded volume in a day to be ingested

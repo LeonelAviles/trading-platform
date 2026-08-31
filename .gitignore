@@ -8,7 +8,6 @@ __pycache__/
 data/
 backtests/
 market-data/
-mbo-data/
 *.duckdb
 *.duckdb.tmp
 *.duckdb.wal

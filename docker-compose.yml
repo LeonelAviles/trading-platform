@@ -23,8 +23,6 @@ services:
       - ./market-data:/app/market-data
       - ./data:/app/data
       - ./backtests:/app/backtests
-      # Legacy DuckDB store until Phase 1 replaces it with data/market.
-      - ./mbo-data:/app/mbo-data
     depends_on:
       - neo4j
     deploy:

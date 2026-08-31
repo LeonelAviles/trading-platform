@@ -3,7 +3,9 @@
 #   make dev      bare-metal: backend (uvicorn, :8123) + frontend (vite, :5173)
 #   make up       docker compose up (backend, frontend, neo4j)
 #   make down     docker compose down
-#   make ingest   scripts/ingest.py --all (Phase 1; legacy ingest until then)
+#   make ingest   scripts/ingest.py --all (raw .dbn.zst → data/market Parquet tiers)
+#   make catalog  scripts/build_catalog.py (NautilusTrader ParquetDataCatalog)
+#   make verify   scripts/verify_ingest.py (compare with the legacy mbo.duckdb)
 #   make test     pytest (backend) + vitest (frontend, when present)
 #   make lint     oxlint (frontend)
 
@@ -12,7 +14,7 @@ ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PY    := $(ROOT)/backend/.venv/bin/python
 PIP   := $(ROOT)/backend/.venv/bin/pip
 
-.PHONY: dev backend frontend up down ingest test test-backend test-frontend lint venv
+.PHONY: dev backend frontend up down ingest catalog verify test test-backend test-frontend lint venv
 
 venv:
 	@test -x $(PY) || python3 -m venv $(ROOT)/backend/.venv
@@ -38,12 +40,13 @@ down:
 	docker compose down
 
 ingest:
-	@if [ -f $(ROOT)/backend/scripts/ingest.py ]; then \
-		cd $(ROOT)/backend && $(PY) scripts/ingest.py --all; \
-	else \
-		echo "scripts/ingest.py arrives in Phase 1; using legacy ingest_dbn_to_duckdb.py"; \
-		cd $(ROOT)/backend && $(PY) scripts/ingest_dbn_to_duckdb.py --all; \
-	fi
+	cd $(ROOT)/backend && $(PY) scripts/ingest.py --all
+
+catalog:
+	cd $(ROOT)/backend && $(PY) scripts/build_catalog.py
+
+verify:
+	cd $(ROOT)/backend && $(PY) scripts/verify_ingest.py
 
 test: test-backend test-frontend
 

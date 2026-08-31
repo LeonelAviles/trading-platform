@@ -1,11 +1,27 @@
-"""Market data routes: symbols, OHLCV, range, CVD, DOM snapshot, DOM heatmap."""
+"""Market data routes: instruments, coverage, symbols, OHLCV, range, CVD,
+trades, footprint, volume profile, session levels, DOM snapshot, heatmap."""
+
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 import data_store
+from config.instruments import load_instruments
 
 router = APIRouter(prefix="/api", tags=["market"])
+
+
+@router.get("/instruments")
+def get_instruments():
+    """config/instruments.yaml — roots, session, costs (PLATFORM-SPEC.md §4.2)."""
+    return load_instruments().to_dict()
+
+
+@router.get("/data/coverage")
+def get_coverage():
+    """Dates per root, IS/OOS split, replay cache, archive status."""
+    return data_store.coverage()
 
 
 @router.get("/symbols")
@@ -96,3 +112,47 @@ def get_dom_heatmap(
     return data_store.get_dom_heatmap(
         symbol, start, end, bucket_seconds, depth, min_price, max_price,
     )
+
+
+# --------------------------------------------------------------------------
+# Order-flow reads (Phase 1) — all bounded by time
+# --------------------------------------------------------------------------
+
+@router.get("/trades")
+def get_trades(
+    symbol: str = Query(...),
+    start: int = Query(..., description="unix seconds, inclusive"),
+    end: int = Query(..., description="unix seconds, exclusive"),
+    min_size: int = Query(0, ge=0),
+    limit: int = Query(20000, ge=1, le=50000),
+):
+    return JSONResponse(content=data_store.get_trades(symbol, start, end, min_size, limit))
+
+
+@router.get("/footprint")
+def get_footprint(
+    symbol: str = Query(...),
+    tf: str = Query("1min"),
+    start: int = Query(...),
+    end: int = Query(...),
+):
+    """Per bar, per price: volume at bid (sell aggressor) and at ask (buy aggressor)."""
+    return JSONResponse(content=data_store.get_footprint(symbol, tf, start, end))
+
+
+@router.get("/volume-profile")
+def get_volume_profile(
+    symbol: str = Query(...),
+    start: int = Query(...),
+    end: int = Query(...),
+    bins: int = Query(1, ge=1, le=100, description="bin width in ticks"),
+):
+    return data_store.get_volume_profile(symbol, start, end, bins)
+
+
+@router.get("/session-levels")
+def get_session_levels(
+    symbol: str = Query(...),
+    date: date = Query(..., description="RTH session date (New York), YYYY-MM-DD"),
+):
+    return data_store.get_session_levels(symbol, date)

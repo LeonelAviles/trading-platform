@@ -16,8 +16,8 @@ logged in [DECISIONS.md](DECISIONS.md).
 | Phase | Name | State |
 |---|---|---|
 | 0 | Housekeeping and runtime | done — [docs/00-housekeeping.md](docs/00-housekeeping.md) |
-| 1 | Data layer v2 (tiered Parquet, instruments) | next |
-| 2 | Backtester v2 and validation | |
+| 1 | Data layer v2 (tiered Parquet, instruments) | done — [docs/01-data.md](docs/01-data.md) |
+| 2 | Backtester v2 and validation | next |
 | 3 | Strategy DSL v2 and primitive registry | |
 | 4 | Agent v2: runs, knowledge graph, research | |
 | 5 | Chart, tick replay, order-flow visuals | |
@@ -59,16 +59,23 @@ Neo4j + Graphiti (knowledge graph, Phase 4) · React 19 + Vite, plain JS.
 
 ## Data
 
-Until Phase 1 lands, market data is the legacy DuckDB store:
+Tiered layout (PLATFORM-SPEC.md §4.1, details in [docs/01-data.md](docs/01-data.md)):
 
-- `market-data/` (gitignored): raw Databento `.dbn.zst` MBO files.
-- `mbo-data/` (gitignored): `mbo.duckdb` (full MBO + materialised
-  `bars_1m`) and `liquidity.duckdb` (1-second resting-liquidity read model
-  for the heatmap), built by `backend/scripts/ingest_dbn_to_duckdb.py`
-  (`make ingest`) with the backend stopped.
+- `market-data/raw/<ROOT>/<date>.<schema>.dbn.zst` (gitignored): raw Databento
+  files, never read at request time; `manifest.json` tracks sha256/outputs/archive.
+- `data/market/` (gitignored, small): `trades/` and `bars_1m/` Parquet partitions
+  per root and UTC date, `book_checkpoints/`, `liquidity_1s.duckdb` (heatmap),
+  `front_month.parquet`, `splits.json` (frozen 70/30 in-/out-of-sample),
+  `regimes.parquet`, and the NautilusTrader `catalog/`.
 
-Phase 1 replaces this with the tiered Parquet layout in PLATFORM-SPEC.md §4.1
-(`data/market/`), ingestable while the backend is up.
+```bash
+# drop Databento files anywhere under market-data/, then:
+make ingest     # organizes raw/, decodes once per file, writes the tiers (runs with the backend up)
+make catalog    # NautilusTrader ParquetDataCatalog (incremental)
+```
+
+Instruments, session (09:30–16:00 America/New_York, DST-safe) and the cost
+model live in `backend/config/instruments.yaml` (`GET /api/instruments`).
 
 ## Tests
 

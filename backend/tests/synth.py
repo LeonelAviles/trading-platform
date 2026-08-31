@@ -190,10 +190,15 @@ def generate_mbo(cfg: SynthConfig | None = None) -> pd.DataFrame:
                 continue
             for act, s, px, sz, oid in fills:
                 seq += 1
-                rows.append((ts, ts, symbol, act, s, px, sz, oid, seq, 0))
+                rows.append((ts, ts, symbol, "F", s, px, sz, oid, seq, 0))
             seq += 1
             # Databento convention: the T record's side is the aggressor's.
             rows.append((ts, ts, symbol, "T", "B" if aggressor_buy else "A", best, filled, 0, seq, 0))
+            # ...and the resting size actually leaves the book via C records
+            # (consumers apply C and ignore F, exactly like the real feed).
+            for act, s, px, sz, oid in fills:
+                seq += 1
+                rows.append((ts, ts, symbol, "C", s, px, sz, oid, seq, 0))
 
             # Random-walk the mid by re-seeding a level when the touch empties.
             if book.best(resting_side) is None or rng.random() < cfg.volatility_ticks_per_s / max(rate, 1e-9) * 0.1:
@@ -249,8 +254,6 @@ def book_at(mbo: pd.DataFrame, symbol: str, ts_ns: int, depth: int = 10):
         if act == "A":
             orders[oid] = (side, px, sz)
         elif act == "C":
-            orders.pop(oid, None)
-        elif act == "F":
             cur = orders.get(oid)
             if cur is not None:
                 left = cur[2] - sz
@@ -258,6 +261,8 @@ def book_at(mbo: pd.DataFrame, symbol: str, ts_ns: int, depth: int = 10):
                     orders.pop(oid, None)
                 else:
                     orders[oid] = (cur[0], cur[1], left)
+        elif act == "F":
+            pass  # size change arrives as the accompanying C record
         elif act == "R":
             orders.clear()
     agg: dict[tuple[str, float], int] = {}

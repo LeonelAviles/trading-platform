@@ -21,3 +21,6 @@ alembic
 # Tests
 pytest
 httpx
+
+# Raw-data archive to S3 (scripts/archive.py, scripts/restore.py)
+boto3

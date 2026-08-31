@@ -24,7 +24,12 @@ import duckdb
 import pandas as pd
 
 
-DB_PATH = Path(__file__).resolve().parent.parent / "mbo-data" / "liquidity.duckdb"
+from market.paths import get_paths
+
+
+def default_db_path() -> Path:
+    """data/market/liquidity_1s.duckdb (multi-root; Phase 1 moved it out of mbo-data/)."""
+    return get_paths().liquidity_db
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS liquidity_changes_1s (
@@ -68,7 +73,7 @@ INT64_NULL_PRICE = 9_223_372_036_854_775_807
 
 
 def get_connection(*, read_only: bool = True, path: Path | None = None):
-    database = path or DB_PATH
+    database = path or default_db_path()
     if read_only and not database.exists():
         return None
     database.parent.mkdir(parents=True, exist_ok=True)
