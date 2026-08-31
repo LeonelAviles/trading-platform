@@ -21,11 +21,18 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 3 | Strategy DSL v2 and primitive registry | done — [docs/03-dsl.md](docs/03-dsl.md) |
 | 4 | Agent v2: runs, knowledge graph, research | done — [docs/04-agent.md](docs/04-agent.md) |
 | 5 | Chart, tick replay, order-flow visuals | done — `docs/05-chart.md` |
-| 6 | Teaching mode | next |
-| 7 | Desk view and packaging | |
+| 6 | Teaching mode | done — `docs/06-teaching.md` |
+| 7 | Desk view and packaging | next |
 
 ## What works today
 
+- **Teaching mode** on the free chart: trade the replay with hotkeys or
+  buttons, the agent snapshots every fill (bars, levels, profile, CVD,
+  footprints, book, the full primitive feature vector), keeps a hypothesis
+  of your rules, asks questions (pausing the replay), detects skipped setups
+  three ways, and on End session compiles a Strategy Spec v2 with a
+  similarity report (precision/recall, exit similarity) and up to three
+  refinements to pick from — `/teach/:sessionId` ([docs/06-teaching.md](docs/06-teaching.md)).
 - **Free chart with tick replay** at `/chart/:symbol`: pick a session (date,
   ET start time, "RTH open" / "Latest"), replay over `/ws/replay` at
   0.25–100× with step-print / step-bar / jump-to-ET-time, an ET clock and a

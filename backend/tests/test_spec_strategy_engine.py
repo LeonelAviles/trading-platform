@@ -83,3 +83,26 @@ def test_breakeven_trailing_and_scale_out(store):
             assert t["r"] > -0.6
         if t["exitReason"] == "scale_out":
             assert t["contracts"] == 2 and t["r"] >= 0.8
+
+
+def test_bars_mode_uses_sidecar_delta(store):
+    """Bars mode has no ticks: bar delta must come from the bars_1m sidecar
+    (keyed by bar close). A `delta > 0` trigger therefore fires on many bars,
+    and the recorded entries sit on bars whose parquet delta is positive."""
+    import duckdb
+
+    spec = _spec(direction="long",
+                 entry={"trigger": {"op": "gt", "args": [{"field": "delta"}, 0]}, "orderType": "market", "timeoutBars": 1},
+                 exit={"stop": {"type": "ticks", "value": 8}, "target": {"type": "ticks", "value": 8}, "timeStop": {"bars": 2}},
+                 constraints={"maxTradesPerDay": 50, "cooldownBars": 0, "stopAfterConsecutiveLosses": 50})
+    res = run_backtest(spec, DAYS[0], DAYS[0], "bars")
+    assert len(res["trades"]) >= 5, res["summary"]
+    from market.paths import get_paths
+
+    part = get_paths().partition(get_paths().bars_1m_dir, "ES", DAYS[0].isoformat()) / "part.parquet"
+    rows = duckdb.connect().execute("SELECT ts, delta FROM read_parquet(?) WHERE symbol = 'ESM6'", [str(part)]).fetchall()
+    delta_by_close = {int(ts) // 1_000_000_000 + 60: float(d) for ts, d in rows}
+    # entry happens on the bar after the signal bar closes: signal close = entryTime rounded down to the minute
+    for t in res["trades"][:10]:
+        signal_close = (t["entryTime"] // 60) * 60
+        assert delta_by_close.get(signal_close, 0) > 0, (t["entryTime"], delta_by_close.get(signal_close))

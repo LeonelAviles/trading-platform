@@ -96,7 +96,7 @@ first offered option):
 | Phase 0 | `declare_variants`: dimension *entry timing* → breakout / retest (quoting the prompt) |
 | Phase 1 | `ORB 15m — Breakout` and `ORB 15m — Retest` created (direction `both`, structure stop at the opposite OR boundary, 2R target); `propose_risk_profile` accepted (0.5 %/trade, 2 % daily); both run IS + WF1–3; compared — identical trade sets, breakout kept |
 | Phase 2 | 3 of 5 changes: `filters` + `delta > 0` (no change), `session.entryWindow.end` 11:30 → 15:30 (no change), `exit.target.value` 2.0 → 2.5 (worse: net +3,176 → −512) — each with a `log_finding`; then `ask_user` paused the run with the thin-sample caveat |
-| Finalize | one OOS look: IS 61 trades, PF 1.16, expectancy 0.12 R, max DD 3.3 %; WF windows −1,157 / −1,082 / +2,453; OOS 26 trades, PF 1.10, 0.09 R; Monte Carlo DD p95 9.6 %; DSR 0.26 (5 trials); **verdict: untestable** (61 < 100 in-sample trades) → status `draft` |
+| Finalize | one OOS look (numbers superseded — see *Re-validation* below): IS 61 trades, PF 1.16, expectancy 0.12 R, max DD 3.3 %; WF windows −1,157 / −1,082 / +2,453; OOS 26 trades, PF 1.10, 0.09 R; Monte Carlo DD p95 9.6 %; DSR 0.26 (5 trials); **verdict: untestable** (61 < 100 in-sample trades) → status `draft` |
 | Report | **not written**: the closing model call failed with "Your credit balance is too low to access the Anthropic API" — an account-billing limit, not a platform error. The scaffold (numbers above, the knowledge facts retrieved for the prompt) is stored on the run. |
 
 Cost: ≈ $2.4 for the run at placeholder prices (787 k input tokens, 203 k of them cache reads, 22 k output).
@@ -105,10 +105,35 @@ Restart-resume, pause/answer, the change budget, OOS blindness and the second-fi
 covered by `test_agent_runs.py`; the knowledge citation in the written report remains to be seen on a
 run with credits.
 
+### Re-validation after the rules-dispatch fix
+
+Phase 6 found that `engine.rules.build_rules` had been dispatching every Strategy Spec v2 to the
+placeholder `TestOpenCloseRules` (one fixed 09:45 entry per session) and that the bars-mode delta
+sidecar was keyed one bar off (DECISIONS #55, `docs/06-teaching.md`). Every backtest the Phase 4 run
+executed — and therefore the acceptance numbers in the table above — ran the placeholder, not the ORB
+spec. The champion `27a765cabe8c` (*ORB 15m — Breakout + 2.5R target*) was re-run on the real
+Apr–Jun store in ticks mode after the fix (IS + WF1–3, 676 s; the out-of-sample look was **not**
+repeated — the OOS split stays unseen for this strategy):
+
+| Window | Trades | Net PnL | PF | Expectancy | Max DD |
+|---|---|---|---|---|---|
+| In-sample 2026-04-01 → 06-25 (74 sessions, 30.1 M ticks, 407 s) | 59 | −11,228 | 0.74 | −0.09 R | 18.2 % |
+| WF1 | 16 | −5,310 | 0.47 | −0.27 R | 7.2 % |
+| WF2 | 15 | −4,043 | 0.63 | −0.10 R | 9.9 % |
+| WF3 | 14 | −6,613 | 0.52 | −0.19 R | 10.8 % |
+
+Monte Carlo (1,000 bootstraps): DD p50 17.6 %, p95 32.0 %, P(loss) 0.83; skip-10 % P(loss) 1.0.
+Deflated Sharpe 0.02 (5 trials, annualized Sharpe −1.85). Exit mix: 33 stops (−39.0 k), 8 targets
+(+19.3 k), 18 session flattens (+8.5 k); the only positive regimes are `trend` / `trend_day`.
+**Verdict: untestable** (59 < 100 in-sample trades) — the same status as before, now for the right
+reason. The run's Phase 2 findings ("`delta > 0` — no change", "entry window to 15:30 — no change")
+were artefacts of the placeholder and should be read as void; the run itself (variants, pause/answer,
+change budget, lineage, OOS guard) exercised the machinery correctly and stays as the Phase 4 record.
+
 ## Deferred
 
 - Neo4j/Graphiti path is wired but unverified on this machine (no Docker); the local store is the
   active backend. `docker compose up` + `scripts/kg_bootstrap.py` switches automatically.
 - Claim *contradiction* (credibility falling when tier-1 sources disagree) needs an LLM judgement
   pass; only corroboration is implemented.
-- `teaching_compile` runs reuse the generate flow until Phase 6 supplies its own.
+- `teaching_compile` runs got their own flow in Phase 6 (`TeachingCompileFlow`, `docs/06-teaching.md`).

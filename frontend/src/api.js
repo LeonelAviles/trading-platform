@@ -293,3 +293,31 @@ export function replaySocketUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${window.location.host}/ws/replay`;
 }
+
+// Teaching mode (PLATFORM-SPEC.md Phase 6).
+export async function fetchTeachingSessions() { return json(await fetch(`${BASE}/teaching/sessions`)); }
+export async function createTeachingSession(symbol, dateFrom) {
+  return json(await fetch(`${BASE}/teaching/sessions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, dateFrom }),
+  }));
+}
+export async function fetchTeachingSession(id) { return json(await fetch(`${BASE}/teaching/sessions/${id}`)); }
+export async function endTeachingSession(id, notes) {
+  return json(await fetch(`${BASE}/teaching/sessions/${id}/end`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }),
+  }));
+}
+export async function compileTeachingSession(id) {
+  return json(await fetch(`${BASE}/teaching/sessions/${id}/compile`, { method: 'POST' }));
+}
+export async function labelTeachingEntry(id, entryTime, label, reason) {
+  return json(await fetch(`${BASE}/teaching/sessions/${id}/labels`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entryTime, label, reason }),
+  }));
+}
+export async function pickTeachingStrategy(id, strategyId) {
+  return json(await fetch(`${BASE}/teaching/sessions/${id}/pick`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strategyId }),
+  }));
+}
+export async function fetchTeachingSnapshot(id, key) { return json(await fetch(`${BASE}/teaching/sessions/${id}/snapshots/${key}`)); }

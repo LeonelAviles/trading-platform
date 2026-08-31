@@ -99,7 +99,17 @@ class V1Rules(RuleSource):
 
 def build_rules(spec: dict) -> RuleSource:
     rules = spec.get("rules") or {}
-    kind = rules.get("kind") or ("v1" if "conditions" in spec else "test_open_close")
+    kind = rules.get("kind")
+    if not kind:
+        # A Strategy Spec v2 document is recognised by its shape, so a saved
+        # strategy never needs a `rules` key; the open/close placeholder is
+        # only for the synthetic engine tests that ask for it explicitly.
+        if int(spec.get("schemaVersion") or 0) >= 2 or isinstance((spec.get("entry") or {}).get("trigger"), dict):
+            kind = "spec_v2"
+        elif "conditions" in spec:
+            kind = "v1"
+        else:
+            kind = "test_open_close"
     if kind == "v1":
         return V1Rules(rules.get("v1") or spec)
     if kind == "test_open_close":

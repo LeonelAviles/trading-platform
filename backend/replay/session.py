@@ -100,7 +100,7 @@ class ReplaySession:
     def __init__(self, source: Source, *, from_ts: int, speed: float = 1.0, layers: Layers | None = None,
                  send: Send, spec: ContractSpec | None = None, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, teaching_session_id: str | None = None,
-                 on_trade_closed: Callable[[dict], None] | None = None):
+                 on_trade_closed: Callable[[dict], None] | None = None, hooks=None):
         self.src = source
         self.layers = layers or Layers()
         self.send = send
@@ -111,6 +111,8 @@ class ReplaySession:
         self.sim = OrderSim(self.spec)
         self.teaching_session_id = teaching_session_id
         self.on_trade_closed = on_trade_closed
+        self.hooks = hooks                     # replay.teaching_hooks.TeachingHooks | None
+        self.closed_footprints: dict[int, list] = {}   # 1-minute footprints closed in this session
         self.primary_tf = self.layers.bars[0]
         self.book = L3Book()
         self.from_ts = max(int(from_ts), source.first_ts)
@@ -277,7 +279,9 @@ class ReplaySession:
                 cur = nb
                 if tf == self.primary_tf:
                     if not silent and self.footprint_time is not None and self.footprint:
-                        self._pending_fp_closed.append(self._footprint_payload(closed=True))
+                        fp = self._footprint_payload(closed=True)
+                        self._pending_fp_closed.append(fp)
+                        self.closed_footprints[fp["time"]] = fp["levels"]
                     self.footprint = {}
                     self.footprint_time = bt
             cur.add(price, size, buy)
@@ -298,6 +302,8 @@ class ReplaySession:
             if len(self.last_trades) > LAST_TRADES:
                 del self.last_trades[: len(self.last_trades) - LAST_TRADES]
             self._fp_dirty = True
+            if self.hooks is not None:
+                self.hooks.on_trade(ts, price, size, side)
             for ev in self.sim.on_trade(ts, price):
                 self._pending_sim.append(ev)
             if self.sim.position is not None:
@@ -414,6 +420,8 @@ class ReplaySession:
         if self._pending_closed:
             for tf, bar in self._pending_closed:
                 self.closed_history[tf].append(bar)
+                if self.hooks is not None:
+                    self.hooks.on_bar_closed(tf, bar)
                 await self._emit({"type": "bar", "tf": tf, "bar": bar, "closed": True})
             self._pending_closed = []
         if self._pending_fp_closed:
@@ -429,6 +437,8 @@ class ReplaySession:
                 self._dirty_partial.discard(tf)
         if self.book_mode and self._book_dirty and (force or now - self._last_sent["book"] >= BOOK_MIN_S):
             bids, asks = self.book.top(BOOK_DEPTH)
+            if self.hooks is not None:
+                self.hooks.on_book(bids, asks, self.clock_ts)
             await self._emit({"type": "book", "ts": self.clock_ts, "bids": bids, "asks": asks, "approx": False})
             self._last_sent["book"] = now
             self._book_dirty = False
@@ -445,8 +455,12 @@ class ReplaySession:
             self._fp_dirty = False
         for ev in self._pending_sim:
             if ev["kind"] == "fill":
+                if self.hooks is not None:
+                    self.hooks.on_fill(ev["position"], ev["position"]["entryTs"])
                 await self._emit({"type": "fill", "position": ev["position"], "trade": None})
             else:
+                if self.hooks is not None:
+                    self.hooks.on_exit(ev["trade"], ev["trade"]["exitTs"])
                 await self._emit({"type": "fill", "trade": ev["trade"], "position": None})
                 if self.on_trade_closed:
                     self.on_trade_closed(ev["trade"])
@@ -508,6 +522,8 @@ class ReplaySession:
             self.paused = True
             await self._flush(force=True)
             self._prepare(ts)
+            if self.hooks is not None:
+                self.hooks.warm(self.closed_history.get("1min") or [])
             await self._emit(self._ready_message())
             self._last_clock_sent = self.clock_ts
             self.paused = was_paused
@@ -522,11 +538,29 @@ class ReplaySession:
             if not self.sim.flatten():
                 await self._emit({"type": "error", "message": "no open position"})
         elif t == "modify":
-            self.sim.modify(msg.get("stopPrice"), msg.get("targetPrice"))
+            if self.sim.modify(msg.get("stopPrice"), msg.get("targetPrice")) and self.hooks is not None:
+                self.hooks.on_modify(self.sim.position.to_dict(self.last_price, self.spec))
             self._pos_dirty = True
             await self._flush(force=True)
         elif t == "mark":
-            await self._emit({"type": "marked", "kind": msg.get("kind"), "ts": self.clock_ts, "payload": msg.get("payload")})
+            ev = self.hooks.on_mark(msg.get("kind"), msg.get("payload"), self.clock_ts) if self.hooks is not None else None
+            await self._emit({"type": "marked", "kind": msg.get("kind"), "ts": self.clock_ts, "payload": msg.get("payload"),
+                              "eventId": ev["id"] if ev else None})
+        elif t == "annotate":
+            if self.hooks is not None:
+                self.hooks.on_annotate(msg.get("tradeId"), msg.get("confidence"), msg.get("note"))
+        elif t == "answer":
+            if self.hooks is not None:
+                self.hooks.on_answer(msg.get("questionId"), msg.get("text") or "", msg.get("label"))
+            if msg.get("resume", True) and self.paused and not self.ended:
+                self.paused = False
+                self._reanchor()
+        elif t == "_question":
+            if msg.get("pauseReplay"):
+                self.paused = True
+                await self._flush(force=True)
+            await self._emit({"type": "question", "id": msg["id"], "kind": msg["kind"], "text": msg["text"],
+                              "tradeId": msg.get("tradeId"), "pauseReplay": bool(msg.get("pauseReplay")), "payload": msg.get("payload") or {}})
         elif t == "stop":
             self.stop()
 
@@ -577,6 +611,8 @@ class ReplaySession:
 
     async def run(self) -> None:
         self._prepare(self.from_ts)
+        if self.hooks is not None:
+            self.hooks.attach(self)
         await self._emit(self._ready_message())
         self._last_clock_sent = self.clock_ts
         try:

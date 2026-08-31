@@ -207,3 +207,35 @@ decisions". Newest at the bottom.
 50. **Order-flow layer thresholds live in localStorage (`layerSettings`)**
     with a Layers tab in the existing settings modal, not in `settings`
     server-side: they are display preferences of this browser.
+51. **The teaching question policy is code, the wording is the model's.**
+    `teaching/hypothesis.py` decides *when* (first trade, ≥2-support rule
+    unconfirmed, contradiction, skipped setup; one per two trades unless a
+    contradiction) and takes the question text from the hypothesis JSON
+    (`questions.confirm` / `questions.contradiction`) with templated
+    fallbacks, so the rate limit and the pause behaviour never depend on
+    prompt compliance.
+52. **Skipped-setup candidates are evaluated with the same `SpecRules` the
+    backtester uses**, in bars mode over the replayed 1-minute bars — no
+    second rule evaluator, and the provisional spec honours the instrument's
+    RTH window (the synthetic day's short session exposed that).
+53. **Compile is an agent run (`teaching_compile`)** with three tools
+    (`submit_teaching_spec`, `propose_refinement`, `finish_teaching`) rather
+    than a bespoke loop: budget guard, resumability, event feed and the
+    AgentRuns UI come for free, and the acceptance test scripts it with
+    `FakeAnthropic` like Phase 4.
+54. **Teaching trades keep the simulator's ids** (`teaching_trades.id` =
+    the replay position id) so snapshots, questions and the compile prompt
+    refer to one id per trade end to end.
+55. **Defect found and fixed in Phase 6: v2 specs ran the placeholder rule
+    source in the worker.** `engine/rules.build_rules` chose `SpecRules`
+    only when a spec carried `rules.kind = "spec_v2"`; saved strategies never
+    have that key, so every Phase 4 backtest (and the review charts) used
+    `TestOpenCloseRules` — one entry per day at the entry window's start
+    (all 61 IS entries at 09:45). The synthetic engine tests set the key
+    explicitly and so never noticed. `build_rules` now recognises a v2 spec
+    by shape (`schemaVersion ≥ 2` or `entry.trigger`); a regression test
+    covers bars-mode delta from the sidecar (which had a second, masked
+    off-by-one-bar key bug). The Phase 4 acceptance numbers in
+    `docs/04-agent.md` are therefore superseded by the re-validation
+    recorded there; the agent protocol itself was exercised correctly, the
+    engine it was scoring was not.

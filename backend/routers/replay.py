@@ -137,9 +137,38 @@ async def _start(ws: WebSocket, msg: dict) -> ReplaySession | None:
     if src.has_mbo():
         warm.touch(src.root, day)
     spec = ContractSpec.from_root(src.spec)
+    hooks = None
+    tsid = msg.get("teachingSessionId")
+    if tsid:
+        hooks = _teaching_hooks(tsid, src, msg)
+        if hooks is None:
+            await ws.send_json({"type": "error", "message": f"teaching session {tsid!r} not found"})
+            return None
     session = ReplaySession(src, from_ts=from_ts, speed=float(msg.get("speed") or 1), layers=layers,
-                            send=ws.send_json, spec=spec, teaching_session_id=msg.get("teachingSessionId"))
+                            send=ws.send_json, spec=spec, teaching_session_id=tsid, hooks=hooks)
     return session
+
+
+def _teaching_hooks(session_id: str, src: DaySource, msg: dict):
+    from replay.teaching_hooks import TeachingHooks
+    from teaching import store as tstore
+    from teaching.hypothesis import HypothesisEngine
+
+    sess = tstore.get_session(session_id)
+    if sess is None:
+        return None
+    defaults = msg.get("teaching") or {}
+    from config.instruments import load_instruments
+
+    ins = load_instruments()
+    hyp = HypothesisEngine(session_id, symbol=src.requested_symbol, root=src.root, tick_size=src.tick_size,
+                           rth_start=ins.session.rth_start, rth_end=ins.session.rth_end,
+                           stop_ticks=int(defaults.get("stopTicks") or 20), target_ticks=int(defaults.get("targetTicks") or 40))
+    if not sess.get("dateFrom"):
+        tstore.update_session(session_id, date_from=str(src.day))
+    return TeachingHooks(session_id, symbol=src.requested_symbol, root=src.root, tick_size=src.tick_size,
+                         rth_start=ins.session.rth_start, rth_end=ins.session.rth_end, hypothesis=hyp,
+                         pause_on_question=bool(defaults.get("pauseOnQuestion", True)), loop=asyncio.get_event_loop())
 
 
 def _cancel_active() -> None:

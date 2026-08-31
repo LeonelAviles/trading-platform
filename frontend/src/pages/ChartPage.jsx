@@ -14,6 +14,11 @@ import CvdPane from '../chart/CvdPane';
 import { candlePoint, volumePoint } from '../chart/useChart';
 import { useReplay } from '../chart/useReplay';
 import { useLayerSettings, useLayerToggles } from '../chart/layerSettings';
+import { TeachingDefaults, QuestionDock, FillPrompt } from '../chart/TeachingPanel';
+import { loadTeachingDefaults } from '../chart/teachingDefaults';
+import { createTeachingSession, endTeachingSession } from '../api';
+import { timeToLogical } from '../drawing/geometry';
+import { DEFAULT_PROFIT_COLOR, DEFAULT_LOSS_COLOR, DEFAULT_ENTRY_COLOR } from '../drawing/geometry';
 import { aggregateFootprints } from '../chart/orderflowMath';
 import { etToUnix, formatEtClock } from '../chart/time';
 import { intervalToSeconds } from '../drawing/geometry';
@@ -55,6 +60,16 @@ export default function ChartPage() {
   const [bookLayer, setBookLayer] = useState(true);
   const [api, setApi] = useState(null);
   const { replay, tick, start, send, stop, subscribe } = useReplay();
+  // Teaching mode (Phase 6): a teaching_sessions row is created on toggle and
+  // sent with start; fills/questions come back over the same socket.
+  const [teaching, setTeaching] = useState(false);
+  const [teachingSessionId, setTeachingSessionId] = useState(null);
+  const [teachingDefaults, setTeachingDefaults] = useState(() => loadTeachingDefaults('ES'));
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const [question, setQuestion] = useState(null);
+  const [fillPrompt, setFillPrompt] = useState(null);
+  const [ending, setEnding] = useState(false);
+  const positionShapeRef = useRef(null);
   const replaying = replay.status !== 'idle' && replay.status !== 'closed';
 
   // History bars before the session day (context to the left of the replay).
@@ -82,6 +97,7 @@ export default function ChartPage() {
   useEffect(() => { if (!date && dates.length) setDate(dates[dates.length - 1]); }, [dates, date]);
   const cachedDays = useMemo(() => new Set((coverage?.replayCache || []).map((d) => `${d.root}:${d.date}`)), [coverage]);
 
+  useEffect(() => { setTeachingDefaults(loadTeachingDefaults(root)); }, [root]);
   const onReady = useCallback((a) => setApi(a), []);
 
   // Idle view: the tail of the series so the page is never blank.
@@ -209,15 +225,86 @@ export default function ChartPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.profile, layerSettings.profileMode, replaying, visibleProfile, replay.vap, tick]);
 
-  const startSession = (preset) => {
+  const startSession = async (preset) => {
     if (!date) return;
     let d = date, t = time;
     if (preset === 'rth') { t = '09:30'; setTime(t); }
     if (preset === 'latest') { d = dates[dates.length - 1]; t = '15:00'; setDate(d); setTime(t); }
     const fromTs = etToUnix(d, t.length === 5 ? `${t}:00` : t) * 1e9;
     setStatus('');
-    start({ symbol, fromTs, speed: 1, layers: { book: bookLayer, trades: true, bars: SESSION_TFS }, autoplay: false });
+    let tsid = teachingSessionId;
+    if (teaching && !tsid) {
+      try {
+        const sess = await createTeachingSession(symbol, d);
+        tsid = sess.id;
+        setTeachingSessionId(tsid);
+      } catch (e) {
+        setStatus(`teaching session failed: ${e.message}`);
+        return;
+      }
+    }
+    start({ symbol, fromTs, speed: 1, layers: { book: bookLayer, trades: true, bars: SESSION_TFS }, autoplay: false,
+      teachingSessionId: teaching ? tsid : undefined,
+      teaching: teaching ? { stopTicks: teachingDefaults.stopTicks, targetTicks: teachingDefaults.targetTicks, pauseOnQuestion: teachingDefaults.pauseOnQuestion } : undefined });
   };
+
+  const endTeaching = async () => {
+    if (!teachingSessionId) return;
+    setEnding(true);
+    try {
+      await endTeachingSession(teachingSessionId);
+      stop();
+      navigate(`/teach/${teachingSessionId}`);
+    } catch (e) {
+      setStatus(`end failed: ${e.message}`);
+    } finally {
+      setEnding(false);
+    }
+  };
+
+  const placeOrder = useCallback((side) => {
+    if (!replaying || !teaching) return;
+    send({ type: 'order', side, contracts: teachingDefaults.contracts, stopTicks: teachingDefaults.stopTicks, targetTicks: teachingDefaults.targetTicks });
+  }, [replaying, teaching, send, teachingDefaults]);
+
+  // Teaching messages: fills draw a clock-snapped position shape and open the
+  // note prompt; questions open the dock (the server already paused).
+  useEffect(() => {
+    return subscribe((m) => {
+      if (!teaching) return;
+      if (m.type === 'question') setQuestion({ id: m.id, kind: m.kind, text: m.text, tradeId: m.tradeId });
+      if (m.type === 'fill' && m.position) {
+        const pos = m.position;
+        if (teachingDefaults.askNotes) setFillPrompt({ id: pos.id, direction: pos.direction, contracts: pos.contracts, entryPrice: pos.entryPrice });
+        const allBars = historyRef.current.bars.concat(replay.bars?.[interval] || []);
+        const logical = timeToLogical(allBars, intervalToSeconds(interval), pos.entryTime) ?? allBars.length - 1;
+        const shape = {
+          id: `pos-${pos.id}`, type: pos.direction, entryLogical: Math.round(logical), entryPrice: pos.entryPrice,
+          stopPrice: pos.stop ?? pos.entryPrice, targetPrice: pos.target ?? pos.entryPrice, endLogical: Math.round(logical) + 30,
+          profitColor: DEFAULT_PROFIT_COLOR, lossColor: DEFAULT_LOSS_COLOR, entryColor: DEFAULT_ENTRY_COLOR, lineWidth: 1, teaching: true,
+        };
+        positionShapeRef.current = { id: shape.id, stop: shape.stopPrice, target: shape.targetPrice, posId: pos.id };
+        setShapes((prev) => [...prev.filter((s) => !s.teaching), shape]);
+      }
+      if (m.type === 'fill' && m.trade) {
+        positionShapeRef.current = null;
+        setShapes((prev) => prev.map((s) => (s.teaching ? { ...s, locked: true, teaching: false, closed: true } : s)));
+      }
+    });
+  }, [subscribe, teaching, teachingDefaults.askNotes, interval, replay, setShapes]);
+
+  // Dragging the open position's stop/target modifies the simulated order.
+  useEffect(() => {
+    const ref = positionShapeRef.current;
+    if (!ref) return;
+    const shape = shapes.find((s) => s.id === ref.id);
+    if (!shape) return;
+    if (shape.stopPrice !== ref.stop || shape.targetPrice !== ref.target) {
+      ref.stop = shape.stopPrice;
+      ref.target = shape.targetPrice;
+      send({ type: 'modify', stopPrice: shape.stopPrice, targetPrice: shape.targetPrice });
+    }
+  }, [shapes, send]);
 
   const exitReplay = () => { stop(); historyRef.current = { key: null, bars: [] }; };
 
@@ -229,10 +316,22 @@ export default function ChartPage() {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') { e.preventDefault(); send({ type: replay.paused ? 'resume' : 'pause' }); }
       if (e.code === 'ArrowRight') { e.preventDefault(); send({ type: 'step', unit: e.shiftKey ? 'bar' : 'tick', n: 1 }); }
+      if (!teaching) return;
+      if (e.key === 'b' || e.key === 'B') placeOrder('buy');
+      if (e.key === 's' || e.key === 'S') placeOrder('sell');
+      if (e.key === 'f' || e.key === 'F') send({ type: 'flatten' });
+      if (e.key === 'k' || e.key === 'K') {
+        const reason = window.prompt('Skipped setup — why did you pass?') ?? '';
+        send({ type: 'mark', kind: 'skipped_setup', payload: { reason } });
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        const note = window.prompt('Note at the replay clock');
+        if (note) send({ type: 'mark', kind: 'annotation', payload: { note } });
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [replaying, replay, send]);
+  }, [replaying, replay, send, teaching, placeOrder]);
 
   const pickPrice = (price) => {
     setShapes((prev) => [...prev, {
@@ -287,6 +386,11 @@ export default function ChartPage() {
             <button className="btn btn-sm" onClick={() => startSession('rth')}>RTH open</button>
             <button className="btn btn-sm" onClick={() => startSession('latest')}>Latest</button>
             <button className="btn btn-sm btn-primary" onClick={() => startSession()}>Replay</button>
+            <div className="toolbar-sep-v" />
+            <button className={`replay-toggle ${teaching ? 'active' : ''}`} title="Teaching mode: trade the replay, the agent learns your rules"
+              onClick={() => { if (replaying) return; setTeaching((t) => !t); setTeachingSessionId(null); }} disabled={replaying}>Teaching</button>
+            {teaching && <button className="btn btn-sm" onClick={() => setDefaultsOpen((o) => !o)}>Defaults</button>}
+            {teaching && teachingSessionId && replaying && <button className="btn btn-sm btn-primary" onClick={endTeaching} disabled={ending}>End session</button>}
           </div>
         </div>
       ), headerSlot)}
@@ -326,7 +430,32 @@ export default function ChartPage() {
                 onStep={(unit) => send({ type: 'step', unit, n: 1 })}
                 onSeek={(unixS) => send({ type: 'seek', ts: Math.round(unixS) * 1e9 })}
                 onExit={exitReplay}
+                extra={teaching ? (
+                  <span className="replay-teaching-btns">
+                    <button className="btn btn-sm btn-long" onClick={() => placeOrder('buy')} title="Buy market (B)">Long</button>
+                    <button className="btn btn-sm btn-short" onClick={() => placeOrder('sell')} title="Sell market (S)">Short</button>
+                    <button className="btn btn-sm" onClick={() => send({ type: 'flatten' })} title="Flatten (F)">Flat</button>
+                    <button className="btn btn-sm" onClick={() => send({ type: 'mark', kind: 'skipped_setup', payload: { reason: window.prompt('Skipped setup — why?') ?? '' } })} title="Mark skipped setup (K)">Skip</button>
+                  </span>
+                ) : null}
               />
+            )}
+            {teaching && (
+              <QuestionDock
+                question={question}
+                onAnswer={(id, text, label) => { send({ type: 'answer', questionId: id, text, label }); setQuestion(null); }}
+                onDismiss={() => { setQuestion(null); send({ type: 'resume' }); }}
+              />
+            )}
+            {teaching && (
+              <FillPrompt
+                fill={fillPrompt}
+                onSubmit={(id, confidence, note) => { send({ type: 'annotate', tradeId: id, confidence, note }); setFillPrompt(null); }}
+                onDismiss={() => setFillPrompt(null)}
+              />
+            )}
+            {defaultsOpen && teaching && (
+              <TeachingDefaults root={root} value={teachingDefaults} onChange={setTeachingDefaults} onClose={() => setDefaultsOpen(false)} />
             )}
             {replaying && replay.status === 'ready' && replay.error && <div className="replay-toast">{replay.error}</div>}
             {replaying && replay.position && (

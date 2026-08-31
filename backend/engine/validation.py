@@ -112,3 +112,26 @@ def report(strategy_id: str, mode: str | None = None, risk: dict | None = None, 
         "verdict": v.to_dict() if v else None,
         "risk": verdict_mod.with_defaults(risk),
     }
+
+
+def run_teaching_window(strategy_id: str, date_from: date, date_to: date, *, mode: str | None = None,
+                        timeout_s: float = 1800.0) -> dict:
+    """Backtest one strategy over the exact replayed range (window_kind
+    `teaching`) and return the finished job with its trades (Phase 6)."""
+    import time
+
+    import strategy_store
+    from engine import jobs
+
+    strategy = strategy_store.get_strategy(strategy_id)
+    if strategy is None:
+        raise KeyError(strategy_id)
+    job = jobs.start_backtest(strategy, mode=mode, window_kind="teaching", date_from=date_from, date_to=date_to)
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        cur = jobs.get_job(job["id"])
+        if cur["status"] in ("done", "error"):
+            cur["trades"] = jobs.load_trades(cur["id"], cur.get("tradesPath")) if cur["status"] == "done" else []
+            return cur
+        time.sleep(0.5)
+    raise TimeoutError(f"teaching-window backtest {job['id']} still running after {timeout_s}s")

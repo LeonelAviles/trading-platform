@@ -171,9 +171,135 @@ class ChatActionFlow(GenerateFlow):
 
 
 class TeachingCompileFlow(GenerateFlow):
-    """Placeholder until Phase 6: compiles a teaching session into a spec via the same loop."""
+    """Compile a teaching session into a Strategy Spec v2 (PLATFORM-SPEC.md Phase 6.5).
+
+    Tools: get_spec_schema, search_knowledge, submit_teaching_spec (validate +
+    save + teaching-window backtest + similarity + full IS run),
+    propose_refinement (≤3 lineage children, each evaluated the same way),
+    finish_teaching. The user picks the version afterwards."""
 
     kind = "teaching_compile"
+    max_tokens = 8192
+
+    def init_state(self, input_: dict, state: dict) -> dict:
+        from teaching import compile as tc
+        from teaching import store as tstore
+
+        sid = input_.get("sessionId")
+        detail = tstore.session_detail(sid) if sid else None
+        if detail is None:
+            raise ValueError(f"teaching session {sid!r} not found")
+        from config.instruments import load_instruments
+
+        root = load_instruments().root_for_symbol(detail["symbol"])
+        tick = root.tick_size if root else 0.25
+        payload = tc.prompt_payload(detail, tick)
+        facts = kg.search(f"discretionary {detail['symbol']} entries: " + " ".join(
+            t for tr in payload["trades"] for t in ((tr.get("tags") or {}).get("tags") or [])), k=8)
+        state.update({
+            "messages": [{"role": "user", "content": "Teaching session to compile:\n" + json.dumps(payload, default=str)}],
+            "phase": "compile", "sessionId": sid, "knowledge": facts, "createdIds": [], "revisedIds": [], "jobs": {},
+            "changesUsed": 0, "changeBudget": tc.MAX_REFINEMENTS, "championId": None, "similarity": None, "refinements": [],
+            "finalized": False, "citations": [], "oosRevealed": [], "isJobs": {},
+        })
+        return state
+
+    def system_prompt(self, input_: dict, state: dict):
+        from teaching import prompts as tp
+
+        return [{"type": "text", "text": tp.COMPILE_SYSTEM + "\n" + prompts.RULES},
+                {"type": "text", "text": format_facts(state.get("knowledge") or [])}]
+
+    def tools(self, input_: dict, state: dict) -> list:
+        T2.install()
+        base = [t for t in agent_tools.ANTHROPIC_TOOLS if t["name"] in ("get_spec_schema", "search_knowledge", "get_strategy")]
+        return base + [SUBMIT_TEACHING_SPEC_TOOL, PROPOSE_REFINEMENT_TOOL, FINISH_TEACHING_TOOL]
+
+    def handle_tool(self, run_id: str, input_: dict, state: dict, call: dict) -> dict:
+        from teaching import compile as tc
+
+        name, args = call["name"], dict(call.get("input") or {})
+        sid = state["sessionId"]
+        if name == "submit_teaching_spec":
+            if state["championId"] is not None:
+                return {"result": {"error": "the spec was already submitted — use propose_refinement or finish_teaching"}}
+            spec = dict(args.get("spec") or {})
+            spec["origin"] = {"type": "teaching", "sourceId": sid}
+            spec.setdefault("name", f"Teaching {sid}")
+            if args.get("risk_rationale"):
+                spec.setdefault("risk", {})
+                spec["risk"] = {**spec["risk"], "proposedBy": "agent", "rationale": args["risk_rationale"]}
+            result = agent_tools.call_tool("create_strategy", {"spec": spec})
+            if not _ok(result):
+                return {"result": result}
+            state["createdIds"].append(result["id"])
+            state["championId"] = result["id"]
+            rep = tc.evaluate(sid, result["id"])
+            if "error" in rep:
+                return {"result": {**rep, "strategyId": result["id"]}}
+            tc.record_candidate(sid, rep, kind="compiled")
+            state["similarity"] = rep
+            state["isJobs"][result["id"]] = tc.start_is_run(result["id"])
+            return {"result": {"strategyId": result["id"], "similarity": rep}}
+        if name == "propose_refinement":
+            if state["championId"] is None:
+                return {"result": {"error": "submit_teaching_spec first"}}
+            if state["changesUsed"] >= tc.MAX_REFINEMENTS:
+                return {"result": {"error": f"refinement budget of {tc.MAX_REFINEMENTS} used — finish_teaching"}}
+            base_id = args.get("base_strategy_id") or state["championId"]
+            result = agent_tools.call_tool("propose_strategy_revision", {
+                "base_strategy_id": base_id, "changes": args.get("changes") or {}, "rationale": args.get("rationale", ""),
+                "changed_variable": args.get("changed_variable"), "name": args.get("name")})
+            if not _ok(result):
+                return {"result": result}
+            state["changesUsed"] += 1
+            state["revisedIds"].append(result["id"])
+            rep = tc.evaluate(sid, result["id"])
+            if "error" in rep:
+                return {"result": {**rep, "strategyId": result["id"]}}
+            tc.record_candidate(sid, rep, kind="refinement", rationale=args.get("rationale"))
+            state["refinements"].append(rep)
+            return {"result": {"strategyId": result["id"], "similarity": rep, "refinementsLeft": tc.MAX_REFINEMENTS - state["changesUsed"]}}
+        if name == "finish_teaching":
+            state["finalized"] = True
+            from teaching import store as tstore
+
+            tstore.update_session(sid, status="compiled" if state["championId"] else "ended")
+            return {"result": {"ok": True}, "stop": True, "report_text": args.get("report", "")}
+        if name == "search_knowledge":
+            result = agent_tools.call_tool(name, args)
+            for f in (result.get("result") if isinstance(result, dict) else []) or []:
+                state["citations"].append({"id": f.get("id"), "credibility": f.get("credibility"), "source": f.get("source")})
+            return {"result": result}
+        return {"result": agent_tools.call_tool(name, args)}
+
+    def finish(self, input_: dict, state: dict, text: str | None) -> dict:
+        from teaching import store as tstore
+
+        if not state.get("finalized"):
+            tstore.update_session(state["sessionId"], status="compiled" if state.get("championId") else "ended")
+        state["report"] = {
+            "text": text, "sessionId": state["sessionId"], "compiledStrategyId": state.get("championId"),
+            "createdIds": state["createdIds"], "revisedIds": state["revisedIds"], "similarity": state.get("similarity"),
+            "refinements": state.get("refinements"), "citations": state.get("citations"), "isJobs": state.get("isJobs"),
+        }
+        state["phase"] = "done"
+        return state
+
+
+SUBMIT_TEACHING_SPEC_TOOL = {"name": "submit_teaching_spec", "description": (
+    "Submit the compiled Strategy Spec v2 for the teaching session (once). Validates and saves it with origin.type "
+    "teaching, backtests it over the exact replayed window and in-sample, and returns the similarity report."),
+    "input_schema": {"type": "object", "properties": {"spec": {"type": "object"}, "risk_rationale": {"type": "string"}}, "required": ["spec"]}}
+PROPOSE_REFINEMENT_TOOL = {"name": "propose_refinement", "description": (
+    "Refine the compiled spec with ONE changed variable (dotted path -> value) to raise recall without dropping "
+    "precision; saved as a lineage child and evaluated over the same window. At most 3."),
+    "input_schema": {"type": "object", "properties": {"base_strategy_id": {"type": "string"}, "changes": {"type": "object"},
+                                                      "rationale": {"type": "string"}, "changed_variable": {"type": "string"}, "name": {"type": "string"}},
+                     "required": ["changes", "rationale"]}}
+FINISH_TEACHING_TOOL = {"name": "finish_teaching", "description": (
+    "End the compile with the report: rules in plain English, matched / unmatched trades and why, recommended version."),
+    "input_schema": {"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]}}
 
 
 _FLOWS = {"generate": GenerateFlow(), "chat_action": ChatActionFlow(), "teaching_compile": TeachingCompileFlow()}

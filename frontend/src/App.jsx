@@ -6,6 +6,7 @@ import ReviewPicker from './pages/ReviewPicker';
 import StrategyPage from './pages/StrategyPage';
 import ResearchPage from './pages/ResearchPage';
 import ChartPage from './pages/ChartPage';
+import TeachPage from './pages/TeachPage';
 
 // Two kinds of chart: /review/:backtestId is bound to the backtest it names
 // (no symbol picker there), and /chart/:symbol is the free chart with tick
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/research" element={<ResearchPage />} />
             <Route path="/chart/:symbol" element={<ChartPage />} />
             <Route path="/chart" element={<Navigate to="/chart/ES1!" replace />} />
+            <Route path="/teach/:sessionId" element={<TeachPage />} />
             {/* Everything else lands on the chooser. */}
             <Route path="*" element={<Navigate to="/review" replace />} />
           </Routes>

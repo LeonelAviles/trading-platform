@@ -242,10 +242,12 @@ def _make_strategy_class():
                 v, b, s = self.tick_buy + self.tick_sell, self.tick_buy, self.tick_sell
                 self.tick_buy = self.tick_sell = 0
                 return float(v), float(b - s), float(b), float(s)
+            # The sidecar is keyed by 1-minute bar CLOSE; a primary bar closing at
+            # close_ns spans the sub-bars closing at close_ns - (m-1)·60s … close_ns.
             close_ns = int(bar.ts_event)
             total = [0.0, 0.0, 0.0, 0.0]
             for k in range(self.primary_min):
-                row = self.flow.get(close_ns - (self.primary_min - k) * 60 * NS)
+                row = self.flow.get(close_ns - (self.primary_min - 1 - k) * 60 * NS)
                 if row:
                     total[0] += row[0]
                     total[1] += row[1]
