@@ -25,3 +25,5 @@ httpx
 # Raw-data archive to S3 (scripts/archive.py, scripts/restore.py)
 boto3
 networkx>=3.2          # knowledge graph communities (Louvain) for the /knowledge page
+neo4j>=5.28,<7          # knowledge graph driver (docker compose neo4j)
+graphiti-core>=0.29,<0.30  # Graphiti on Neo4j (knowledge/graph.py); local store when unreachable

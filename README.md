@@ -86,6 +86,21 @@ make lint       # oxlint
 make up         # docker compose: backend + frontend + neo4j (memory-capped)
 ```
 
+To run the compose stack next to `make dev` (which owns :8123 / :5173), use the
+ports override — backend on :8124, frontend on :5174, Neo4j Browser on :7474
+(user `neo4j`, password `NEO4J_PASSWORD` or `change-me-neo4j`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ports.yml up -d --build
+backend/.venv/bin/python backend/scripts/kg_bootstrap.py   # once: Graphiti indices on the Neo4j container
+```
+
+Both stacks share `data/platform.db`, `data/market/` and `backtests/` through
+bind mounts. With Neo4j reachable the backend switches its knowledge backend
+to Graphiti at startup (`GET /api/research/status` → `knowledge.backend`);
+Graphiti's entity extraction needs Anthropic credits, so without them facts
+still land in the local store and the graph stays empty.
+
 `make dev` runs `uvicorn app:app` from `backend/`; `uvicorn main:app` still
 works as an alias.
 

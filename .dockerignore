@@ -1,0 +1,15 @@
+# Keep the build context small: data tiers, raw files and job folders are
+# bind-mounted by docker-compose; environments are rebuilt inside the images.
+market-data/
+data/
+backtests/
+backend/.venv/
+backend/**/__pycache__/
+backend/.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+.git/
+.github/
+docs/
+*.log
+.DS_Store

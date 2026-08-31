@@ -138,32 +138,45 @@ def ontology():
     return entity_types
 
 
-def _run(coro):
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        import concurrent.futures
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_lock = threading.Lock()
 
-        with concurrent.futures.ThreadPoolExecutor(1) as ex:
-            return ex.submit(lambda: asyncio.run(coro)).result()
-    return asyncio.run(coro)
+
+def _event_loop() -> asyncio.AbstractEventLoop:
+    """One persistent loop on a daemon thread for every Graphiti coroutine —
+    the Neo4j async driver binds to the loop it was created on, so calls from
+    request threads must all land on the same loop."""
+    global _loop
+    with _loop_lock:
+        if _loop is None or _loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever, name="graphiti-loop", daemon=True).start()
+            _loop = loop
+    return _loop
+
+
+def _run(coro, timeout_s: float = 120.0):
+    return asyncio.run_coroutine_threadsafe(coro, _event_loop()).result(timeout=timeout_s)
 
 
 def _graph():
     global _graphiti
     if _graphiti is None:
-        from graphiti_core import Graphiti
-        from graphiti_core.llm_client.anthropic_client import AnthropicClient
-        from graphiti_core.llm_client.config import LLMConfig
+        async def build():
+            from graphiti_core import Graphiti
+            from graphiti_core.llm_client.anthropic_client import AnthropicClient
+            from graphiti_core.llm_client.config import LLMConfig
 
-        from agent.client import models
-        from knowledge.embedder import graphiti_embedder
+            from agent.client import models
+            from knowledge.embedder import graphiti_cross_encoder, graphiti_embedder
 
-        cfg = neo4j_config()
-        llm = AnthropicClient(LLMConfig(api_key=os.environ.get("ANTHROPIC_API_KEY"), model=models()["fast"]))
-        _graphiti = Graphiti(cfg["uri"], cfg["user"], cfg["password"], llm_client=llm, embedder=graphiti_embedder())
+            cfg = neo4j_config()
+            llm = AnthropicClient(LLMConfig(api_key=os.environ.get("ANTHROPIC_API_KEY"), model=models()["fast"]))
+            # Constructed on the Graphiti loop so the async driver binds to it.
+            return Graphiti(cfg["uri"], cfg["user"], cfg["password"], llm_client=llm, embedder=graphiti_embedder(),
+                            cross_encoder=graphiti_cross_encoder())
+
+        _graphiti = _run(build())
     return _graphiti
 
 

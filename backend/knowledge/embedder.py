@@ -79,3 +79,20 @@ def graphiti_embedder():
             return embed(list(input_data_list))
 
     return LocalEmbedderClient()
+
+
+def graphiti_cross_encoder():
+    """Graphiti CrossEncoderClient over the local embeddings — Graphiti's default
+    is an OpenAI reranker, which this platform has no key for."""
+    from graphiti_core.cross_encoder.client import CrossEncoderClient
+
+    class LocalCrossEncoder(CrossEncoderClient):
+        async def rank(self, query, passages):
+            if not passages:
+                return []
+            vecs = embed([query] + list(passages))
+            scored = [(p, float(cosine(vecs[0], v))) for p, v in zip(passages, vecs[1:])]
+            scored.sort(key=lambda x: -x[1])
+            return scored
+
+    return LocalCrossEncoder()

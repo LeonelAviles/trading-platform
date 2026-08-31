@@ -1,0 +1,11 @@
+# Run the compose stack next to `make dev` (which owns 8123 / 5173):
+#   docker compose -f docker-compose.yml -f docker-compose.ports.yml up -d
+# Backend on http://localhost:8124, frontend on http://localhost:5174; Neo4j
+# keeps 7474 / 7687 (nothing bare-metal listens there).
+services:
+  backend:
+    ports: !override
+      - "8124:8123"
+  frontend:
+    ports: !override
+      - "5174:5173"

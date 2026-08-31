@@ -302,3 +302,19 @@ decisions". Newest at the bottom.
 66. **Sources, strategies and sessions are hidden by default** and appear on
     demand (toggle, or double-click a concept) — with them always on, 14
     sources each linked to ~12 concepts dominate the layout.
+
+## Docker + Neo4j on this machine (2026-08-31)
+
+67. **`neo4j` and `graphiti-core` are now in `requirements.txt`** (they had
+    been installed by hand in the venv, so the Docker image silently fell back
+    to the local store); `sentence-transformers` stays optional — the image
+    uses the hash embedder, bare metal the MiniLM model — because torch would
+    add ~2 GB to a container capped at 3 GB.
+68. **Graphiti gets a local cross-encoder** (cosine over our own embeddings)
+    instead of its default OpenAI reranker, which needs an OpenAI key this
+    platform does not have. The backend container also waits for Neo4j's
+    healthcheck, since the knowledge backend is probed once at startup.
+69. **`docker-compose.ports.yml` runs the compose stack on :8124 / :5174**
+    so it can coexist with `make dev`; the canonical `make up` ports are
+    unchanged. `.dockerignore` keeps the 26 GB of data tiers, raw files,
+    venv and node_modules out of the build context.
