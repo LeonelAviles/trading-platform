@@ -178,3 +178,32 @@ decisions". Newest at the bottom.
     (`knowledgeAvailable`) as well as explicit `search_knowledge` hits, so a
     report can cite credibility even when the model relied on the system
     block rather than the tool.
+45. **Replay-cache checkpoints are event-bounded, not strictly every 60 s.**
+    The spec asks for a checkpoint per minute; what a seek actually pays for
+    is the replay-forward from the checkpoint, so `replay/warm.py` writes one
+    at a second boundary once ≥200k events have passed since the last one,
+    or after 300 s of quiet tape. On ES 2026-06-12 that is 259 checkpoints
+    for the front month (22 MB) and every seek replays ≤200k events — 0.1–0.3 s
+    measured (`docs/05-chart.md`). An ES order map holds only ~10k resting
+    orders, so if per-minute checkpoints are ever wanted the cost is small;
+    change `CHECKPOINT_MIN_EVENTS`.
+46. **Trades-only replay never needs the cache.** With the book layer off
+    (or above 25×) the session reads prints from `data/market/trades`, so
+    bars, footprint, bubbles, CVD, T&S and teaching fills work on every
+    ingested day; only the L3 ladder needs the day decoded (first use warms
+    it, ~100 s for ES, with progress over the socket).
+47. **`OrderBookDelta` catalog writes for cached days are deferred.** The
+    `l3` backtest mode keeps its Phase 2 fallback; building deltas into the
+    Nautilus catalog from the replay cache is bounded work but only matters
+    for finalists that use limit entries, so it waits for a candidate that
+    needs it (Phase 7 packaging at the latest).
+48. **The session builds 1-, 5- and 15-minute bars and a 1-minute footprint;
+    coarser footprints are rolled up in the client** (`aggregateFootprints`)
+    so switching the chart interval never restarts the session, and the
+    numbers are the same sums `/api/footprint` produces.
+49. **`/chart/:symbol` is the one free chart** (spec §4.9). The review page
+    is still bound to its backtest; both render `chart/ChartView.jsx`, so
+    the layers, drawings and settings are shared code.
+50. **Order-flow layer thresholds live in localStorage (`layerSettings`)**
+    with a Layers tab in the existing settings modal, not in `settings`
+    server-side: they are display preferences of this browser.

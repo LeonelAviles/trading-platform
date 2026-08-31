@@ -20,11 +20,22 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 2 | Backtester v2 and validation | done — [docs/02-backtester.md](docs/02-backtester.md) |
 | 3 | Strategy DSL v2 and primitive registry | done — [docs/03-dsl.md](docs/03-dsl.md) |
 | 4 | Agent v2: runs, knowledge graph, research | done — [docs/04-agent.md](docs/04-agent.md) |
-| 5 | Chart, tick replay, order-flow visuals | next |
-| 6 | Teaching mode | |
+| 5 | Chart, tick replay, order-flow visuals | done — `docs/05-chart.md` |
+| 6 | Teaching mode | next |
 | 7 | Desk view and packaging | |
 
 ## What works today
+
+- **Free chart with tick replay** at `/chart/:symbol`: pick a session (date,
+  ET start time, "RTH open" / "Latest"), replay over `/ws/replay` at
+  0.25–100× with step-print / step-bar / jump-to-ET-time, an ET clock and a
+  "book approximate" badge above 25×. Layers: DOM ladder (tick-exact L3 book
+  from MBO), liquidity heatmap (now-edge = replay clock), footprint (bid×ask,
+  imbalances, stacked outlines, POC), delta bubbles, volume profile
+  (POC/VAH/VAL), live CVD, Time & Sales. Thresholds under Settings → Layers.
+  The first replay of a day with the book on decodes it into
+  `data/replay_cache` (~100 s for ES, LRU-capped by `REPLAY_CACHE_MAX_GB`);
+  trades-only replay works on every ingested day without the cache.
 
 - **Candlestick chart** (lightweight-charts v5) with volume, intervals 1m–1D,
   drawing tools, CVD, DOM snapshot and a Bookmap-style liquidity heatmap.
@@ -79,6 +90,7 @@ Tiered layout (PLATFORM-SPEC.md §4.1, details in [docs/01-data.md](docs/01-data
 # drop Databento files anywhere under market-data/, then:
 make ingest     # organizes raw/, decodes once per file, writes the tiers (runs with the backend up)
 make catalog    # NautilusTrader ParquetDataCatalog (incremental)
+make warm ROOT_SYMBOL=ES DATE=2026-06-12   # pre-decode a day for tick replay (the UI does this on first use)
 ```
 
 Instruments, session (09:30–16:00 America/New_York, DST-safe) and the cost
@@ -88,5 +100,7 @@ model live in `backend/config/instruments.yaml` (`GET /api/instruments`).
 
 `backend/tests/synth.py` generates a seeded synthetic MBO session (random-walk
 price, Poisson trades with aggressor side, a consistent L3 book) so every
-engine test runs without real data. CI (`.github/workflows/ci.yml`) runs
-pytest, oxlint and the Vite build on every push.
+engine test runs without real data — including the L3 book (checked against a
+brute-force reference) and the replay session (fake clock). CI
+(`.github/workflows/ci.yml`) runs pytest, oxlint, vitest and the Vite build on
+every push.

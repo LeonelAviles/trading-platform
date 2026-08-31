@@ -59,7 +59,7 @@ function computeLargeLevels(buckets, threshold) {
 
 // Canvas, not SVG: a bucket x price-level grid redrawn on every pan/zoom
 // frame needs canvas fill-rect performance, not per-cell React elements.
-export default function DomHeatmapLayer({ chart, series, heatmapData, bars, intervalSeconds }) {
+export default function DomHeatmapLayer({ chart, series, heatmapData, bars, intervalSeconds, maxTime = null }) {
   const canvasRef = useRef(null);
 
   const tickSize = useMemo(() => {
@@ -87,7 +87,9 @@ export default function DomHeatmapLayer({ chart, series, heatmapData, bars, inte
     // filter twice and turn persistent lines into isolated dots.
     const maxSize = heatmapData.scaleMax || 1;
 
-    return heatmapData.buckets.map((bucket) => ({
+    // During replay the "now" edge is the replay clock: nothing to its right.
+    const buckets = maxTime == null ? heatmapData.buckets : heatmapData.buckets.filter((b) => b.t < maxTime);
+    return buckets.map((bucket) => ({
       l0: timeToLogical(bars, intervalSeconds, bucket.t),
       l1: timeToLogical(bars, intervalSeconds, bucket.t + heatmapData.bucketSeconds),
       levels: [...bucket.levels]
@@ -97,7 +99,7 @@ export default function DomHeatmapLayer({ chart, series, heatmapData, bars, inte
           return { price: level.p, fill: heatColor(level.s, maxSize) };
         }),
     }));
-  }, [bars, heatmapData, intervalSeconds]);
+  }, [bars, heatmapData, intervalSeconds, maxTime]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;

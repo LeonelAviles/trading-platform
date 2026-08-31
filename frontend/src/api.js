@@ -281,3 +281,15 @@ export async function fetchSettings() { return json(await fetch(`${BASE}/setting
 export async function putSettings(values) {
   return json(await fetch(`${BASE}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) }));
 }
+
+// Replay cache (PLATFORM-SPEC.md §4.11).
+export async function fetchReplayCache() { return json(await fetch(`${BASE}/data/replay-cache`)); }
+export async function warmReplayDay(root, date) {
+  return json(await fetch(`${BASE}/data/replay-cache/warm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root, date }),
+  }));
+}
+export function replaySocketUrl() {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/ws/replay`;
+}

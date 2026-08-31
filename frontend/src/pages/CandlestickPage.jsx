@@ -1,11 +1,10 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
+import { CrosshairMode, LineStyle } from 'lightweight-charts';
 import { fetchOHLCV, fetchRange, fetchBacktest, deleteBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import DrawToolbar from '../components/DrawToolbar';
-import DrawingOverlay from '../drawing/DrawingOverlay';
 import SettingsModal from '../components/SettingsModal';
 import ReplayControls from '../components/ReplayControls';
 import DomPanel from '../components/DomPanel';
@@ -14,32 +13,15 @@ import ChatPanel from '../components/ChatPanel';
 import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
-import DomHeatmapLayer from '../orderflow/DomHeatmapLayer';
-import useOrderFlowData from '../orderflow/useOrderFlowData';
+import ChartView from '../chart/ChartView';
+import { candlePoint, volumePoint } from '../chart/useChart';
+import { useLayerSettings } from '../chart/layerSettings';
 
 // Bars requested for the first paint. Aggregating every tick in the store
 // takes ~16s regardless of how few bars come back, while a window this size
 // returns in well under a second — so the chart draws immediately and the
 // full history is swapped in behind it (see the loader below).
 const FIRST_PAINT_BARS = 1500;
-
-function candlePoint(b) {
-  return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
-}
-
-function volumePoint(b) {
-  return {
-    time: b.time,
-    value: b.volume,
-    color: b.close >= b.open ? 'rgba(62,207,110,0.5)' : 'rgba(239,68,68,0.5)',
-  };
-}
-
-function formatVol(v) {
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
-  return `${Math.round(v)}`;
-}
 
 // A chart is never standalone: this page *is* the review of one backtest,
 // named by the route. The strategy and the symbol both come from that job, so
@@ -63,15 +45,12 @@ export default function CandlestickPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [shapes, setShapes] = useDrawings(symbol);
   const [settings, setSettings] = useChartSettings();
+  const [layerSettings, setLayerSettings] = useLayerSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Replay: null | {phase:'select'} | {phase:'active', idx, playing, speed}
   const [replay, setReplay] = useState(null);
   const prevReplayIdxRef = useRef(null);
-
-  // Index (into barsRef.current) of the bar under the crosshair, for the
-  // OHLCV legend; null means "not hovering" — legend falls back to the last bar.
-  const [hoverIdx, setHoverIdx] = useState(null);
 
   const [backtestTrades, setBacktestTrades] = useState([]);
   const [cvdData, setCvdData] = useState([]);
@@ -93,11 +72,17 @@ export default function CandlestickPage() {
   useEffect(() => { localStorage.setItem('chatOpen', String(chatOpen)); }, [chatOpen]);
   useEffect(() => { localStorage.setItem('orderFlowOn', String(orderFlowOn)); }, [orderFlowOn]);
 
-  const chartAreaRef = useRef(null);
-  const chartDivRef = useRef(null);
+  // The chart itself lives in ChartView; it hands its api back once created.
+  const [chartApi, setChartApi] = useState(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
   const volumeSeriesRef = useRef(null);
+  const onChartReady = useCallback((api) => {
+    chartRef.current = api.chart;
+    candleSeriesRef.current = api.candleSeries;
+    volumeSeriesRef.current = api.volumeSeries;
+    setChartApi(api);
+  }, []);
   // Tracks the bars/interval a symbol's shapes are currently anchored to, so
   // that switching timeframe can re-anchor them through real time instead of
   // leaving their logical-index fields pointing at unrelated bars.
@@ -112,113 +97,11 @@ export default function CandlestickPage() {
   const [, setTick] = useState(0);
   const forceUpdate = useCallback(() => setTick((n) => n + 1), []);
 
-  useEffect(() => {
-    const chart = createChart(chartDivRef.current, {
-      layout: { background: { color: settings.background }, textColor: '#e8e8ea' },
-      grid: {
-        vertLines: { visible: settings.vertGridVisible, color: settings.gridColor },
-        horzLines: { visible: settings.horzGridVisible, color: settings.gridColor },
-      },
-      timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2c2a33', rightOffset: 35 },
-      rightPriceScale: { borderColor: '#2c2a33' },
-      crosshair: { mode: CrosshairMode.Normal },
-    });
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: settings.upColor, downColor: settings.downColor,
-      borderVisible: settings.borderVisible, borderUpColor: settings.borderUpColor, borderDownColor: settings.borderDownColor,
-      wickVisible: settings.wickVisible, wickUpColor: settings.wickUpColor, wickDownColor: settings.wickDownColor,
-    });
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    });
-    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
-
-    const resize = () => {
-      // A ResizeObserver callback can still fire once as the element is
-      // being torn down on route change, when the ref is already null.
-      if (!chartAreaRef.current) return;
-      chart.applyOptions({ width: chartAreaRef.current.clientWidth, height: chartAreaRef.current.clientHeight });
-      forceUpdate();
-    };
-    const ro = new ResizeObserver(resize);
-    ro.observe(chartAreaRef.current);
-    resize();
-
-    chart.timeScale().subscribeVisibleLogicalRangeChange(forceUpdate);
-
-    const onCrosshairMove = (param) => {
-      if (!param.time) { setHoverIdx(null); return; }
-      const idx = barsRef.current.findIndex((b) => b.time === param.time);
-      setHoverIdx(idx >= 0 ? idx : null);
-    };
-    chart.subscribeCrosshairMove(onCrosshairMove);
-
-    // Dragging the right-side price axis rescales the price scale, but
-    // lightweight-charts has no subscribable event for that (only for the
-    // time scale, above) — so without this, our SVG overlay's shapes never
-    // get told to recompute their pixel position and are left stranded at
-    // their old spot. Re-render every frame for the duration of any drag
-    // inside the chart area to catch that (and any other internal rescale)
-    // regardless of which specific interaction caused it.
-    let raf = null;
-    const loop = () => { forceUpdate(); raf = requestAnimationFrame(loop); };
-    const onPointerDown = () => { if (raf == null) loop(); };
-    const onPointerUp = () => { if (raf != null) { cancelAnimationFrame(raf); raf = null; } };
-    const area = chartAreaRef.current;
-    area.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointerup', onPointerUp);
-
-    return () => {
-      ro.disconnect();
-      chart.unsubscribeCrosshairMove(onCrosshairMove);
-      chart.remove();
-      area.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointerup', onPointerUp);
-      if (raf != null) cancelAnimationFrame(raf);
-    };
-    // `settings` intentionally omitted: this only sets the *initial* look on
-    // mount. Later changes are applied live by the effect below instead of
-    // recreating the whole chart.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [forceUpdate]);
-
-  useEffect(() => {
-    if (!chartRef.current || !candleSeriesRef.current) return;
-    candleSeriesRef.current.applyOptions({
-      upColor: settings.upColor, downColor: settings.downColor,
-      borderVisible: settings.borderVisible, borderUpColor: settings.borderUpColor, borderDownColor: settings.borderDownColor,
-      wickVisible: settings.wickVisible, wickUpColor: settings.wickUpColor, wickDownColor: settings.wickDownColor,
-    });
-    chartRef.current.applyOptions({
-      // Keep the chart transparent whenever Flow is active. Applying the
-      // configured background unconditionally here could run after the Flow
-      // effect and cover the correctly painted heatmap canvas underneath.
-      layout: { background: { color: orderFlowOn ? 'rgba(0,0,0,0)' : settings.background } },
-      grid: {
-        vertLines: { visible: settings.vertGridVisible, color: settings.gridColor },
-        horzLines: { visible: settings.horzGridVisible, color: settings.gridColor },
-      },
-    });
-  }, [settings, orderFlowOn]);
-
-  // Candles and volume stay visible above the heatmap in Flow mode. The
-  // settings effect above owns the background so two effects cannot race.
-  useEffect(() => {
-    if (!chartRef.current || !candleSeriesRef.current || !volumeSeriesRef.current) return;
-    candleSeriesRef.current.applyOptions({ visible: true });
-    volumeSeriesRef.current.applyOptions({ visible: true });
-  }, [orderFlowOn]);
-
   // Two-phase load: a recent window first so the chart is usable straight
   // away, then the full history swapped in underneath the same view. Asking
   // for everything up front meant staring at an empty chart for ~30s.
   useEffect(() => {
-    if (!symbol) return;
+    if (!symbol || !chartApi) return;
     let cancelled = false;
     // Read the shape anchors once, before either phase moves them.
     const anchor = anchorRef.current;
@@ -284,7 +167,7 @@ export default function CandlestickPage() {
     })();
 
     return () => { cancelled = true; };
-  }, [symbol, interval, forceUpdate, setShapes]);
+  }, [symbol, interval, forceUpdate, setShapes, chartApi]);
 
   // CVD (cumulative volume delta) for the analysis panel's CVD tab — fetched
   // independently so a failure here (e.g. a symbol with no MBO side data)
@@ -414,36 +297,8 @@ export default function CandlestickPage() {
   }, [backtestId, navigate]);
 
   const bars = barsRef.current;
-  const legendIdx = hoverIdx != null && hoverIdx < bars.length ? hoverIdx : bars.length - 1;
-  const legendBar = legendIdx >= 0 ? bars[legendIdx] : null;
-  const legendPrev = legendIdx > 0 ? bars[legendIdx - 1] : null;
-  const legendBase = legendPrev ? legendPrev.close : legendBar?.open;
-  const legendChange = legendBar ? legendBar.close - legendBase : 0;
-  const legendChangePct = legendBase ? (legendChange / legendBase) * 100 : 0;
-  const legendSign = legendChange >= 0 ? 'pos' : 'neg';
   const intervalSeconds = intervalToSeconds(interval);
   const revealTime = replay?.phase === 'active' ? (bars[replay.idx]?.time ?? null) : null;
-  // Recomputed every render off the same forceUpdate tick that drives
-  // DrawingOverlay's redraws (subscribeVisibleLogicalRangeChange + the drag
-  // rAF loop, both wired in the chart-creation effect above) — the hook's
-  // own effect only actually refetches when from/to change.
-  const orderFlowVisibleRange = chartRef.current ? chartRef.current.timeScale().getVisibleRange() : null;
-  const priceSeries = candleSeriesRef.current;
-  const chartHeight = chartAreaRef.current?.clientHeight;
-  const topPrice = priceSeries && chartHeight ? priceSeries.coordinateToPrice(0) : null;
-  const bottomPrice = priceSeries && chartHeight ? priceSeries.coordinateToPrice(chartHeight) : null;
-  const orderFlowPriceRange = topPrice != null && bottomPrice != null
-    ? {
-      min: Number(Math.min(topPrice, bottomPrice).toFixed(4)),
-      max: Number(Math.max(topPrice, bottomPrice).toFixed(4)),
-    }
-    : null;
-  const { heatmapData, heatmapLoading, tooWideForHeatmap } = useOrderFlowData(
-    symbol,
-    orderFlowOn,
-    orderFlowVisibleRange,
-    orderFlowPriceRange,
-  );
   const visibleTrades = revealTime == null
     ? backtestTrades
     : backtestTrades.filter((t) => t.entryTime <= revealTime);
@@ -560,6 +415,8 @@ export default function CandlestickPage() {
         settings={settings}
         onApply={setSettings}
         onClose={() => setSettingsOpen(false)}
+        layerSettings={layerSettings}
+        onApplyLayers={setLayerSettings}
       />
       <div className="page-body">
         <DrawToolbar
@@ -567,63 +424,12 @@ export default function CandlestickPage() {
           setActiveTool={setActiveTool}
           onClear={() => { setShapes([]); setSelectedId(null); }}
         />
-        <div className={`chart-area ${orderFlowOn ? 'order-flow-active' : ''}`} ref={chartAreaRef}>
-          <div className="chart-inner" ref={chartDivRef} />
-          {orderFlowOn && (
-            <DomHeatmapLayer
-              chart={chartRef.current}
-              series={candleSeriesRef.current}
-              heatmapData={heatmapData}
-              bars={bars}
-              intervalSeconds={intervalSeconds}
-            />
-          )}
-          {orderFlowOn && tooWideForHeatmap && (
-            <div className="order-flow-hint">Zoom in to see order flow</div>
-          )}
-          {orderFlowOn && heatmapLoading && !heatmapData && !tooWideForHeatmap && (
-            <div className="order-flow-hint">Loading liquidity…</div>
-          )}
-          {orderFlowOn && heatmapData?.buckets?.length > 0 && (
-            <div className="order-flow-scale" aria-label="Liquidity intensity scale">
-              <span>Liquidity</span>
-              <i />
-              <small>low</small>
-              <small>high</small>
-            </div>
-          )}
-          {legendBar && (
-            <div className="chart-legend">
-              <div className="legend-top">
-                <span className="legend-symbol">{symbol}</span>
-                <span className="legend-price">{legendBar.close.toFixed(2)}</span>
-                <span className={`legend-change ${legendSign}`}>
-                  {legendChange >= 0 ? '+' : ''}{legendChange.toFixed(2)} ({legendChange >= 0 ? '+' : ''}{legendChangePct.toFixed(2)}%)
-                </span>
-              </div>
-              <div className="legend-ohlc">
-                <span>O <b className={legendSign}>{legendBar.open.toFixed(2)}</b></span>
-                <span>H <b className={legendSign}>{legendBar.high.toFixed(2)}</b></span>
-                <span>L <b className={legendSign}>{legendBar.low.toFixed(2)}</b></span>
-                <span>C <b className={legendSign}>{legendBar.close.toFixed(2)}</b></span>
-                {legendBar.volume != null && <span>Vol <b>{formatVol(legendBar.volume)}</b></span>}
-              </div>
-            </div>
-          )}
-          <DrawingOverlay
-            chart={chartRef.current}
-            series={candleSeriesRef.current}
-            shapes={shapes}
-            setShapes={setShapes}
-            activeTool={activeTool}
-            setActiveTool={setActiveTool}
-            selectedId={selectedId}
-            setSelectedId={setSelectedId}
-            trades={backtestTrades}
-            revealTime={revealTime}
-            bars={bars}
-            intervalSeconds={intervalSeconds}
-          />
+        <ChartView
+          symbol={symbol} interval={interval} bars={bars} settings={settings} onReady={onChartReady}
+          layers={{ heatmap: orderFlowOn }} layerSettings={layerSettings} clockTime={revealTime}
+          drawing={{ shapes, setShapes, activeTool, setActiveTool, selectedId, setSelectedId }}
+          trades={backtestTrades} revealTime={revealTime}
+        >
           {replay && (
             <ReplayControls
               replay={replay}
@@ -657,7 +463,7 @@ export default function CandlestickPage() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
             </button>
           </div>
-        </div>
+        </ChartView>
         {domOpen && (
           <DomPanel symbol={symbol} asOf={revealTime} onClose={() => setDomOpen(false)} />
         )}

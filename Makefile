@@ -14,7 +14,7 @@ ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PY    := $(ROOT)/backend/.venv/bin/python
 PIP   := $(ROOT)/backend/.venv/bin/pip
 
-.PHONY: dev backend frontend up down ingest catalog verify test test-backend test-frontend lint venv
+.PHONY: dev backend frontend up down ingest catalog verify warm test test-backend test-frontend lint venv
 
 venv:
 	@test -x $(PY) || python3 -m venv $(ROOT)/backend/.venv
@@ -62,3 +62,6 @@ test-frontend:
 
 lint:
 	cd $(ROOT)/frontend && npm run lint
+
+warm:
+	cd $(ROOT)/backend && $(PY) scripts/warm_replay.py $(ROOT_SYMBOL) $(DATE)

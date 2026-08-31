@@ -5,11 +5,11 @@ import CandlestickPage from './pages/CandlestickPage';
 import ReviewPicker from './pages/ReviewPicker';
 import StrategyPage from './pages/StrategyPage';
 import ResearchPage from './pages/ResearchPage';
+import ChartPage from './pages/ChartPage';
 
-// The app is a strategy-review tool: a chart only ever exists inside
-// /review/:backtestId, so what's on screen always names the strategy it
-// belongs to. There is no free-roaming chart and no symbol picker — the
-// symbol comes from the backtest under review.
+// Two kinds of chart: /review/:backtestId is bound to the backtest it names
+// (no symbol picker there), and /chart/:symbol is the free chart with tick
+// replay and teaching mode (PLATFORM-SPEC.md Phase 5/6).
 export default function App() {
   // Ref-callbacks into state so the slot nodes are available to child portals
   // once the header mounts.
@@ -32,8 +32,9 @@ export default function App() {
             <Route path="/review/:backtestId" element={<CandlestickPage />} />
             <Route path="/strategies/:strategyId" element={<StrategyPage />} />
             <Route path="/research" element={<ResearchPage />} />
-            {/* Everything else — including old deep links to a bare chart —
-                lands on the chooser rather than an unattached chart. */}
+            <Route path="/chart/:symbol" element={<ChartPage />} />
+            <Route path="/chart" element={<Navigate to="/chart/ES1!" replace />} />
+            {/* Everything else lands on the chooser. */}
             <Route path="*" element={<Navigate to="/review" replace />} />
           </Routes>
         </HeaderSlotContext.Provider>

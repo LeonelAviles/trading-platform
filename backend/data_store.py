@@ -331,7 +331,7 @@ def get_trades(symbol: str, start: int, end: int, min_size: int = 0, limit: int 
         params,
     ).df()
     return [
-        {"ts": int(ts), "price": float(px), "size": int(sz), "side": str(sd)}
+        {"ts": int(ts), "price": round(float(px), 4), "size": int(sz), "side": str(sd)}
         for ts, px, sz, sd in zip(df["ts"], df["price"], df["size"], df["side"])
     ]
 
@@ -360,9 +360,12 @@ def get_footprint(symbol: str, tf: str, start: int, end: int) -> dict:
     ).df()
     bars: list[dict] = []
     for bar, g in df.groupby("bar", sort=True):
-        levels = [{"price": float(p), "bid": int(b), "ask": int(a)} for p, b, a in zip(g["price"], g["bid"], g["ask"])]
+        # prices are DOUBLE in Parquet; round away float noise so a level is
+        # the same key on the wire as in the replay session (7410.0, not
+        # 7410.000000000001).
+        levels = [{"price": round(float(p), 4), "bid": int(b), "ask": int(a)} for p, b, a in zip(g["price"], g["bid"], g["ask"])]
         vol = int(g["volume"].sum())
-        poc = float(g.loc[g["volume"].idxmax(), "price"]) if vol else None
+        poc = round(float(g.loc[g["volume"].idxmax(), "price"]), 4) if vol else None
         bars.append({
             "time": int(bar // NS), "levels": levels, "volume": vol,
             "delta": int(g["ask"].sum() - g["bid"].sum()), "poc": poc,
@@ -412,11 +415,11 @@ def get_volume_profile(symbol: str, start: int, end: int, tick_bins: int = 1) ->
         """,
         params,
     ).df()
-    bins = [(float(p), int(v)) for p, v in zip(df["price"], df["volume"])]
+    bins = [(round(float(p), 4), int(v)) for p, v in zip(df["price"], df["volume"])]
     poc, vah, val = _value_area(bins)
     return {
         "symbol": symbol, "binWidth": width,
-        "bins": [{"price": float(p), "volume": int(v), "buy": int(b), "sell": int(s)}
+        "bins": [{"price": round(float(p), 4), "volume": int(v), "buy": int(b), "sell": int(s)}
                  for p, v, b, s in zip(df["price"], df["volume"], df["buy"], df["sell"])],
         "poc": poc, "vah": vah, "val": val, "totalVolume": int(df["volume"].sum()) if not df.empty else 0,
     }
