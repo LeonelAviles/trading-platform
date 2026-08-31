@@ -318,3 +318,17 @@ decisions". Newest at the bottom.
     so it can coexist with `make dev`; the canonical `make up` ports are
     unchanged. `.dockerignore` keeps the 26 GB of data tiers, raw files,
     venv and node_modules out of the build context.
+
+## App shell (2026-08-31)
+
+70. **One persistent sidebar and one page pattern.** The Phase 5–7 pages had
+    been added as stacked cards with text links and no navigation; the owner
+    called it out. Every non-chart page now uses the same scaffold —
+    sidebar (Desk / Strategies / Backtests / Chart & replay / Teaching /
+    Research / Knowledge graph / Settings), a page header with the page's
+    actions as buttons, tabs instead of long scrolls, tables for lists — and
+    strategy creation is one dialog with three explicit paths (describe /
+    teach / write). Chart routes collapse the sidebar to an icon rail so the
+    chart keeps its width. `/review` (the old front door) redirects to
+    `/backtests`; `/review/:id` is unchanged. Budget, prices, self-study and
+    trusted domains moved from the Research page to Settings.

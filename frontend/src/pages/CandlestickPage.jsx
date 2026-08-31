@@ -320,7 +320,7 @@ export default function CandlestickPage() {
     <div className="page">
       {leadingSlot && createPortal((
         <div className="review-crumb">
-          <Link className="icon-btn" to="/review" title="Back to strategy reviews">
+          <Link className="icon-btn" to="/backtests" title="Back to backtests">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 18l-6-6 6-6" />
             </svg>
@@ -458,7 +458,7 @@ export default function CandlestickPage() {
                 Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
               </span>
             )}
-            <Link className="btn btn-ghost" to="/review">Other reviews</Link>
+            <Link className="btn btn-ghost" to="/backtests">All backtests</Link>
             <button className="icon-btn" title="Delete this run" onClick={handleDeleteBacktest}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
             </button>

@@ -369,3 +369,7 @@ export async function fetchKnowledgeGraph({ minCredibility = 0, kinds = [], tier
 }
 export async function fetchKnowledgeNode(id) { return json(await fetch(`${BASE}/knowledge/graph/node/${encodeURIComponent(id)}`)); }
 export async function fetchKnowledgeFacts(ids) { return json(await fetch(`${BASE}/knowledge/facts?ids=${encodeURIComponent(ids.join(','))}`)); }
+
+export async function deleteStrategy(id) {
+  return json(await fetch(`${BASE}/strategies/${id}`, { method: 'DELETE' }));
+}

@@ -24,6 +24,22 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 6 | Teaching mode | done — [docs/06-teaching.md](docs/06-teaching.md) |
 | 7 | Desk view and packaging | done — [docs/07-desk.md](docs/07-desk.md) |
 
+## Navigating the app
+
+A persistent sidebar (collapses to an icon rail on chart pages):
+
+| Page | Route | What you do there |
+|---|---|---|
+| Desk | `/` | Stat tiles + candidates, what is testing, teaching sessions, research budget, data coverage, lineage trees |
+| Strategies | `/strategies` | The list with validation status and last run; **+ New strategy** → *Describe it* (agent), *Teach it on the chart*, or *Write the spec* (template + editor); agent runs below |
+| Strategy | `/strategies/:id` | Overview (rules, risk, validation), Spec editor, Lineage (compare two nodes), Runs; toolbar: status, Package, Validate, Run backtest |
+| Backtests | `/backtests` | Every run in one table, run a new one, open any on its review chart (`/review/:id`) |
+| Chart & replay | `/chart/:symbol` | Tick replay with order-flow layers; `?teaching=1` starts with Teaching on |
+| Teaching | `/teaching` | Sessions so far, the three steps, **Start a teaching session**; a session opens at `/teach/:id` |
+| Research | `/research` | Queue, Sources (hand it a link / PDF / text), Knowledge search, primitive requests |
+| Knowledge graph | `/knowledge` | Interactive concept graph with clusters, central concepts and content gaps |
+| Settings | `/settings` | Budget & prices, self-study schedule, trusted domains, data on disk, instruments |
+
 ## What works today
 
 - **Desk** at `/`: candidates with verdict / OOS PF / Monte Carlo DD95 /

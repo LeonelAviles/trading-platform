@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   fetchDataCoverage, fetchInstruments, fetchOHLCV, fetchRange, fetchFootprint, fetchTrades, fetchVolumeProfile,
 } from '../api';
@@ -41,6 +41,7 @@ const LAYER_BUTTONS = [
 export default function ChartPage() {
   const { leading: leadingSlot, main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const { symbol: symbolParam } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const symbol = symbolParam || 'ES1!';
 
@@ -62,7 +63,7 @@ export default function ChartPage() {
   const { replay, tick, start, send, stop, subscribe } = useReplay();
   // Teaching mode (Phase 6): a teaching_sessions row is created on toggle and
   // sent with start; fills/questions come back over the same socket.
-  const [teaching, setTeaching] = useState(false);
+  const [teaching, setTeaching] = useState(() => searchParams.get('teaching') === '1');
   const [teachingSessionId, setTeachingSessionId] = useState(null);
   const [teachingDefaults, setTeachingDefaults] = useState(() => loadTeachingDefaults('ES'));
   const [defaultsOpen, setDefaultsOpen] = useState(false);
@@ -348,7 +349,7 @@ export default function ChartPage() {
     <div className="page">
       {leadingSlot && createPortal((
         <div className="review-crumb">
-          <Link className="icon-btn" to="/review" title="Strategy reviews">
+          <Link className="icon-btn" to="/backtests" title="Backtests">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </Link>
           <div className="hdr-symbol">

@@ -2,19 +2,14 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import {
-  addResearchSource, addResearchTopic, fetchPrimitiveRequests, fetchResearchQueue, fetchResearchSettings, fetchResearchSources,
-  fetchResearchStatus, fetchUsage, putResearchSettings, putSettings, runResearch, searchKnowledge, setPrimitiveRequestStatus,
-  tickAutorun, uploadResearchSource,
+  addResearchSource, addResearchTopic, fetchPrimitiveRequests, fetchResearchQueue, fetchResearchSources,
+  fetchResearchStatus, fetchUsage, runResearch, searchKnowledge, setPrimitiveRequestStatus, uploadResearchSource,
 } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
+import { Card, PageHeader, StatusChip, Tabs } from '../components/ui';
+import { fmtWhen } from '../format';
 
 const money = (v) => `$${Number(v || 0).toFixed(3)}`;
-const when = (iso) => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
-const lines = (arr) => (arr || []).join('\n');
 
 // "Hand it a book": a URL, pasted text or a PDF/text file goes through the
 // same fetch → score → summarise path as the worker's own finds, tagged owner.
@@ -73,227 +68,135 @@ function AddSource({ onDone }) {
   );
 }
 
-// The self-study switch: read the queue on a schedule, within the daily cap.
-function SelfStudy({ settings, autorun, onSave, onRefresh }) {
-  const [draft, setDraft] = useState(settings);
-  const [msg, setMsg] = useState('');
-  useEffect(() => { setDraft(settings); }, [settings]);
-  if (!draft) return null;
-  const r = autorun?.lastResult;
-  return (
-    <div className="research-selfstudy">
-      <label className="research-switch">
-        <input type="checkbox" checked={!!draft.autoRun} onChange={(e) => onSave({ autoRun: e.target.checked })} />
-        <b>Self-study {draft.autoRun ? 'on' : 'off'}</b>
-        <span className="muted">— every</span>
-        <input type="number" min="1" step="1" value={draft.intervalHours} onChange={(e) => setDraft({ ...draft, intervalHours: Number(e.target.value) })} onBlur={() => onSave({ intervalHours: draft.intervalHours })} />
-        <span className="muted">hours, read</span>
-        <input type="number" min="1" max="10" step="1" value={draft.topicsPerRun} onChange={(e) => setDraft({ ...draft, topicsPerRun: Number(e.target.value) })} onBlur={() => onSave({ topicsPerRun: draft.topicsPerRun })} />
-        <span className="muted">topic(s), stop at the daily research budget.</span>
-      </label>
-      <div className="review-card-spec">
-        <span>Last read {when(autorun?.lastRunAt)}{autorun?.lastRunBy ? ` (${autorun.lastRunBy})` : ''}</span>
-        <span>Next {autorun?.enabled ? when(autorun?.nextRunAt) : 'off'}</span>
-        <span>{autorun?.queued ?? '—'} topic(s) queued</span>
-        {autorun?.researchCapped && <span className="neg">daily research budget spent</span>}
-        {autorun?.skipped && <span className="muted">skipped {when(autorun.skipped.at)}: {autorun.skipped.reason}</span>}
-        <button className="btn btn-sm" onClick={() => tickAutorun().then((t) => { setMsg(t.ran ? 'Started.' : `Not started: ${t.reason}`); onRefresh(); })}>Read now</button>
-        {msg && <span className="muted">{msg}</span>}
-      </div>
-      {r && (
-        <div className="muted research-last">
-          Last result: {r.topics?.length || 0} topic(s) — {r.sources} source(s), {r.facts} fact(s){r.errors?.length ? ` · ${r.errors.length} error(s): ${r.errors[0]}` : ''}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Which authors to trust: domain suffixes fixed to a tier before the model's
-// own reading of the page counts.
-function TrustedDomains({ settings, onSave }) {
-  const [t1, setT1] = useState('');
-  const [t2, setT2] = useState('');
-  const [blocked, setBlocked] = useState('');
-  const [msg, setMsg] = useState('');
-  useEffect(() => {
-    if (!settings) return;
-    setT1(lines(settings.trustedDomains?.tier1));
-    setT2(lines(settings.trustedDomains?.tier2));
-    setBlocked(lines(settings.trustedDomains?.blocked));
-  }, [settings]);
-  if (!settings) return null;
-  return (
-    <div className="research-domains">
-      <div className="research-domains-grid">
-        <label>Tier 1 — papers, exchanges, regulators<textarea rows={6} value={t1} onChange={(e) => setT1(e.target.value)} /></label>
-        <label>Tier 2 — established practitioners<textarea rows={6} value={t2} onChange={(e) => setT2(e.target.value)} /></label>
-        <label>Blocked — never enters the knowledge base<textarea rows={6} value={blocked} onChange={(e) => setBlocked(e.target.value)} /></label>
-      </div>
-      <div className="strategy-actions">
-        <button className="btn btn-sm" onClick={() => onSave({ trustedDomains: { tier1: t1, tier2: t2, blocked } }).then(() => setMsg('Saved.'))}>Save trusted domains</button>
-        <span className="muted">One domain per line; subdomains match. {msg}</span>
-      </div>
-    </div>
-  );
-}
-
-// /research — queue, sources with tier/credibility, primitive requests,
-// budget gauge and the editable LLM price table (PLATFORM-SPEC.md §4.8, §4.9).
+// /research — what the agent reads: the queue, the sources, the knowledge.
 export default function ResearchPage() {
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
+  const [tab, setTab] = useState('queue');
   const [queue, setQueue] = useState([]);
   const [sources, setSources] = useState([]);
+  const [jobs, setJobs] = useState([]);
   const [requests, setRequests] = useState([]);
   const [status, setStatus] = useState(null);
   const [usage, setUsage] = useState(null);
   const [topic, setTopic] = useState('');
   const [q, setQ] = useState('');
   const [hits, setHits] = useState([]);
-  const [prices, setPrices] = useState(null);
   const [msg, setMsg] = useState('');
-  const [jobs, setJobs] = useState([]);
-  const [rsettings, setRsettings] = useState(null);
 
   const refresh = useCallback(async () => {
-    const [qu, so, re, st, us, rs] = await Promise.all([
+    const [qu, so, re, st, us] = await Promise.all([
       fetchResearchQueue().catch(() => []), fetchResearchSources().catch(() => ({ sources: [], jobs: [] })), fetchPrimitiveRequests().catch(() => []),
-      fetchResearchStatus().catch(() => null), fetchUsage().catch(() => null), fetchResearchSettings().catch(() => null),
+      fetchResearchStatus().catch(() => null), fetchUsage().catch(() => null),
     ]);
     setQueue(qu); setSources(so.sources || []); setJobs(so.jobs || []); setRequests(re); setStatus(st); setUsage(us);
-    if (rs) setRsettings(rs);
-    if (us?.prices && !prices) setPrices(us.prices);
-  }, [prices]);
-
-  async function saveResearch(changes) {
-    setRsettings(await putResearchSettings(changes));
-    refresh();
-  }
+  }, []);
   useEffect(() => { refresh(); const id = setInterval(refresh, 8000); return () => clearInterval(id); }, [refresh]);
+  useEffect(() => { if (!msg) return undefined; const t = setTimeout(() => setMsg(''), 4000); return () => clearTimeout(t); }, [msg]);
 
-  async function savePrices() {
-    await putSettings({ 'llm.prices': prices });
-    setMsg('Price table saved (estimates).');
+  async function addTopic() {
+    if (!topic.trim()) return;
+    await addResearchTopic(topic.trim());
+    setTopic('');
+    setMsg('Topic queued.');
+    refresh();
+  }
+  async function readNext(n) {
+    const r = await runResearch(n);
+    setMsg(r.started ? `Reading the next ${n} topic(s)…` : `Not started: ${r.reason}`);
     refresh();
   }
 
-  const frac = usage?.monthFraction ?? 0;
+  const auto = status?.autorun;
+  const queued = queue.filter((t) => t.status === 'queued').length;
+  const done = queue.filter((t) => t.status === 'done').length;
+
   return (
-    <div className="page strategy-page">
-      {leadingSlot && createPortal(<div className="hdr-title">Research &amp; knowledge</div>, leadingSlot)}
-      <div className="review-body strategy-body">
-        <section className="review-card">
-          <div className="review-card-name">Budget</div>
+    <div className="page">
+      {leadingSlot && createPortal(<div className="hdr-title">Research</div>, leadingSlot)}
+      <div className="page-scroll"><div className="page-inner">
+        <PageHeader
+          title="Research"
+          subtitle="The agent reads topics from a queue, scores each source by tier and credibility, and keeps what it learned as facts the strategy runs can cite. Hand it your own sources here."
+          actions={(
+            <>
+              <Link className="btn" to="/knowledge">Knowledge graph</Link>
+              <button className="btn" onClick={() => readNext(3)} disabled={status?.workerRunning}>Read next 3</button>
+              <button className="btn btn-primary" onClick={() => readNext(1)} disabled={status?.workerRunning}>{status?.workerRunning ? 'Reading…' : 'Read next topic'}</button>
+            </>
+          )}
+        >
           {usage && (
-            <>
-              <div className="budget-gauge"><div className="budget-fill" style={{ width: `${Math.min(100, frac * 100)}%`, background: usage.capped ? '#ef5350' : '#26a69a' }} /></div>
-              <div className="review-card-spec">
-                <span>Month {money(usage.monthSpendUsd)} / ${usage.monthlyBudgetUsd} ({(frac * 100).toFixed(1)}%){usage.capped ? ' — CAPPED' : ''}</span>
-                <span>Research today {money(usage.researchDaySpendUsd)} / ${usage.dailyResearchBudgetUsd}{usage.researchCapped ? ' — capped' : ''}</span>
-                <span>Reasoning {usage.models?.reasoning} · fast {usage.models?.fast}</span>
-                <span className="muted">Costs are estimates from the price table below.</span>
-              </div>
-              <table className="settings-table"><thead><tr><th>Purpose</th><th>Calls</th><th>In</th><th>Out</th><th>Cache read</th><th>Cost</th></tr></thead>
-                <tbody>{Object.entries(usage.byPurpose || {}).map(([k, v]) => (
-                  <tr key={k}><td>{k}</td><td>{v.calls}</td><td>{v.tokensIn}</td><td>{v.tokensOut}</td><td>{v.cacheRead}</td><td>{money(v.costUsd)}</td></tr>))}</tbody></table>
-            </>
-          )}
-          {prices && (
-            <>
-              <div className="settings-section-label">PRICE TABLE ($ per million tokens — fill in from Anthropic&apos;s pricing page)</div>
-              <table className="settings-table"><thead><tr><th>Model</th><th>In</th><th>Out</th><th>Cache read</th><th>Cache write</th></tr></thead>
-                <tbody>{Object.entries(prices).map(([m, p]) => (
-                  <tr key={m}><td>{m}{p.placeholder ? ' (placeholder)' : ''}</td>
-                    {['in', 'out', 'cacheRead', 'cacheWrite'].map((k) => (
-                      <td key={k}><input type="number" step="0.01" value={p[k] ?? ''} onChange={(e) => setPrices({ ...prices, [m]: { ...p, [k]: Number(e.target.value), placeholder: false } })} /></td>))}
-                  </tr>))}</tbody></table>
-              <button className="btn btn-sm" onClick={savePrices}>Save price table</button> {msg && <span className="muted">{msg}</span>}
-            </>
-          )}
-        </section>
-
-        <section className="review-card">
-          <header className="review-card-head">
-            <div><div className="review-card-name">Self-study</div>
-              <div className="review-card-sub">Reads the queue on its own — seed topics, what the agent asks for during runs, and yours — within the daily research budget.</div></div>
-          </header>
-          <SelfStudy settings={rsettings} autorun={status?.autorun} onSave={saveResearch} onRefresh={refresh} />
-        </section>
-
-        <section className="review-card">
-          <header className="review-card-head">
-            <div><div className="review-card-name">Hand it a source</div>
-              <div className="review-card-sub">A link, pasted text or a PDF. Scored and summarised like everything else; its facts are tagged <code>owner</code>.</div></div>
-          </header>
-          <AddSource onDone={refresh} />
-          {jobs.length > 0 && (
-            <table className="trades-table"><thead><tr><th>Source</th><th>Topic</th><th>Status</th><th>Result</th></tr></thead>
-              <tbody>{jobs.map((j) => (
-                <tr key={j.id}><td>{j.title || j.url}</td><td>{j.topic}</td><td>{j.status}</td>
-                  <td className="muted">{j.error || (j.result ? (j.result.blocked ? 'blocked (tier 4)' : j.result.skipped || `tier ${j.result.tier} · ${j.result.facts} fact(s)`) : '')}</td></tr>))}</tbody></table>
-          )}
-        </section>
-
-        <section className="review-card">
-          <header className="review-card-head">
-            <div><div className="review-card-name">Trusted domains</div>
-              <div className="review-card-sub">Fixes a source&apos;s tier by where it comes from, before the model&apos;s reading of the page counts.</div></div>
-          </header>
-          <TrustedDomains settings={rsettings} onSave={saveResearch} />
-        </section>
-
-        <section className="review-card">
-          <header className="review-card-head">
-            <div><div className="review-card-name">Research queue</div>
-              <div className="review-card-sub">Backend {status?.knowledge?.backend} · embedder {status?.knowledge?.embedder} · {status?.knowledge?.facts} facts · worker {status?.workerRunning ? 'running' : 'idle'}</div></div>
-            <div className="strategy-actions">
-              <button className="btn" onClick={() => runResearch(1).then(refresh)}>Research next topic</button>
-              <button className="btn" onClick={() => runResearch(3).then(refresh)}>Next 3</button>
+            <div className="budget-strip" style={{ marginTop: 8 }}>
+              <span>{status?.knowledge?.facts ?? '—'} facts · backend {status?.knowledge?.backend}</span>
+              <span>Research today {money(usage.researchDaySpendUsd)} / ${usage.dailyResearchBudgetUsd}<span className="bar"><i className={usage.researchCapped ? 'capped' : ''} style={{ width: `${Math.min(100, usage.dailyResearchBudgetUsd ? (usage.researchDaySpendUsd / usage.dailyResearchBudgetUsd) * 100 : 0)}%` }} /></span></span>
+              <span>Self-study {auto?.enabled ? `on · next ${fmtWhen(auto.nextRunAt)}` : 'off'} · <Link to="/settings">settings</Link></span>
             </div>
-          </header>
-          <div className="chat-input-row">
-            <input className="agent-answer-input" value={topic} placeholder="Add a topic…" onChange={(e) => setTopic(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && topic.trim()) { addResearchTopic(topic.trim()).then(() => { setTopic(''); refresh(); }); } }} />
-            <button className="btn btn-sm" disabled={!topic.trim()} onClick={() => addResearchTopic(topic.trim()).then(() => { setTopic(''); refresh(); })}>Add</button>
-          </div>
-          <table className="trades-table"><thead><tr><th>Topic</th><th>Status</th><th>By</th></tr></thead>
-            <tbody>{queue.map((t) => <tr key={t.id}><td>{t.topic}</td><td>{t.status}</td><td>{t.requestedBy}</td></tr>)}</tbody></table>
-        </section>
-
-        <section className="review-card">
-          <div className="review-card-name">Sources</div>
-          <table className="trades-table"><thead><tr><th>Title</th><th>Domain</th><th>By</th><th>Tier</th><th>Credibility</th><th>Why</th></tr></thead>
-            <tbody>{sources.map((s) => (
-              <tr key={s.id}><td>{s.url.startsWith('owner://') ? (s.title || 'pasted text') : <a href={s.url} target="_blank" rel="noreferrer">{s.title || s.url}</a>}</td>
-                <td>{s.domain}</td><td>{s.scored?.providedBy === 'user' ? 'you' : 'worker'}</td>
-                <td>{s.tier ?? '—'}{s.scored?.domainRule ? <span className="muted"> (rule)</span> : ''}</td>
-                <td>{s.credibility != null ? s.credibility.toFixed(2) : '—'}</td><td className="muted">{s.scored?.reason}</td></tr>))}</tbody></table>
-          {sources.length === 0 && <div className="review-card-empty">No sources yet — run the research worker.</div>}
-        </section>
-
-        <section className="review-card">
-          <header className="review-card-head">
-            <div className="review-card-name">Knowledge search</div>
-            <Link className="btn btn-sm" to="/knowledge">Open the knowledge graph →</Link>
-          </header>
-          <div className="chat-input-row">
-            <input className="agent-answer-input" value={q} placeholder="e.g. daily loss limit" onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') searchKnowledge(q).then(setHits); }} />
-            <button className="btn btn-sm" onClick={() => searchKnowledge(q).then(setHits)}>Search</button>
-          </div>
-          <ul className="strategy-sentences">{hits.map((h) => <li key={h.id}><b>[{h.credibility}]</b> {h.text} <span className="muted">— {h.source} ({h.kind})</span></li>)}</ul>
-        </section>
-
-        <section className="review-card">
-          <div className="review-card-name">Primitive requests</div>
-          {requests.length === 0 ? <div className="review-card-empty">None — the agent composes from the registry.</div> : (
-            <table className="trades-table"><thead><tr><th>Name</th><th>Description</th><th>Status</th><th /></tr></thead>
-              <tbody>{requests.map((r) => (
-                <tr key={r.id}><td>{r.name}</td><td>{r.description}<pre className="muted">{r.pseudocode}</pre></td><td>{r.status}</td>
-                  <td>{['implemented', 'rejected'].map((s) => <button key={s} className="btn btn-sm" onClick={() => setPrimitiveRequestStatus(r.id, s).then(refresh)}>{s}</button>)}</td></tr>))}</tbody></table>
           )}
-        </section>
-      </div>
+        </PageHeader>
+        {msg && <div className="toast">{msg}</div>}
+        <Tabs value={tab} onChange={setTab} tabs={[
+          { id: 'queue', label: 'Queue', count: queued }, { id: 'sources', label: 'Sources', count: sources.length },
+          { id: 'knowledge', label: 'Knowledge' }, { id: 'requests', label: 'Primitive requests', count: requests.filter((r) => r.status === 'open').length || null },
+        ]} />
+
+        {tab === 'queue' && (
+          <Card title="Topics" sub={`${done} read · ${queued} queued · seed topics first, then yours, then what the agent asked for during runs`}>
+            <div className="toolbar-row">
+              <input type="text" value={topic} placeholder="Add a topic, e.g. walk-forward validation for intraday futures" onChange={(e) => setTopic(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addTopic(); }} style={{ flex: 1 }} />
+              <button className="btn btn-primary" disabled={!topic.trim()} onClick={addTopic}>Add topic</button>
+            </div>
+            <table className="data-table"><thead><tr><th>Topic</th><th>Status</th><th>Requested by</th><th>Added</th></tr></thead>
+              <tbody>{queue.map((t) => <tr key={t.id}><td>{t.topic}</td><td><StatusChip status={t.status} /></td><td className="inline-note">{t.requestedBy}</td><td className="inline-note">{fmtWhen(t.createdAt)}</td></tr>)}</tbody></table>
+          </Card>
+        )}
+
+        {tab === 'sources' && (
+          <>
+            <Card title="Hand it a source" sub="A link, pasted text or a PDF. Scored and summarised like everything else; its facts are tagged owner.">
+              <AddSource onDone={refresh} />
+              {jobs.length > 0 && (
+                <table className="data-table"><thead><tr><th>Source</th><th>Topic</th><th>Status</th><th>Result</th></tr></thead>
+                  <tbody>{jobs.map((j) => (
+                    <tr key={j.id}><td>{j.title || j.url}</td><td className="inline-note">{j.topic}</td><td><StatusChip status={j.status} /></td>
+                      <td className="inline-note">{j.error || (j.result ? (j.result.blocked ? 'blocked (tier 4)' : j.result.skipped || `tier ${j.result.tier} · ${j.result.facts} fact(s)`) : '')}</td></tr>))}</tbody></table>
+              )}
+            </Card>
+            <Card title="Sources" sub="Tier 1 papers / exchanges / regulators · 2 established practitioners · 3 blogs and forums · 4 marketing (blocked). Pin tiers by domain in Settings.">
+              {sources.length === 0 ? <div className="review-card-empty">No sources yet — read a topic or hand it one.</div> : (
+                <div className="table-wrap"><table className="data-table"><thead><tr><th>Title</th><th>Domain</th><th>By</th><th className="num">Tier</th><th className="num">Credibility</th><th>Why</th></tr></thead>
+                  <tbody>{sources.map((s) => (
+                    <tr key={s.id}><td>{s.url.startsWith('owner://') ? (s.title || 'pasted text') : <a href={s.url} target="_blank" rel="noreferrer">{(s.title || s.url).slice(0, 80)}</a>}</td>
+                      <td className="inline-note">{s.domain}</td><td className="inline-note">{s.scored?.providedBy === 'user' ? 'you' : 'worker'}</td>
+                      <td className="num">{s.tier ?? '—'}{s.scored?.domainRule ? <span className="inline-note"> (rule)</span> : ''}</td>
+                      <td className="num">{s.credibility != null ? s.credibility.toFixed(2) : '—'}</td><td className="inline-note">{s.scored?.reason}</td></tr>))}</tbody></table></div>
+              )}
+            </Card>
+          </>
+        )}
+
+        {tab === 'knowledge' && (
+          <Card title="Knowledge search" sub="What the agent would retrieve for a query, with credibility." actions={<Link className="btn btn-sm" to="/knowledge">Open the graph →</Link>}>
+            <div className="toolbar-row">
+              <input type="text" value={q} placeholder="e.g. daily loss limit" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') searchKnowledge(q).then(setHits); }} style={{ flex: 1 }} />
+              <button className="btn btn-primary" onClick={() => searchKnowledge(q).then(setHits)}>Search</button>
+            </div>
+            {hits.length === 0 ? <div className="inline-note">No results yet.</div> : (
+              <ul className="kg-facts">{hits.map((h) => <li key={h.id}><div className="kg-fact-head"><span className="chip">{h.kind}</span><b>{h.credibility}</b><span className="muted">{h.source}</span></div><div>{h.text}</div></li>)}</ul>
+            )}
+          </Card>
+        )}
+
+        {tab === 'requests' && (
+          <Card title="Primitive requests" sub="Indicators the agent asked for that the registry does not have. Mark them implemented or rejected.">
+            {requests.length === 0 ? <div className="review-card-empty">None — the agent composes from the registry.</div> : (
+              <table className="data-table"><thead><tr><th>Name</th><th>Description</th><th>Status</th><th /></tr></thead>
+                <tbody>{requests.map((r) => (
+                  <tr key={r.id}><td>{r.name}</td><td>{r.description}<pre className="muted">{r.pseudocode}</pre></td><td><StatusChip status={r.status} /></td>
+                    <td className="actions">{['implemented', 'rejected'].map((st) => <button key={st} className="btn btn-sm" onClick={() => setPrimitiveRequestStatus(r.id, st).then(refresh)}>{st}</button>)}</td></tr>))}</tbody></table>
+            )}
+          </Card>
+        )}
+      </div></div>
     </div>
   );
 }

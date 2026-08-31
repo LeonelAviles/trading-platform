@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { fetchDesk, forwardTestStrategy, importStrategyPackage, strategyPackageUrl } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import AgentRuns from '../components/AgentRuns';
+import { AgentRunList } from '../components/AgentRuns';
 import LineageTree from '../components/LineageTree';
+import { PageHeader, StatTile } from '../components/ui';
 
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -120,21 +121,28 @@ export default function DeskPage() {
   return (
     <div className="page review-page desk-page">
       {leadingSlot && createPortal(<div className="hdr-title">Desk</div>, leadingSlot)}
-      <div className="review-body desk-body">
-        <div className="review-intro desk-intro">
-          <div>
-            <h1>Desk</h1>
-            <p>Candidates worth attention, what is testing now, teaching sessions, the research budget and the data on disk.</p>
+      <div className="page-scroll"><div className="page-inner wide">
+        <PageHeader
+          title="Desk"
+          subtitle="What is worth attention today: candidates, what is testing, teaching sessions, the research budget and the data on disk."
+          actions={(
+            <>
+              <button className="btn" onClick={() => fileRef.current?.click()}>Import package…</button>
+              <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
+              <Link className="btn btn-primary" to="/strategies?new=1">+ New strategy</Link>
+            </>
+          )}
+        />
+        {desk && (
+          <div className="stat-row">
+            <StatTile label="Strategies" value={desk.strategies.total} sub={Object.entries(desk.strategies.byStatus).map(([k, n]) => `${n} ${k.replace('_', ' ')}`).join(' · ') || 'none yet'} to="/strategies" />
+            <StatTile label="Candidates" value={desk.candidates.length} sub={desk.candidates.length ? 'passed validation' : 'none passed validation yet'} tone={desk.candidates.length ? 'good' : ''} to="/strategies?status=candidate" />
+            <StatTile label="Testing now" value={(testing.agentRuns?.length || 0) + (testing.backtests?.length || 0)} sub={`${testing.agentRuns?.length || 0} agent · ${testing.backtests?.length || 0} backtests`} to="/backtests" />
+            <StatTile label="Teaching sessions" value={desk.teaching.length} sub={desk.teaching.filter((s) => s.compiledStrategyId).length + ' compiled'} to="/teaching" />
+            <StatTile label="Research spend" value={`$${num(budget.monthSpendUsd)}`} sub={`of $${num(budget.monthlyBudgetUsd, 0)} this month`} tone={budget.capped ? 'bad' : ''} to="/research" />
+            <StatTile label="Sessions on disk" value={Object.values(roots).reduce((a, r) => a + (r.sessions || 0), 0)} sub={Object.entries(roots).map(([k, r]) => `${k} ${r.first?.slice(5)} → ${r.last?.slice(5)}`).join(' · ') || 'no data'} to="/settings" />
           </div>
-          <div className="desk-nav">
-            <Link to="/review">Strategy reviews →</Link>
-            <Link to="/chart/ES1!">Chart &amp; tick replay →</Link>
-            <Link to="/research">Research &amp; knowledge →</Link>
-            <Link to="/knowledge">Knowledge graph →</Link>
-            <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>Import package…</button>
-            <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
-          </div>
-        </div>
+        )}
         {importMsg && <div className="muted desk-import-msg">{importMsg}</div>}
         {error && <div className="review-error">{error}</div>}
         {!desk && !error && <div className="review-empty">Loading…</div>}
@@ -170,7 +178,7 @@ export default function DeskPage() {
                   ))}
                 </ul>
               )}
-              <AgentRuns />
+              <AgentRunList activeOnly emptyText="Nothing running. Start one from Strategies → New strategy → Describe it." />
             </Tile>
 
             <Tile title="Teaching sessions" sub={`${desk.teaching.length} session(s)`} extra={<Link className="btn btn-sm" to="/chart/ES1!">New on the chart →</Link>}>
@@ -267,7 +275,7 @@ export default function DeskPage() {
             </Tile>
           </div>
         )}
-      </div>
+      </div></div>
     </div>
   );
 }
