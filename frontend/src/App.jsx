@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { HeaderSlotContext } from './headerSlot';
 import CandlestickPage from './pages/CandlestickPage';
 import ReviewPicker from './pages/ReviewPicker';
+import DeskPage from './pages/DeskPage';
 import StrategyPage from './pages/StrategyPage';
 import ResearchPage from './pages/ResearchPage';
 import ChartPage from './pages/ChartPage';
@@ -29,6 +30,7 @@ export default function App() {
       <div className="app-body">
         <HeaderSlotContext.Provider value={{ leading: leadingSlot, main: slot, trailing: trailingSlot }}>
           <Routes>
+            <Route path="/" element={<DeskPage />} />
             <Route path="/review" element={<ReviewPicker />} />
             <Route path="/review/:backtestId" element={<CandlestickPage />} />
             <Route path="/strategies/:strategyId" element={<StrategyPage />} />
@@ -36,8 +38,8 @@ export default function App() {
             <Route path="/chart/:symbol" element={<ChartPage />} />
             <Route path="/chart" element={<Navigate to="/chart/ES1!" replace />} />
             <Route path="/teach/:sessionId" element={<TeachPage />} />
-            {/* Everything else lands on the chooser. */}
-            <Route path="*" element={<Navigate to="/review" replace />} />
+            {/* Everything else lands on the desk. */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </HeaderSlotContext.Provider>
       </div>

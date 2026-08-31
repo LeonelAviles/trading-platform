@@ -28,6 +28,7 @@ from routers import (  # noqa: E402
     agent,
     backtests,
     chat,
+    desk,
     market,
     replay,
     research,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
         teaching.router,
         research.router,
         settings.router,
+        desk.router,
     ):
         app.include_router(router)
 

@@ -20,12 +20,21 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 2 | Backtester v2 and validation | done — [docs/02-backtester.md](docs/02-backtester.md) |
 | 3 | Strategy DSL v2 and primitive registry | done — [docs/03-dsl.md](docs/03-dsl.md) |
 | 4 | Agent v2: runs, knowledge graph, research | done — [docs/04-agent.md](docs/04-agent.md) |
-| 5 | Chart, tick replay, order-flow visuals | done — `docs/05-chart.md` |
-| 6 | Teaching mode | done — `docs/06-teaching.md` |
-| 7 | Desk view and packaging | next |
+| 5 | Chart, tick replay, order-flow visuals | done — [docs/05-chart.md](docs/05-chart.md) |
+| 6 | Teaching mode | done — [docs/06-teaching.md](docs/06-teaching.md) |
+| 7 | Desk view and packaging | done — [docs/07-desk.md](docs/07-desk.md) |
 
 ## What works today
 
+- **Desk** at `/`: candidates with verdict / OOS PF / Monte Carlo DD95 /
+  regime notes and a **Forward test →** transition, what is testing now
+  (agent runs, backtests), teaching sessions, the research budget, data
+  coverage (per-root sessions, IS/OOS split, raw files archived, replay
+  cache) and every lineage tree with its champion starred. **Package**
+  exports a strategy as a zip (spec, risk, validation report, lineage,
+  evidence, `nautilus_config.json`) that `POST /api/strategies/import`
+  re-creates; the strategy page compares any two lineage nodes
+  ([docs/07-desk.md](docs/07-desk.md)).
 - **Teaching mode** on the free chart: trade the replay with hotkeys or
   buttons, the agent snapshots every fill (bars, levels, profile, CVD,
   footprints, book, the full primitive feature vector), keeps a hypothesis

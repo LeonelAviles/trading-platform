@@ -854,3 +854,46 @@ select.chevron {
 .teach-unmatched-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 12px; }
 .teach-unmatched-row span:last-child { display: flex; gap: 4px; }
 .muted { color: var(--text-muted); }
+
+/* ============================================================
+   Phase 7: desk, package, compare
+   ============================================================ */
+.desk-body { max-width: 1180px; }
+.desk-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+.desk-nav { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; padding-top: 6px; }
+.desk-import-msg { margin: -14px 0 14px; font-size: 12px; }
+.desk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.desk-tile-wide { grid-column: 1 / -1; }
+@media (max-width: 800px) { .desk-grid { grid-template-columns: 1fr; } }
+.desk-tile .review-card-head { margin-bottom: 10px; }
+.desk-candidates, .desk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.desk-candidate { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.desk-candidate-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.desk-candidate-name { font-weight: 700; font-size: 14px; }
+.desk-candidate-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+.desk-candidate-regimes { font-size: 12px; }
+.desk-candidate-actions { display: flex; gap: 8px; align-items: center; }
+.desk-list li { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.desk-budget { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.desk-bar-label { display: flex; justify-content: space-between; color: var(--text-muted); }
+.desk-bar { height: 6px; border-radius: 3px; background: var(--surface-2, rgba(127,127,127,0.2)); overflow: hidden; }
+.desk-bar-fill { height: 100%; background: #26a69a; }
+.desk-bar-fill.capped { background: #ef5350; }
+.desk-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.desk-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.desk-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.desk-cache { margin-top: 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.desk-cache-days { display: flex; flex-wrap: wrap; gap: 4px; }
+.desk-lineage { margin-bottom: 8px; }
+.lineage-row.champion a { font-weight: 700; }
+.lineage-star { color: #ffc107; }
+.lineage-row input[type="checkbox"] { margin: 0; }
+.compare-view { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.compare-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.compare-table { border-collapse: collapse; font-size: 12px; min-width: 360px; }
+.compare-table th, .compare-table td { text-align: right; padding: 3px 10px; border-bottom: 1px solid var(--border); }
+.compare-table td:first-child { text-align: left; }
+.compare-table th.winner { color: #26a69a; }
+.compare-verdict { margin-top: 8px; font-size: 13px; }
+.compare-warning { font-size: 12px; color: #ffc107; margin-top: 4px; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }

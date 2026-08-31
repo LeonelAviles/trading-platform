@@ -132,7 +132,7 @@ export default function ReviewPicker() {
         {error && <div className="review-error">{error}</div>}
 
         <AgentRuns />
-        <div className="review-links"><Link to="/chart/ES1!">Chart &amp; tick replay →</Link><Link to="/research">Research &amp; knowledge →</Link></div>
+        <div className="review-links"><Link to="/">Desk →</Link><Link to="/chart/ES1!">Chart &amp; tick replay →</Link><Link to="/research">Research &amp; knowledge →</Link></div>
 
         {loading ? (
           <div className="review-empty">Loading…</div>

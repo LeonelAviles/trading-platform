@@ -239,3 +239,31 @@ decisions". Newest at the bottom.
     `docs/04-agent.md` are therefore superseded by the re-validation
     recorded there; the agent protocol itself was exercised correctly, the
     engine it was scoring was not.
+
+## Phase 7 — Desk view and packaging (2026-08-31)
+
+56. **Package import takes the zip as the raw request body**, not multipart
+    (`python-multipart` is not a dependency and one file needs no form). The
+    desk's Import button posts the `File` directly with
+    `Content-Type: application/zip`.
+57. **Import keeps the original strategy id when it is free and mints a new
+    one otherwise** (`?keepId=false` forces a new id). Keeping the id makes
+    "delete, then re-import the package" restore the same URL; minting on
+    collision avoids overwriting a strategy that has diverged locally. The
+    parent link is kept only when the parent exists locally; evidence files
+    are returned, not imported (they describe backtests the importing machine
+    does not have).
+58. **`nautilus_config.json` is an `ImportableStrategyConfig`-shaped stub**
+    pointing at `engine.backtest_worker:ExecStrategy` with the parameter dict
+    `exec_params(spec)` produces, plus `spec_path` inside the zip. The
+    execution strategy is built at run time from the spec today (no importable
+    class yet); the stub fixes the contract a forward-test executor consumes
+    without adding a second strategy implementation.
+59. **"Compare two nodes" compares the latest finished backtest of one window
+    kind per strategy** (default `is`), reusing the agent's
+    `compare_backtests` tool, rather than letting the user pick backtest ids —
+    lineage nodes are strategies, and the in-sample row is the one every node
+    in a run has.
+60. **The desk lists a lineage only when its tree has more than one node or its
+    root is a candidate**, so thirteen single-node drafts do not become
+    thirteen empty trees; `/review` still shows every strategy.

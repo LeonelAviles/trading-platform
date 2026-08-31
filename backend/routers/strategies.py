@@ -1,8 +1,10 @@
 """Strategy routes — Spec v2 in SQLite (strategy_store), PLATFORM-SPEC.md §6."""
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import Response
 
 import agent_llm
+import strategy_package
 import strategy_store
 from engine import spec as spec_mod
 
@@ -53,6 +55,20 @@ def generate_strategy(body: dict = Body(...)):
     return runs.start_run("generate", input_)
 
 
+@router.post("/import")
+async def import_strategy(request: Request):
+    """Re-import a package produced by GET /{id}/package. Body: the zip bytes
+    (`Content-Type: application/zip`); `?keepId=false` always mints a new id."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty body — send the package zip as the request body")
+    keep = request.query_params.get("keepId", "true").lower() != "false"
+    try:
+        return strategy_package.import_package(data, keep_id=keep)
+    except strategy_package.PackageError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str):
     return load_strategy(strategy_id)
@@ -99,6 +115,56 @@ def set_status(strategy_id: str, body: dict = Body(...)):
         return strategy_store.set_status(strategy_id, body.get("status"))
     except strategy_store.StrategyError as e:
         raise HTTPException(400, str(e))
+
+
+@router.get("/{strategy_id}/package")
+def get_package(strategy_id: str):
+    """Zip: spec, risk, validation report, lineage, evidence/, nautilus_config.json (Phase 7)."""
+    s = load_strategy(strategy_id)
+    data = strategy_package.build(strategy_id)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in (s.get("name") or "strategy"))[:40]
+    return Response(content=data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}-{strategy_id}.zip"'})
+
+
+@router.post("/{strategy_id}/forward-test")
+def forward_test(strategy_id: str):
+    """The one manual transition the desk offers: candidate -> forward_test.
+    Forward testing itself is out of scope (PLATFORM-SPEC.md Phase 7)."""
+    s = load_strategy(strategy_id)
+    if s.get("status") != "candidate":
+        raise HTTPException(409, f"only candidates move to forward_test (status is '{s.get('status')}')")
+    return strategy_store.set_status(strategy_id, "forward_test")
+
+
+@router.get("/{strategy_id}/compare/{other_id}")
+def compare(strategy_id: str, other_id: str, window: str = "is", mode: str | None = None):
+    """Two lineage nodes side by side: the latest finished backtest of the
+    given window kind for each, through the agent's compare_backtests tool."""
+    import agent_tools
+
+    load_strategy(strategy_id)
+    load_strategy(other_id)
+    a, b = _latest_job(strategy_id, window, mode), _latest_job(other_id, window, mode)
+    if not a or not b:
+        missing = [sid for sid, j in ((strategy_id, a), (other_id, b)) if not j]
+        raise HTTPException(404, f"no finished '{window}' backtest for {', '.join(missing)}")
+    try:
+        out = agent_tools.compare_backtests(a["id"], b["id"])
+    except agent_tools.ToolError as e:
+        raise HTTPException(400, str(e))
+    return {"a": {"strategyId": strategy_id, "backtestId": a["id"], "name": a.get("strategyName")},
+            "b": {"strategyId": other_id, "backtestId": b["id"], "name": b.get("strategyName")},
+            "window": window, "comparison": out}
+
+
+def _latest_job(strategy_id: str, window: str, mode: str | None) -> dict | None:
+    from engine import jobs
+
+    for j in jobs.list_jobs():   # newest first
+        if j.get("strategyId") == strategy_id and j.get("status") == "done" and j.get("windowKind") == window and (mode is None or j.get("mode") == mode):
+            return j
+    return None
 
 
 @router.get("/schema/spec")

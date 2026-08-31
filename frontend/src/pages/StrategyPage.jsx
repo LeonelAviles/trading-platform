@@ -3,35 +3,16 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   createBacktest, createValidation, fetchBacktests, fetchStrategy, fetchStrategyLineage,
-  patchStrategyRisk, saveStrategy, setStrategyStatus, validateStrategy,
+  forwardTestStrategy, patchStrategyRisk, saveStrategy, setStrategyStatus, strategyPackageUrl, validateStrategy,
 } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import { describeSpec } from '../spec/describe';
 import { parseSpec, validateSpec } from '../spec/validate';
 import StrategySettingsModal from '../components/StrategySettingsModal';
+import LineageTree from '../components/LineageTree';
+import CompareView from '../components/CompareView';
 
 const STATUSES = ['draft', 'testing', 'candidate', 'forward_test', 'live', 'rejected', 'retired'];
-
-function LineageNode({ node, currentId }) {
-  const v = node.verdict;
-  return (
-    <li className="lineage-node">
-      <div className={`lineage-row ${node.id === currentId ? 'current' : ''}`}>
-        <Link to={`/strategies/${node.id}`}>{node.name}</Link>
-        {node.changedVariable && <span className="review-chip">{node.changedVariable}</span>}
-        <span className={`review-chip status-${node.status}`}>{node.status}</span>
-        {v && <span className={`review-chip verdict ${v.status}`} title={(v.failures || []).join('\n')}>{v.status}</span>}
-        {v?.expectancyR != null && <span className="muted">exp {v.expectancyR}R · PF {v.profitFactor ?? '—'}</span>}
-      </div>
-      {node.rationale && <div className="lineage-rationale muted">{node.rationale}</div>}
-      {node.children?.length > 0 && (
-        <ul className="lineage-children">
-          {node.children.map((c) => <LineageNode key={c.id} node={c} currentId={currentId} />)}
-        </ul>
-      )}
-    </li>
-  );
-}
 
 // /strategies/:id — read-only plain-English rendering, a JSON editor with
 // schema validation, the Strategy Settings (risk) modal, the lineage tree and
@@ -51,6 +32,8 @@ export default function StrategyPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [compareSel, setCompareSel] = useState([]);
+  const [comparing, setComparing] = useState(null);
 
   const load = useCallback(async () => {
     const s = await fetchStrategy(strategyId);
@@ -126,6 +109,18 @@ export default function StrategyPage() {
     }
   }
 
+  async function forward() {
+    try {
+      setSpec(await forwardTestStrategy(strategyId));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function toggleCompare(id) {
+    setCompareSel((sel) => (sel.includes(id) ? sel.filter((x) => x !== id) : sel.length < 2 ? [...sel, id] : sel));
+  }
+
   async function applyRisk(risk) {
     const saved = await patchStrategyRisk(strategyId, risk);
     setSpec(saved);
@@ -161,6 +156,8 @@ export default function StrategyPage() {
               <select value={spec.status} onChange={(e) => changeStatus(e.target.value)} title="Status">
                 {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
+              {spec.status === 'candidate' && <button className="btn" onClick={forward} title="candidate → forward_test (forward testing itself is out of scope)">Forward test →</button>}
+              <a className="btn" href={strategyPackageUrl(strategyId)} download title="Zip: spec, risk, validation report, lineage, evidence, nautilus_config">Package</a>
               <button className="btn" disabled={!!busy} onClick={() => run('validate')}>{busy === 'validate' ? 'Queuing…' : 'Validate (IS + WF)'}</button>
               <button className="btn btn-primary" disabled={!!busy} onClick={() => run('full')}>{busy === 'full' ? 'Starting…' : 'Run on chart'}</button>
             </div>
@@ -213,13 +210,16 @@ export default function StrategyPage() {
         </section>
 
         <section className="review-card">
-          <div className="review-card-name">Lineage</div>
-          {lineage ? (
-            <ul className="lineage-tree">
-              <LineageNode node={lineage.tree} currentId={strategyId} />
-            </ul>
-          ) : <div className="review-card-empty">No lineage yet.</div>}
+          <header className="review-card-head">
+            <div className="review-card-name">Lineage</div>
+            <div className="strategy-actions">
+              <span className="muted">{compareSel.length}/2 selected</span>
+              <button className="btn btn-sm" disabled={compareSel.length !== 2} onClick={() => setComparing([...compareSel])}>Compare two nodes</button>
+            </div>
+          </header>
+          <LineageTree lineage={lineage} currentId={strategyId} selected={compareSel} onSelect={toggleCompare} />
           {lineage?.champion && <div className="muted">Champion: {lineage.champion === strategyId ? 'this strategy' : lineage.champion}</div>}
+          {comparing && <CompareView a={comparing[0]} b={comparing[1]} onClose={() => setComparing(null)} />}
         </section>
 
         <section className="review-card">

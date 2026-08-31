@@ -321,3 +321,18 @@ export async function pickTeachingStrategy(id, strategyId) {
   }));
 }
 export async function fetchTeachingSnapshot(id, key) { return json(await fetch(`${BASE}/teaching/sessions/${id}/snapshots/${key}`)); }
+
+// --- Phase 7: desk, packages, compare ---------------------------------------
+export async function fetchDesk() { return json(await fetch(`${BASE}/desk`)); }
+export function strategyPackageUrl(id) { return `${BASE}/strategies/${id}/package`; }
+export async function importStrategyPackage(file, { keepId = true } = {}) {
+  return json(await fetch(`${BASE}/strategies/import?keepId=${keepId}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file,
+  }));
+}
+export async function forwardTestStrategy(id) {
+  return json(await fetch(`${BASE}/strategies/${id}/forward-test`, { method: 'POST' }));
+}
+export async function compareStrategies(a, b, window = 'is') {
+  return json(await fetch(`${BASE}/strategies/${a}/compare/${b}?window=${window}`));
+}
