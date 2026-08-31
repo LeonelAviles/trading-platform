@@ -114,3 +114,35 @@ decisions". Newest at the bottom.
     OOS blindness is an agent property, not a human one.
 28. **IS jobs store their verdict on the row** (`metrics_json.verdict`) at
     finish so lists show chips without recomputing Monte Carlo per request.
+29. **Splits were re-frozen once after Phase 1** (`--recompute-splits`): the
+    first freeze happened during an early `finalize()` on 5 ingested days,
+    which would have left 4 in-sample sessions. Now IS = first 73 of 105
+    sessions (2026-04-01 → 2026-06-24), OOS = the last 32. No agent run had
+    used the old split.
+
+## Phase 3 — DSL v2 (2026-08-31)
+
+30. **Mirroring rule for `direction: both`.** A comparison flips only when an
+    operand is directional: price/level primitives and fields, signed flow
+    (constants negated), RSI (100 − x). Unsigned quantities (`rel_volume`,
+    `atr`, `volume`, `adx`) are left alone; bool primitives only swap their
+    `side`/`color` parameter. Each primitive declares this (`mirror`,
+    `mirror_name`) so the rule is data, not a special case.
+31. **Context timeframes are aggregated from primary bars** inside
+    `FeatureContext`, not subscribed separately, so a context primitive can
+    never read a partial bar (acceptance d) and the same code runs in
+    backtests, enrichment and teaching.
+32. **Bars-mode profile/footprint approximation.** Without prints, bar volume
+    is spread uniformly over the bar's tick range (buy/sell by the bar's
+    buy/sell volume). Trade-updated primitives are flagged `update_on =
+    "trade"`; `required_mode()` forces `ticks` when a spec references one.
+33. **`retest` counts an open inside the tolerance band as a return** —
+    price "came back to within N ticks" includes opening there. Fixtures
+    that intend a run-away must gap beyond the band.
+34. **Structure stops on the wrong side skip the entry** (e.g. `or_low`
+    above a long's entry price): the signal is counted as blocked rather
+    than falling back to a distance stop the strategy did not ask for.
+35. **Strategy ids stay 12-hex; the legacy two strategies keep their ids**
+    after migration, so old backtest rows still resolve.
+36. **ajv uses the 2020-12 dialect class** (`ajv/dist/2020`) because
+    Pydantic emits `$schema: 2020-12`.

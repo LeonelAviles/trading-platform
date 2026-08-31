@@ -37,7 +37,9 @@ from pathlib import Path
 import data_store
 import nautilus_runner
 import strategy_spec
+import strategy_store
 from condition_engine import Indicators, condition_lookback, eval_condition, session_minutes
+from engine import spec as spec_mod
 
 BACKEND_DIR = Path(__file__).resolve().parent
 STRATEGIES_DIR = BACKEND_DIR / "strategies"
@@ -54,134 +56,147 @@ class ToolError(Exception):
 # Strategy DSL
 # --------------------------------------------------------------------------
 
+def get_spec_schema() -> dict:
+    """The Strategy Spec v2 JSON Schema, every executable primitive with its
+    parameters and docstring, the expression operators, and three worked
+    examples (an ORB breakout, an ORB retest, a teaching-derived spec). Call
+    this before building or revising a strategy: the expression tree may only
+    reference primitives listed here; concepts that are missing must be
+    composed from these or requested with request_primitive (Phase 4)."""
+    from engine import expr as X
+
+    examples = [
+        {"name": "ORB 15m — breakout", "spec": _EXAMPLE_ORB_BREAKOUT},
+        {"name": "ORB 15m — retest", "spec": _EXAMPLE_ORB_RETEST},
+        {"name": "Teaching-derived: OR-low absorption longs", "spec": _EXAMPLE_TEACHING},
+    ]
+    return {"schema": spec_mod.json_schema(), "primitives": spec_mod.primitive_docs(), "operators": sorted(X.OPS),
+            "fields": list(X.FIELDS), "timeframes": list(spec_mod.TIMEFRAMES), "examples": examples}
+
+
 def get_condition_vocabulary() -> dict:
-    """The exact entry-condition/stop/target vocabulary the backtest engine
-    understands, read live from strategy_spec.py — call this before
-    building a strategy so the rule set you generate is guaranteed valid."""
-    return {
-        "conditions": {
-            name: {k: v.__name__ for k, v in defn["params"].items()}
-            for name, defn in strategy_spec.CONDITION_DEFS.items()
-        },
-        "stopTypes": sorted(strategy_spec.STOP_TYPES),
-        "targetTypes": sorted(strategy_spec.TARGET_TYPES),
-        "intervals": list(strategy_spec.INTERVALS),
-        "notes": (
-            "conditions are ANDed together (all must be true on the same bar). "
-            "stop.type == 'atr' uses stop.period/stop.mult (default 14/1.5) to compute the stop, "
-            "NOT stop.value — but validation still requires stop.value to be present and numeric "
-            "regardless of type, so always include one anyway (e.g. same as mult, it's just unused). "
-            "sizing defaults to {type: percent_equity, value: 95}. "
-            "session times are 'HH:MM' 24h UTC, default 13:30-19:55. "
-            "interval is the bar size every condition is evaluated on — one of `intervals` "
-            "above, default '1min'. A strategy runs on ONE interval; there are no "
-            "multi-timeframe conditions. "
-            "ORDER FLOW: delta_above/delta_below/cvd_rising/cvd_falling/rel_volume_above "
-            "come from Databento MBO ticks (aggressive buys minus aggressive sells per bar), "
-            "not from price. delta_above/below take `lookback` bars and a UNITLESS `value`: "
-            "cumulative delta over the window divided by the average absolute per-bar delta, "
-            "so 1.0 means one average bar's worth of one-sided flow (try 0.5-2.0, not raw "
-            "contract counts). cvd_rising/falling just test the sign of cumulative delta over "
-            "`lookback` bars. rel_volume_above compares this bar's size to the `lookback`-bar "
-            "average (1.5 = 50% busier than normal). These never fire for symbols with no "
-            "tick-level side data, so check get_trade_features' flow fields are non-null first."
-        ),
-    }
+    """Deprecated alias of get_spec_schema (the v1 vocabulary is gone)."""
+    return get_spec_schema()
 
 
-def _strategy_file(strategy_id: str) -> Path:
-    return STRATEGIES_DIR / f"{strategy_id}.json"
+_EXAMPLE_ORB_BREAKOUT = {
+    "schemaVersion": 2, "name": "ORB 15m — breakout", "instrument": {"root": "ES", "symbol": "ES1!"},
+    "timeframes": {"primary": "1min", "context": []}, "direction": "both",
+    "session": {"entryWindow": {"start": "09:45", "end": "11:30"}, "flattenAt": "15:58"},
+    "entry": {"trigger": {"op": "gt", "args": [{"field": "close"}, {"ind": "opening_range_high", "params": {"minutes": 15}}]},
+              "orderType": "market", "timeoutBars": 1},
+    "filters": [],
+    "exit": {"stop": {"type": "structure", "structure": "or_low", "bufferTicks": 2}, "target": {"type": "rr", "value": 2.0},
+             "trailing": None, "breakeven": None, "timeStop": None, "scaleOut": []},
+    "sizing": {"type": "fixed_risk", "value": 0.5, "maxContracts": 5},
+    "constraints": {"maxTradesPerDay": 1, "cooldownBars": 0, "stopAfterConsecutiveLosses": 1, "maxConcurrentPositions": 1},
+    "execution": {"mode": "ticks"},
+}
+_EXAMPLE_ORB_RETEST = {**_EXAMPLE_ORB_BREAKOUT, "name": "ORB 15m — retest",
+    "entry": {"sequence": [{"when": {"op": "gt", "args": [{"field": "close"}, {"ind": "opening_range_high", "params": {"minutes": 15}}]}, "withinBars": 30}],
+              "trigger": {"op": "retest", "args": [{"ind": "opening_range_high", "params": {"minutes": 15}}, 4, 20]},
+              "orderType": "market", "timeoutBars": 1}}
+_EXAMPLE_TEACHING = {
+    "schemaVersion": 2, "name": "Leonel — OR low absorption longs", "origin": {"type": "teaching", "sourceId": None},
+    "instrument": {"root": "ES", "symbol": "ES1!"}, "timeframes": {"primary": "1min", "context": ["5min"]}, "direction": "long",
+    "session": {"entryWindow": {"start": "09:45", "end": "15:00"}, "flattenAt": "15:58"},
+    "entry": {"trigger": {"op": "and", "args": [
+        {"op": "within_ticks", "args": [{"field": "low"}, {"ind": "opening_range_low", "params": {"minutes": 15}}, 6]},
+        {"op": "gte", "args": [{"ind": "absorption", "params": {"side": "bid", "min_volume": 800, "max_range_ticks": 3}}, 1]},
+        {"op": "gt", "args": [{"ind": "cvd_slope", "params": {"n": 5}}, 0]}]},
+        "orderType": "market", "timeoutBars": 1},
+    "filters": [],
+    "exit": {"stop": {"type": "structure", "structure": "bar_low", "bufferTicks": 3}, "target": {"type": "level", "level": "vwap"}},
+    "sizing": {"type": "fixed_risk", "value": 0.5, "maxContracts": 5}, "execution": {"mode": "ticks"},
+}
 
 
 def _save_one(strategy: dict) -> dict:
-    errors = strategy_spec.validate_strategy(strategy)
-    if errors:
-        raise ToolError("; ".join(errors))
-    if not strategy.get("id"):
-        strategy["id"] = uuid.uuid4().hex[:12]
-    STRATEGIES_DIR.mkdir(exist_ok=True)
-    _strategy_file(strategy["id"]).write_text(json.dumps(strategy, indent=2), encoding="utf-8")
-    return strategy
+    try:
+        return strategy_store.save_strategy(strategy)
+    except strategy_store.StrategyError as e:
+        raise ToolError(str(e))
 
 
-def create_strategy(
-    name: str, symbol: str, direction: str, conditions: list[dict],
-    stop: dict, target: dict, sizing: dict | None = None, session: dict | None = None,
-    interval: str = "1min",
-) -> dict:
-    """Validate and save a new strategy. direction is 'long', 'short', or
-    'both' (saves two sibling strategies sharing a directionGroup id, since
-    the engine is single-directional per run)."""
-    base = {
-        "name": name, "symbol": symbol, "conditions": conditions,
-        "stop": stop, "target": target, "interval": interval,
-    }
-    if sizing is not None:
-        base["sizing"] = sizing
-    if session is not None:
-        base["session"] = session
-
-    if direction == "both":
-        group = uuid.uuid4().hex[:12]
-        long_s = _save_one({**base, "name": f"{name} (long)", "direction": "long", "directionGroup": group})
-        short_s = _save_one({**base, "name": f"{name} (short)", "direction": "short", "directionGroup": group})
-        return {"directionGroup": group, "long": long_s, "short": short_s}
-
-    if direction not in ("long", "short"):
-        raise ToolError("direction must be 'long', 'short', or 'both'")
-    return _save_one({**base, "direction": direction})
+def create_strategy(spec: dict | None = None, **legacy) -> dict:
+    """Validate and save a new Strategy Spec v2 (pass the whole spec as `spec`).
+    Errors come back as readable messages — fix them and call again. The
+    legacy v1 keyword form (name, symbol, direction, conditions, stop,
+    target, ...) is still accepted and converted; `direction: "both"` is a
+    single v2 strategy whose short side mirrors the long rules."""
+    if spec is None:
+        if not legacy:
+            raise ToolError("pass the strategy as `spec`")
+        spec = dict(legacy)
+        if spec.get("direction") == "both" and "conditions" in spec:
+            spec = {**strategy_store.coerce({**spec, "direction": "long"}), "direction": "both", "name": spec["name"]}
+    return _save_one(spec)
 
 
 def get_strategy(strategy_id: str) -> dict:
-    f = _strategy_file(strategy_id)
-    if not f.exists():
+    s = strategy_store.get_strategy(strategy_id)
+    if s is None:
         raise ToolError(f"strategy '{strategy_id}' not found")
-    return json.loads(f.read_text(encoding="utf-8"))
+    return s
 
 
 def list_strategies() -> list[dict]:
-    if not STRATEGIES_DIR.exists():
-        return []
-    return sorted(
-        (json.loads(f.read_text(encoding="utf-8")) for f in STRATEGIES_DIR.glob("*.json")),
-        key=lambda s: s.get("name", ""),
-    )
+    return strategy_store.list_strategies()
 
 
-def propose_strategy_revision(base_strategy_id: str, changes: dict, rationale: str, name: str | None = None) -> dict:
-    """Clone an existing strategy with changes applied (e.g. new conditions/
-    stop/target from a winners-vs-losers finding) and save it as a new
-    strategy, so it can be backtested and compared against the original
-    without overwriting it. `changes` is shallow-merged onto the base spec."""
+def _set_path(doc: dict, path: str, value):
+    cur = doc
+    parts = path.split(".")
+    for p in parts[:-1]:
+        if p not in cur or not isinstance(cur[p], dict):
+            cur[p] = {}
+        cur = cur[p]
+    cur[parts[-1]] = value
+
+
+def propose_strategy_revision(base_strategy_id: str, changes: dict, rationale: str, name: str | None = None,
+                              changed_variable: str | None = None) -> dict:
+    """Clone a strategy with ONE variable changed and save it as a lineage
+    child (parentId = base, trialIndex + 1). `changes` maps dotted paths to
+    values, e.g. {"exit.target.value": 3.0} or {"filters": [...]}. Say which
+    variable changed in `changed_variable`; if two fields move together
+    because one is the unit of the other, that counts as one change."""
     base = get_strategy(base_strategy_id)
-    revised = {**base, **changes}
+    revised = json.loads(json.dumps(base))
+    for k, v in changes.items():
+        if "." in k:
+            _set_path(revised, k, v)
+        else:
+            revised[k] = v
     revised["id"] = None
     revised["name"] = name or f"{base['name']} (revised)"
-    revised["basedOn"] = base_strategy_id
-    revised["rationale"] = rationale
+    revised["status"] = "draft"
+    revised["lineage"] = {"parentId": base_strategy_id, "changedVariable": changed_variable or ", ".join(changes),
+                          "rationale": rationale, "trialIndex": int((base.get("lineage") or {}).get("trialIndex", 0)) + 1}
+    for k in ("createdAt", "updatedAt"):
+        revised.pop(k, None)
     return _save_one(revised)
 
 
 def update_strategy(strategy_id: str, changes: dict, rationale: str | None = None) -> dict:
-    """Edit a saved strategy IN PLACE — same id, same file, no second copy in
-    the trader's list. This is what to use when the trader asks you to change
-    the strategy they already have ("make the target 3R", "move the session to
-    the US open", "tighten the stop"): they want their strategy fixed, and the
-    next run_backtest on this id picks the change up. `changes` is
-    shallow-merged onto the current spec, so pass only the fields you are
-    changing.
-
-    Destructive — the previous values are gone and cannot be compared against.
-    For your OWN A/B experiments, where the point is to keep the original and
-    rank the two, use propose_strategy_revision instead."""
+    """Edit a saved strategy IN PLACE (same id). `changes` maps dotted paths
+    or top-level keys to values. Destructive — for A/B experiments use
+    propose_strategy_revision."""
     current = get_strategy(strategy_id)
-    updated = {**current, **changes}
-    # `changes` must not be able to move the strategy to a different id (that
-    # would write a copy under a new file and leave the original stale).
-    updated["id"] = strategy_id
+    updated = json.loads(json.dumps(current))
+    for k, v in changes.items():
+        if "." in k:
+            _set_path(updated, k, v)
+        else:
+            updated[k] = v
     if rationale:
-        updated["rationale"] = rationale
-    return _save_one(updated)
+        updated.setdefault("meta", {})["rationale"] = rationale
+    for k in ("createdAt", "updatedAt"):
+        updated.pop(k, None)
+    try:
+        return strategy_store.save_strategy(updated, strategy_id=strategy_id)
+    except strategy_store.StrategyError as e:
+        raise ToolError(str(e))
 
 
 # --------------------------------------------------------------------------
@@ -310,91 +325,62 @@ def _r_multiple(t: dict) -> float | None:
     return t["pnl"] / (risk_per_unit * t["qty"])
 
 
-def _replay_features(symbol: str, interval: str, conditions: list[dict], stop_cfg: dict, session: dict):
-    """Walk every bar once with the same Indicators/eval_condition machinery
-    nautilus_backtest.py's real engine uses, recording per-bar market
-    context. Returns (bar_times: list[int], features: list[dict]) aligned
-    by index — shared by get_trade_features() and find_near_miss_entries()
-    so both see identical numbers for identical bars."""
+def _replay_features(strategy: dict):
+    """Walk every primary bar once through the same FeatureContext + expression
+    evaluators the backtest engine uses, recording per-bar market context.
+    Returns (bar_times: list[int unix s], features: list[dict]) aligned by
+    index — shared by get_trade_features() and find_near_miss_entries()."""
+    from engine.expr import Evaluator, walk
+    from engine.features import BarRec
+    from engine.session import NS, et_to_ns, session_date
+    from engine.spec_strategy import SpecRules
+
+    spec = strategy_store.coerce(strategy)
+    symbol = (spec.get("instrument") or {}).get("symbol") or spec.get("symbol")
+    interval = (spec.get("timeframes") or {}).get("primary") or "1min"
     bars = data_store.bars_to_records(data_store.get_bars(symbol, interval))
     if not bars:
         raise ToolError(f"no bars for {symbol} at {interval}")
-
-    lookback = max([condition_lookback(c) for c in conditions] + [22])
-    if stop_cfg.get("type") == "atr":
-        lookback = max(lookback, int(stop_cfg.get("period", 14)) + 2)
-    ind = Indicators(lookback)
-
-    sess_start = session_minutes(session["start"])
-    sess_end = session_minutes(session["end"])
-
-    has_flow = bool(bars[0].get("hasDelta"))
-    volumes: list[float] = []
-    times: list[int] = []
-    features: list[dict] = []
-    session_delta = 0.0
-    prev_in_session = False
+    rules = SpecRules(spec)
+    ctx = rules.ctx
+    direction = spec.get("direction", "long")
+    d0 = "short" if direction == "short" else "long"
+    trigger = spec["entry"]["trigger"]
+    # Sub-conditions: the trigger's top-level AND args (or the trigger itself) plus filters.
+    parts = list(trigger.get("args", [])) if isinstance(trigger, dict) and trigger.get("op") == "and" else [trigger]
+    parts += list(spec.get("filters") or [])
+    part_evals = [Evaluator(pt, ctx, d0) for pt in parts]
+    ew = spec["session"]["entryWindow"]
+    tf_ns = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600, "4h": 14400, "1D": 86400}[interval] * NS
+    times, features = [], []
     for bar in bars:
-        ind.update(
-            bar["open"], bar["high"], bar["low"], bar["close"],
-            bar["volume"], bar["delta"] if has_flow else None,
-        )
-        volumes.append(bar["volume"])
-        vol_window = volumes[-20:]
-        rel_volume = bar["volume"] / (sum(vol_window) / len(vol_window)) if vol_window and sum(vol_window) else None
-
-        dt = datetime.fromtimestamp(bar["time"], tz=timezone.utc)
-        minutes = dt.hour * 60 + dt.minute
-        highs20, lows20 = list(ind.highs)[-20:], list(ind.lows)[-20:]
-
-        conds_true = sum(1 for c in conditions if eval_condition(c, ind)) if ind.count >= 2 else 0
-        in_session = sess_start <= minutes < sess_end
-        # Session-cumulative delta: resets at each session open, which is what
-        # a trader means by "CVD today" — a rolling window can't express it.
-        if in_session:
-            session_delta = session_delta + bar["delta"] if prev_in_session else bar["delta"]
-        prev_in_session = in_session
-
-        # Order flow at this bar, all MBO-derived. Price-only fields could
-        # never separate "broke the high on real buying" from "broke the high
-        # on no participation" — these are the fields that can.
-        flow_feats = {
-            "deltaBar": None, "cvd20": None, "relDelta20": None,
-            "cvdSession": None, "flowDivergence": None,
-        }
-        if has_flow:
-            cvd20 = ind.delta_sum(20)
-            price_up = len(ind.closes) > 20 and bar["close"] > list(ind.closes)[-21]
-            flow_feats = {
-                "deltaBar": round(bar["delta"], 2),
-                "cvd20": round(cvd20, 2) if cvd20 is not None else None,
-                "relDelta20": round(ind.rel_delta(20), 3) if ind.rel_delta(20) is not None else None,
-                "cvdSession": round(session_delta, 2) if in_session else None,
-                # Price and flow disagreeing over the last 20 bars — the
-                # classic "move without participation behind it".
-                "flowDivergence": (
-                    None if cvd20 is None
-                    else "bearish" if price_up and cvd20 < 0
-                    else "bullish" if not price_up and cvd20 > 0
-                    else "none"
-                ),
-            }
-
+        ts_open = bar["time"] * NS
+        vol, delta = bar["volume"], bar["delta"] if bar.get("hasDelta") else 0.0
+        buy = (vol + delta) / 2
+        rules.on_bar(type("B", (), {})) if False else None
+        rec = BarRec(bar["open"], bar["high"], bar["low"], bar["close"], vol, delta, buy, vol - buy, ts_open, ts_open + tf_ns)
+        ctx.on_bar(rec)
+        for st in rules.states.values():
+            st.on_bar(ctx.bar_index)
+        for ev in part_evals:
+            ev.on_bar()
+        d = session_date(ts_open)
+        in_window = et_to_ns(d, ew["start"]) <= rec.ts_close < et_to_ns(d, ew["end"])
+        truths = [ev.eval() is True for ev in part_evals]
+        snap = ctx.snapshot(_FEATURE_NAMES)
         times.append(bar["time"])
         features.append({
-            "conditionsTrue": conds_true,
-            "conditionsTotal": len(conditions),
-            "inSession": in_session,
-            **flow_feats,
-            "relVolume20": round(rel_volume, 3) if rel_volume is not None else None,
-            "atr14": round(ind.atr(14), 4) if ind.atr(14) is not None else None,
-            "rsi14": round(ind.rsi(14), 1) if ind.rsi(14) is not None else None,
-            "hourUtc": dt.hour,
-            "dayOfWeek": dt.strftime("%A"),
-            "distFrom20High": round(max(highs20) - bar["close"], 4) if highs20 else None,
-            "distFrom20Low": round(bar["close"] - min(lows20), 4) if lows20 else None,
+            "conditionsTrue": sum(truths), "conditionsTotal": len(truths), "conditions": truths,
+            "inSession": in_window, "signal": rules.states[d0].fire(ctx.bar_index) if in_window else False,
+            **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in snap.items()},
         })
     return times, features
+
+
+_FEATURE_NAMES = ["close", "volume", "delta", "rel_volume", "rel_delta", "cvd_session", "cvd_window", "cvd_slope",
+                  "delta_divergence", "atr", "rsi", "adx", "vwap", "opening_range_high", "opening_range_low",
+                  "session_high", "session_low", "poc", "vah", "val", "time_of_day", "day_of_week", "minutes_to_close",
+                  "bars_since_open", "gap_points", "profile_shape"]
 
 
 # The trader's actual goal, and what "done" means for a tuning run: a majority
@@ -511,12 +497,7 @@ def get_trade_features(job_id: str) -> list[dict]:
     if not strategy_id:
         raise ToolError("this job has no strategyId — it isn't traceable to a saved strategy")
     strategy = get_strategy(strategy_id)
-    session = strategy.get("session", {"start": "13:30", "end": "19:55"})
-
-    times, features = _replay_features(
-        strategy["symbol"], strategy.get("interval", "1min"),
-        strategy["conditions"], strategy["stop"], session,
-    )
+    times, features = _replay_features(strategy)
 
     import bisect
     trades = [t for t in (job.get("trades") or []) if t.get("exitTime") is not None]
@@ -537,93 +518,129 @@ def get_trade_features(job_id: str) -> list[dict]:
     return out
 
 
+def _mann_whitney_p(a: list[float], b: list[float]) -> float | None:
+    """Two-sided Mann-Whitney U p-value (normal approximation with tie correction)."""
+    import math
+
+    n1, n2 = len(a), len(b)
+    if n1 < 2 or n2 < 2:
+        return None
+    pooled = sorted([(v, 0) for v in a] + [(v, 1) for v in b])
+    ranks = [0.0] * len(pooled)
+    i = 0
+    tie_term = 0.0
+    while i < len(pooled):
+        j = i
+        while j + 1 < len(pooled) and pooled[j + 1][0] == pooled[i][0]:
+            j += 1
+        r = (i + j + 2) / 2
+        for k in range(i, j + 1):
+            ranks[k] = r
+        t = j - i + 1
+        if t > 1:
+            tie_term += t ** 3 - t
+        i = j + 1
+    r1 = sum(rk for rk, (_, g) in zip(ranks, pooled) if g == 0)
+    u1 = r1 - n1 * (n1 + 1) / 2
+    mu = n1 * n2 / 2
+    n = n1 + n2
+    sigma_sq = n1 * n2 / 12 * ((n + 1) - tie_term / (n * (n - 1)))
+    if sigma_sq <= 0:
+        return 1.0
+    z = (u1 - mu) / math.sqrt(sigma_sq)
+    return 2 * (1 - 0.5 * (1 + math.erf(abs(z) / math.sqrt(2))))
+
+
 def compare_winners_vs_losers(job_id: str) -> dict:
     """Statistical comparison of winning vs losing trades' entry context —
-    answers "what do winners have in common." Numeric features (relVolume20,
-    atr14, rsi14, distFrom20High/Low, and the MBO order flow: deltaBar, cvd20,
-    relDelta20, cvdSession) are ranked by effect size (Cohen's d:
-    how many pooled standard deviations apart the two groups' means are —
-    >0.5 is a moderately strong separation, >0.8 is strong). Categorical
-    features (hourUtc, dayOfWeek, flowDivergence, exitReason) get a
-    win-rate-by-bucket breakdown instead. A strong order-flow separation is
-    directly actionable: delta_above/cvd_rising/rel_volume_above are real
-    entry conditions, so a finding there can be tested as a revision."""
+    "what do winners have in common." Every numeric primitive in the entry
+    feature vector (relative volume/delta, session CVD, ATR, RSI, ADX,
+    distance to VWAP/OR/POC, time of day, …) is ranked by effect size
+    (Cohen's d: pooled standard deviations between the group means — >0.5
+    moderate, >0.8 strong) with a Mann-Whitney p-value. Categorical
+    features (entry hour ET, day of week, exit reason, regime tags) get a
+    win-rate-by-bucket table. A strong order-flow separation is directly
+    actionable: it maps to a filter such as `bar_delta > 0` or
+    `rel_volume(20) > 1.5`, which can be tested as a single-variable revision."""
     rows = get_trade_features(job_id)
     if len(rows) < 4:
         raise ToolError(f"only {len(rows)} closed trades — too few for a meaningful comparison (want 10+)")
-
+    job = get_backtest(job_id)
+    tags_by_id = {t["id"]: t.get("regimeTags") or [] for t in (job.get("trades") or [])}
     wins = [r for r in rows if r["outcome"] == "win"]
     losses = [r for r in rows if r["outcome"] == "loss"]
-
-    numeric_features = [
-        "relVolume20", "atr14", "rsi14", "distFrom20High", "distFrom20Low",
-        # Order flow — null for symbols without MBO side data, in which case
-        # the len() guard below drops them from the ranking automatically.
-        "deltaBar", "cvd20", "relDelta20", "cvdSession",
-    ]
+    skip = {"conditionsTrue", "conditionsTotal", "conditions", "inSession", "signal", "day_of_week", "close",
+            "opening_range_high", "opening_range_low", "session_high", "session_low", "poc", "vah", "val", "vwap"}
+    # Distances to levels are comparable across days; raw levels are not.
+    def enrich(r):
+        m = dict(r["marketContextAtEntry"])
+        px = m.get("close")
+        for lvl in ("vwap", "opening_range_high", "opening_range_low", "poc", "vah", "val", "session_high", "session_low"):
+            if px is not None and m.get(lvl) is not None:
+                m[f"dist_{lvl}"] = round(px - m[lvl], 4)
+        return m
+    W = [enrich(r) for r in wins]
+    L = [enrich(r) for r in losses]
+    feats = sorted({k for m in W + L for k, v in m.items() if k not in skip and isinstance(v, (int, float)) and not isinstance(v, bool)})
     numeric_comparison = []
-    for feat in numeric_features:
-        wv = [r["marketContextAtEntry"][feat] for r in wins if r["marketContextAtEntry"][feat] is not None]
-        lv = [r["marketContextAtEntry"][feat] for r in losses if r["marketContextAtEntry"][feat] is not None]
+    for feat in feats:
+        wv = [m[feat] for m in W if isinstance(m.get(feat), (int, float))]
+        lv = [m[feat] for m in L if isinstance(m.get(feat), (int, float))]
         if len(wv) < 2 or len(lv) < 2:
             continue
         w_mean, l_mean = statistics.mean(wv), statistics.mean(lv)
         w_std, l_std = statistics.stdev(wv), statistics.stdev(lv)
-        pooled_std = (((len(wv) - 1) * w_std ** 2 + (len(lv) - 1) * l_std ** 2) / (len(wv) + len(lv) - 2)) ** 0.5
-        effect_size = (w_mean - l_mean) / pooled_std if pooled_std > 0 else 0.0
-        numeric_comparison.append({
-            "feature": feat,
-            "winMean": round(w_mean, 3), "lossMean": round(l_mean, 3),
-            "effectSize": round(effect_size, 3),
-        })
+        pooled = (((len(wv) - 1) * w_std ** 2 + (len(lv) - 1) * l_std ** 2) / (len(wv) + len(lv) - 2)) ** 0.5
+        d = (w_mean - l_mean) / pooled if pooled > 0 else 0.0
+        numeric_comparison.append({"feature": feat, "winMean": round(w_mean, 3), "lossMean": round(l_mean, 3),
+                                   "effectSize": round(d, 3), "pValue": (round(p_, 4) if (p_ := _mann_whitney_p(wv, lv)) is not None else None),
+                                   "nWin": len(wv), "nLoss": len(lv)})
     numeric_comparison.sort(key=lambda x: -abs(x["effectSize"]))
 
     categorical_comparison = {}
-    for feat in ("hourUtc", "dayOfWeek", "flowDivergence", "exitReason"):
-        key_fn = (lambda r: r["exitReason"]) if feat == "exitReason" else (lambda r, f=feat: r["marketContextAtEntry"][f])
+    def bucketize(name, key_fn):
         buckets: dict = {}
         for r in rows:
-            k = key_fn(r)
-            b = buckets.setdefault(k, {"trades": 0, "wins": 0})
-            b["trades"] += 1
-            b["wins"] += 1 if r["outcome"] == "win" else 0
-        categorical_comparison[feat] = sorted(
+            for k in key_fn(r):
+                b = buckets.setdefault(k, {"trades": 0, "wins": 0})
+                b["trades"] += 1
+                b["wins"] += 1 if r["outcome"] == "win" else 0
+        categorical_comparison[name] = sorted(
             [{"value": k, "trades": v["trades"], "winRate": round(v["wins"] / v["trades"] * 100, 1)} for k, v in buckets.items()],
-            key=lambda x: -x["trades"],
-        )
+            key=lambda x: -x["trades"])
+    from engine.session import NS, ns_to_et
 
-    return {
-        "tradeCount": len(rows), "winCount": len(wins), "lossCount": len(losses),
-        "numericFeatures": numeric_comparison,
-        "categoricalFeatures": categorical_comparison,
-    }
+    bucketize("hourEt", lambda r: [ns_to_et(r["entryTime"] * NS).hour])
+    bucketize("dayOfWeek", lambda r: [ns_to_et(r["entryTime"] * NS).strftime("%A")])
+    bucketize("exitReason", lambda r: [r["exitReason"]])
+    bucketize("regime", lambda r: tags_by_id.get(r["tradeId"], []))
+    return {"tradeCount": len(rows), "winCount": len(wins), "lossCount": len(losses),
+            "numericFeatures": numeric_comparison, "categoricalFeatures": categorical_comparison}
 
 
 def find_near_miss_entries(strategy_id: str, max_conditions_missing: int = 1, limit: int = 25) -> list[dict]:
-    """Bars where entry almost triggered — all but (up to) max_conditions_missing
-    of the entry conditions were true, during the trading session, but the
-    strategy didn't actually enter (either a condition fell just short, or
-    the strategy was already in a position — this doesn't distinguish the
-    two). Useful for judging whether thresholds are too tight, not a bug
-    detector for the backtest engine itself."""
+    """Bars inside the entry window where all but (up to) max_conditions_missing
+    of the entry sub-conditions (the trigger's top-level AND terms plus the
+    filters) were true, but the trigger did not fire. Useful for judging
+    whether thresholds are too tight; it does not distinguish "a condition
+    fell just short" from "already in a position"."""
     strategy = get_strategy(strategy_id)
-    conditions = strategy["conditions"]
-    if len(conditions) < 2:
+    spec = strategy_store.coerce(strategy)
+    trig = spec["entry"]["trigger"]
+    n_parts = (len(trig.get("args", [])) if isinstance(trig, dict) and trig.get("op") == "and" else 1) + len(spec.get("filters") or [])
+    if n_parts < 2:
         raise ToolError(
-            "near-miss detection needs at least 2 conditions to be meaningful — with only "
-            f"{len(conditions)}, 'missing 1' just means the condition was false, not a close call."
+            "near-miss detection needs at least 2 sub-conditions (AND terms or filters) to be meaningful — with only "
+            f"{n_parts}, 'missing 1' just means the condition was false, not a close call."
         )
-    session = strategy.get("session", {"start": "13:30", "end": "19:55"})
-
-    times, features = _replay_features(strategy["symbol"], strategy.get("interval", "1min"), conditions, strategy["stop"], session)
-
+    times, features = _replay_features(strategy)
     near_misses = []
     for t, f in zip(times, features):
-        if not f["inSession"]:
+        if not f["inSession"] or f.get("signal"):
             continue
         missing = f["conditionsTotal"] - f["conditionsTrue"]
         if 0 < missing <= max_conditions_missing:
-            near_misses.append({"time": t, "conditionsTrue": f["conditionsTrue"], "conditionsTotal": f["conditionsTotal"], **f})
+            near_misses.append({"time": t, **f})
     near_misses.sort(key=lambda x: -x["time"])
     return near_misses[:limit]
 
@@ -665,7 +682,7 @@ def get_findings(job_id: str) -> list[dict]:
 
 TOOLS = [
     {"type": "function", "function": {
-        "name": "get_condition_vocabulary", "description": get_condition_vocabulary.__doc__,
+        "name": "get_spec_schema", "description": get_spec_schema.__doc__,
         "parameters": {"type": "object", "properties": {}},
     }},
     {"type": "function", "function": {
@@ -673,17 +690,9 @@ TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "name": {"type": "string"},
-                "symbol": {"type": "string"},
-                "direction": {"type": "string", "enum": ["long", "short", "both"]},
-                "conditions": {"type": "array", "items": {"type": "object"}, "description": "entry conditions (ANDed); see get_condition_vocabulary"},
-                "stop": {"type": "object", "description": "{type: percent|fixed_points|atr, value, period?, mult?}"},
-                "target": {"type": "object", "description": "{type: rr|percent|fixed_points, value}"},
-                "sizing": {"type": "object", "description": "optional {type: fixed_qty|percent_equity, value}"},
-                "session": {"type": "object", "description": "optional {start: 'HH:MM', end: 'HH:MM'} UTC"},
-                "interval": {"type": "string", "description": "bar interval — one of get_condition_vocabulary's `intervals`, default '1min'"},
+                "spec": {"type": "object", "description": "a complete Strategy Spec v2 document (see get_spec_schema)"},
             },
-            "required": ["name", "symbol", "direction", "conditions", "stop", "target"],
+            "required": ["spec"],
         },
     }},
     {"type": "function", "function": {
@@ -791,6 +800,7 @@ TOOLS = [
 ]
 
 TOOL_FUNCS = {
+    "get_spec_schema": get_spec_schema,
     "get_condition_vocabulary": get_condition_vocabulary,
     "create_strategy": create_strategy,
     "get_strategy": get_strategy,

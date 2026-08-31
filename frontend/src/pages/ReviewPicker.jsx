@@ -1,9 +1,9 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createBacktest, deleteBacktest, fetchBacktests, fetchStrategies } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import { describeStop, describeTarget } from '../strategyDefs';
+import { describeExpr, describeStop, describeTarget } from '../spec/describe';
 
 function formatWhen(iso) {
   if (!iso) return '';
@@ -144,9 +144,10 @@ export default function ReviewPicker() {
                 <section key={s.id} className="review-card">
                   <header className="review-card-head">
                     <div>
-                      <div className="review-card-name">{s.name || 'Untitled'}</div>
+                      <div className="review-card-name"><Link to={`/strategies/${s.id}`}>{s.name || 'Untitled'}</Link></div>
                       <div className="review-card-sub">
-                        {s.symbol} · {s.interval || '1min'} · <span className={`review-dir ${s.direction}`}>{s.direction}</span>
+                        {s.instrument?.symbol || s.symbol} · {s.timeframes?.primary || s.interval || '1min'} · <span className={`review-dir ${s.direction}`}>{s.direction}</span>
+                        {' · '}<span className={`review-chip status-${s.status}`}>{s.status}</span>
                       </div>
                     </div>
                     <button
@@ -159,9 +160,9 @@ export default function ReviewPicker() {
                   </header>
 
                   <div className="review-card-spec">
-                    <span>{s.conditions?.length || 0} conditions</span>
-                    <span>Stop {describeStop(s.stop)}</span>
-                    <span>Target {describeTarget(s.target)}</span>
+                    <span title={describeExpr(s.entry?.trigger)}>Enter when {describeExpr(s.entry?.trigger)}</span>
+                    <span>Stop {describeStop(s.exit?.stop)}</span>
+                    <span>Target {describeTarget(s.exit?.target)}</span>
                   </div>
 
                   {runs.length

@@ -18,8 +18,8 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 0 | Housekeeping and runtime | done — [docs/00-housekeeping.md](docs/00-housekeeping.md) |
 | 1 | Data layer v2 (tiered Parquet, instruments) | done — [docs/01-data.md](docs/01-data.md) |
 | 2 | Backtester v2 and validation | done — [docs/02-backtester.md](docs/02-backtester.md) |
-| 3 | Strategy DSL v2 and primitive registry | next |
-| 4 | Agent v2: runs, knowledge graph, research | |
+| 3 | Strategy DSL v2 and primitive registry | done — [docs/03-dsl.md](docs/03-dsl.md) |
+| 4 | Agent v2: runs, knowledge graph, research | next |
 | 5 | Chart, tick replay, order-flow visuals | |
 | 6 | Teaching mode | |
 | 7 | Desk view and packaging | |
@@ -30,7 +30,9 @@ logged in [DECISIONS.md](DECISIONS.md).
   drawing tools, CVD, DOM snapshot and a Bookmap-style liquidity heatmap.
 - **Bar replay** of a backtest: play/pause/step/speed, engine trades revealed
   as the clock passes them.
-- **Strategies** (v1 JSON format until Phase 3) and **NautilusTrader backtests**
+- **Strategies** as Strategy Spec v2 (expression tree over a registry of 55
+  primitives, `/strategies/:id` editor with plain-English rendering and schema
+  validation — [docs/03-dsl.md](docs/03-dsl.md)) and **NautilusTrader backtests**
   in a subprocess with futures PnL, commissions, slippage, ET sessions,
   in-sample / walk-forward / out-of-sample windows, Monte Carlo, deflated
   Sharpe and a risk-profile verdict (see [docs/02-backtester.md](docs/02-backtester.md)).

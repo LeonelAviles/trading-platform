@@ -42,6 +42,7 @@ def migrate_strategies(db, dry_run: bool) -> tuple[int, int]:
         print("strategies: skipped — engine.v1_to_v2 converter arrives in Phase 3")
         return 0, 0
     imported = skipped = 0
+    parents: dict[str, str | None] = {}
     for f in sorted(STRATEGIES_DIR.glob("*.json")) if STRATEGIES_DIR.exists() else []:
         v1 = json.loads(f.read_text(encoding="utf-8"))
         sid = v1.get("id") or f.stem
@@ -49,13 +50,14 @@ def migrate_strategies(db, dry_run: bool) -> tuple[int, int]:
             skipped += 1
             continue
         spec = convert(v1)
+        parents[sid] = (spec.get("lineage") or {}).get("parentId")
         row = Strategy(
             id=sid,
             name=spec.get("name") or v1.get("name") or sid,
             status=spec.get("status", "draft"),
             origin_type=(spec.get("origin") or {}).get("type", "manual"),
             origin_id=(spec.get("origin") or {}).get("sourceId"),
-            parent_id=(spec.get("lineage") or {}).get("parentId"),
+            parent_id=None,                      # set in a second pass (FK order)
             spec_json=spec,
             risk_json=spec.get("risk"),
         )
@@ -65,6 +67,11 @@ def migrate_strategies(db, dry_run: bool) -> tuple[int, int]:
         if not dry_run:
             db.add(row)
         imported += 1
+    if not dry_run:
+        db.flush()
+        for sid, pid in parents.items():
+            if pid and db.get(Strategy, pid) is not None:
+                db.get(Strategy, sid).parent_id = pid
     return imported, skipped
 
 

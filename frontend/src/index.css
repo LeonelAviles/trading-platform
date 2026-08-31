@@ -681,3 +681,27 @@ select.chevron {
 .review-chip.verdict.pass { background: #26a69a; color: #fff; border-color: #26a69a; }
 .review-chip.verdict.fail { background: #ef5350; color: #fff; border-color: #ef5350; }
 .review-chip.verdict.untestable { background: #ffc107; color: #222; border-color: #ffc107; }
+
+
+/* --- Phase 3: strategy page ---------------------------------------------- */
+.strategy-body { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+.strategy-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.strategy-actions select { background: var(--surface-2, #1e222d); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.strategy-sentences { margin: 10px 0; padding-left: 18px; line-height: 1.6; font-size: 13px; }
+.strategy-description { font-size: 12px; line-height: 1.5; }
+.spec-editor { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45;
+  background: var(--surface-2, #1e222d); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 10px; resize: vertical; }
+.spec-editor:read-only { opacity: 0.85; }
+.spec-errors { margin: 8px 0 0; padding-left: 18px; color: #ef5350; font-size: 12px; line-height: 1.5; }
+.lineage-tree, .lineage-children { list-style: none; margin: 0; padding-left: 0; }
+.lineage-children { padding-left: 18px; border-left: 1px dashed var(--border); margin-left: 6px; }
+.lineage-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; flex-wrap: wrap; font-size: 13px; }
+.lineage-row.current { font-weight: 700; }
+.lineage-rationale { font-size: 11px; padding-left: 4px; margin-bottom: 4px; }
+.review-chip.status-candidate { background: #26a69a; color: #fff; }
+.review-chip.status-rejected { background: #ef5350; color: #fff; }
+.review-chip.status-testing { background: #42a5f5; color: #fff; }
+.settings-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
+.settings-table td, .settings-table th { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+.settings-table input { width: 120px; background: var(--surface-2, #1e222d); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+.btn-sm { padding: 2px 8px; font-size: 11px; }

@@ -21,6 +21,7 @@ def test_contract_calendar():
     # The digit rolls over: 'ESH7' seen in 2026 is March 2027; 'ESM6' after its expiry means 2036.
     assert cat.parse_outright("ESH7", es, date(2026, 4, 1)) == (2027, 3)
     assert cat.parse_outright("ESM6", es, date(2026, 7, 1)) == (2036, 6)
+    assert cat.parse_outright("ESM6", es, date(2026, 6, 22)) == (2026, 6)   # a week of grace after expiry
     with pytest.raises(ValueError):
         cat.parse_outright("ESXX", es, date(2026, 4, 1))
 

@@ -1,0 +1,1795 @@
+{
+  "fields": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "delta"
+  ],
+  "levels": [
+    "session_high",
+    "session_low",
+    "vah",
+    "val",
+    "poc",
+    "prior_day_high",
+    "prior_day_low",
+    "or_high",
+    "or_low",
+    "vwap"
+  ],
+  "operators": [
+    "and",
+    "bars_since",
+    "between",
+    "cross_above",
+    "cross_below",
+    "eq",
+    "falling",
+    "gt",
+    "gte",
+    "held_above",
+    "held_below",
+    "lt",
+    "lte",
+    "not",
+    "or",
+    "retest",
+    "rising",
+    "touched",
+    "within_ticks"
+  ],
+  "primitives": [
+    {
+      "doc": "1 when the last closed bar traded at least `min_volume` contracts aggressively into `side`\n(bid: sellers hitting bids; ask: buyers lifting offers) while the bar's range stayed within\n`max_range_ticks` \u2014 heavy volume that failed to move price.",
+      "mirror": "none",
+      "name": "absorption",
+      "output": "bool",
+      "params": {
+        "max_range_ticks": {
+          "default": 3,
+          "doc": "bar range cap in ticks",
+          "required": false,
+          "type": "int"
+        },
+        "min_volume": {
+          "default": 500,
+          "doc": "contracts",
+          "required": false,
+          "type": "int"
+        },
+        "side": {
+          "choices": [
+            "bid",
+            "ask"
+          ],
+          "default": "bid",
+          "doc": "bid | ask",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "Wilder ADX over `period` bars (trend strength, 0\u2013100).",
+      "mirror": "none",
+      "name": "adx",
+      "output": "number",
+      "params": {
+        "period": {
+          "default": 14,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Wilder average true range over `period` bars (points).",
+      "mirror": "none",
+      "name": "atr",
+      "output": "number",
+      "params": {
+        "period": {
+          "default": 14,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Signed flow of the last closed primary bar (aggressive buys \u2212 sells).",
+      "mirror": "signed",
+      "name": "bar_delta",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Closed primary bars since the RTH open (0 for the first bar of the session).",
+      "mirror": "none",
+      "name": "bars_since_open",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Bollinger lower band: SMA(period) \u2212 stdev \u00d7 \u03c3.",
+      "mirror": "price",
+      "name": "bollinger_lower",
+      "output": "price",
+      "params": {
+        "period": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        },
+        "stdev": {
+          "default": 2.0,
+          "doc": "band width in standard deviations",
+          "required": false,
+          "type": "float"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Bollinger upper band: SMA(period) + stdev \u00d7 \u03c3.",
+      "mirror": "price",
+      "name": "bollinger_upper",
+      "output": "price",
+      "params": {
+        "period": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        },
+        "stdev": {
+          "default": 2.0,
+          "doc": "band width in standard deviations",
+          "required": false,
+          "type": "float"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Bid size over ask size across the top `levels` levels (>1 = more resting bids).",
+      "mirror": "none",
+      "name": "book_imbalance",
+      "output": "number",
+      "params": {
+        "levels": {
+          "default": 5,
+          "doc": "levels per side",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "book"
+    },
+    {
+      "doc": "1 when the last closed bar forms `pattern`: engulfing (body covers the prior body, opposite colour),\npin (wick \u2265 2\u00d7 body on one side), inside (range inside the prior bar's range).",
+      "mirror": "none",
+      "name": "candle_pattern",
+      "output": "bool",
+      "params": {
+        "pattern": {
+          "choices": [
+            "engulfing",
+            "pin",
+            "inside"
+          ],
+          "default": "engulfing",
+          "doc": "engulfing | pin | inside",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Close of the last closed bar (on `tf`).",
+      "mirror": "price",
+      "name": "close",
+      "output": "price",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "1 when the last `count` closed bars are all `color` (green: close > open, red: close < open), else 0.",
+      "mirror": "none",
+      "name": "consecutive",
+      "output": "bool",
+      "params": {
+        "color": {
+          "choices": [
+            "green",
+            "red"
+          ],
+          "default": "green",
+          "doc": "green | red",
+          "required": false,
+          "type": "str"
+        },
+        "count": {
+          "default": 3,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Cumulative delta since the RTH open.",
+      "mirror": "signed",
+      "name": "cvd_session",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Average per-bar delta over the last `n` bars (slope of the CVD line).",
+      "mirror": "signed",
+      "name": "cvd_slope",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 5,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Cumulative delta over the last `n` primary bars.",
+      "mirror": "signed",
+      "name": "cvd_window",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Day of week of the session, Monday = 0 \u2026 Friday = 4.",
+      "mirror": "none",
+      "name": "day_of_week",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Signed flow of the last closed bar: aggressive buys \u2212 aggressive sells (contracts).",
+      "mirror": "signed",
+      "name": "delta",
+      "output": "number",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Price vs. flow disagreement over `n` bars: +1 bullish (price down, CVD up), \u22121 bearish (price up, CVD down), 0 none.",
+      "mirror": "signed",
+      "name": "delta_divergence",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Exponential moving average of closes (`period`), seeded with the SMA.",
+      "mirror": "price",
+      "name": "ema",
+      "output": "price",
+      "params": {
+        "period": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "1 when the last closed bar's extreme shows a collapsing tail on `side`: the top (ask) or bottom (bid)\ntwo levels of the footprint hold \u2264 `tail_max` contracts each while the bar traded \u2265 `min_volume`.",
+      "mirror": "none",
+      "name": "exhaustion",
+      "output": "bool",
+      "params": {
+        "min_volume": {
+          "default": 100,
+          "doc": "bar volume",
+          "required": false,
+          "type": "int"
+        },
+        "side": {
+          "choices": [
+            "ask",
+            "bid"
+          ],
+          "default": "ask",
+          "doc": "ask (at the high) | bid (at the low)",
+          "required": false,
+          "type": "str"
+        },
+        "tail_max": {
+          "default": 3,
+          "doc": "contracts per tail level",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "Number of diagonal imbalances of `ratio`\u00d7 (min `min_volume` contracts) on `side` in the last closed bar.",
+      "mirror": "none",
+      "name": "footprint_imbalance",
+      "output": "number",
+      "params": {
+        "min_volume": {
+          "default": 5,
+          "doc": "contracts",
+          "required": false,
+          "type": "int"
+        },
+        "ratio": {
+          "default": 3.0,
+          "doc": "imbalance ratio",
+          "required": false,
+          "type": "float"
+        },
+        "side": {
+          "choices": [
+            "ask",
+            "bid"
+          ],
+          "default": "ask",
+          "doc": "ask (buying) | bid (selling)",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "Today's RTH open minus the prior session's RTH close (points, signed).",
+      "mirror": "signed",
+      "name": "gap_points",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "High of the last closed bar (on `tf`).",
+      "mirror": "price",
+      "name": "high",
+      "output": "price",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Highest high of the previous `n` closed bars (excluding the current one when `exclude_current`).",
+      "mirror": "price",
+      "name": "highest",
+      "output": "price",
+      "params": {
+        "exclude_current": {
+          "default": true,
+          "doc": "leave the last closed bar out",
+          "required": false,
+          "type": "bool"
+        },
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "High of the first 60 minutes of RTH (initial balance).",
+      "mirror": "price",
+      "name": "initial_balance_high",
+      "output": "level",
+      "params": {
+        "minutes": {
+          "default": 60,
+          "doc": "minutes after the RTH open",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Low of the first 60 minutes of RTH (initial balance).",
+      "mirror": "price",
+      "name": "initial_balance_low",
+      "output": "level",
+      "params": {
+        "minutes": {
+          "default": 60,
+          "doc": "minutes after the RTH open",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Signed size of the largest single print of at least `min_size` contracts within the last `within_bars`\nprimary bars (+ buyer, \u2212 seller); 0 when none.",
+      "mirror": "signed",
+      "name": "large_print",
+      "output": "number",
+      "params": {
+        "min_size": {
+          "default": 50,
+          "doc": "contracts",
+          "required": false,
+          "type": "int"
+        },
+        "within_bars": {
+          "default": 3,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "Largest resting size on `side` within `within_ticks` of the last price, if \u2265 `min_size` (else 0).",
+      "mirror": "none",
+      "name": "large_resting_size_near",
+      "output": "number",
+      "params": {
+        "min_size": {
+          "default": 200,
+          "doc": "contracts",
+          "required": false,
+          "type": "int"
+        },
+        "side": {
+          "choices": [
+            "bid",
+            "ask"
+          ],
+          "default": "bid",
+          "doc": "bid | ask",
+          "required": false,
+          "type": "str"
+        },
+        "within_ticks": {
+          "default": 5,
+          "doc": "ticks from last",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "book"
+    },
+    {
+      "doc": "Low of the last closed bar (on `tf`).",
+      "mirror": "price",
+      "name": "low",
+      "output": "price",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Lowest low of the previous `n` closed bars.",
+      "mirror": "price",
+      "name": "lowest",
+      "output": "price",
+      "params": {
+        "exclude_current": {
+          "default": true,
+          "doc": "leave the last closed bar out",
+          "required": false,
+          "type": "bool"
+        },
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Minutes until the 16:00 ET close.",
+      "mirror": "none",
+      "name": "minutes_to_close",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Open of the last closed bar (on `tf`).",
+      "mirror": "price",
+      "name": "open",
+      "output": "price",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "High of the first `minutes` of RTH; None until that range has closed.",
+      "mirror": "price",
+      "name": "opening_range_high",
+      "output": "level",
+      "params": {
+        "minutes": {
+          "default": 15,
+          "doc": "minutes after the RTH open",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Low of the first `minutes` of RTH; None until that range has closed.",
+      "mirror": "price",
+      "name": "opening_range_low",
+      "output": "level",
+      "params": {
+        "minutes": {
+          "default": 15,
+          "doc": "minutes after the RTH open",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session point of control: the price with the most traded volume so far.",
+      "mirror": "price",
+      "name": "poc",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Bar-POC drift over the last `n` closed bars in ticks (signed: + rising).",
+      "mirror": "signed",
+      "name": "poc_migration",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 5,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "RTH close of the previous session.",
+      "mirror": "price",
+      "name": "prior_day_close",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "RTH high of the previous session.",
+      "mirror": "price",
+      "name": "prior_day_high",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "RTH low of the previous session.",
+      "mirror": "price",
+      "name": "prior_day_low",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session profile shape: 'P' (volume concentrated high), 'b' (low), 'D'/'normal' (balanced). Numeric:\nP=1, b=-1, D=0 \u2014 computed from where the POC sits inside the value area.",
+      "mirror": "signed",
+      "name": "profile_shape",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Windowed delta scaled by the mean absolute per-bar delta over `n` bars (unitless, signed).",
+      "mirror": "signed",
+      "name": "rel_delta",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Last bar's volume over the average of the previous `n` bars (1 = average).",
+      "mirror": "none",
+      "name": "rel_volume",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Resting size at `price` on `side` (0 when the level is empty).",
+      "mirror": "none",
+      "name": "resting_size_at",
+      "output": "number",
+      "params": {
+        "price": {
+          "default": null,
+          "doc": "level",
+          "required": true,
+          "type": "price"
+        },
+        "side": {
+          "choices": [
+            "bid",
+            "ask"
+          ],
+          "default": "bid",
+          "doc": "bid | ask",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "book"
+    },
+    {
+      "doc": "Wilder RSI of closes over `period` bars (0\u2013100).",
+      "mirror": "rsi",
+      "name": "rsi",
+      "output": "number",
+      "params": {
+        "period": {
+          "default": 14,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Highest high of the current RTH session so far.",
+      "mirror": "price",
+      "name": "session_high",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Lowest low of the current RTH session so far.",
+      "mirror": "price",
+      "name": "session_low",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Simple moving average of closes over `period` bars.",
+      "mirror": "price",
+      "name": "sma",
+      "output": "price",
+      "params": {
+        "period": {
+          "default": 20,
+          "doc": "bars",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "1 when at least `count` consecutive price levels carry a diagonal imbalance on `side` in the last closed bar.",
+      "mirror": "none",
+      "name": "stacked_imbalances",
+      "output": "bool",
+      "params": {
+        "count": {
+          "default": 3,
+          "doc": "consecutive levels",
+          "required": false,
+          "type": "int"
+        },
+        "min_volume": {
+          "default": 5,
+          "doc": "contracts",
+          "required": false,
+          "type": "int"
+        },
+        "ratio": {
+          "default": 3.0,
+          "doc": "imbalance ratio",
+          "required": false,
+          "type": "float"
+        },
+        "side": {
+          "choices": [
+            "ask",
+            "bid"
+          ],
+          "default": "ask",
+          "doc": "ask | bid",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "trade"
+    },
+    {
+      "doc": "Most recent confirmed swing high: a bar whose high exceeds the `n` bars on each side.",
+      "mirror": "price",
+      "name": "swing_high",
+      "output": "price",
+      "params": {
+        "n": {
+          "default": 3,
+          "doc": "bars on each side",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Most recent confirmed swing low: a bar whose low is below the `n` bars on each side.",
+      "mirror": "price",
+      "name": "swing_low",
+      "output": "price",
+      "params": {
+        "n": {
+          "default": 3,
+          "doc": "bars on each side",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Minutes since the 09:30 ET open (negative before the open).",
+      "mirror": "none",
+      "name": "time_of_day",
+      "output": "number",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session value-area high (70 % of volume around the POC).",
+      "mirror": "price",
+      "name": "vah",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session value-area low (70 % of volume around the POC).",
+      "mirror": "price",
+      "name": "val",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Traded contracts in the last closed bar (on `tf`).",
+      "mirror": "none",
+      "name": "volume",
+      "output": "number",
+      "params": {},
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session volume traded within `ticks` of `price` (defaults to the last close).",
+      "mirror": "none",
+      "name": "volume_at_price",
+      "output": "number",
+      "params": {
+        "price": {
+          "default": null,
+          "doc": "level; default = last close",
+          "required": false,
+          "type": "price"
+        },
+        "ticks": {
+          "default": 2,
+          "doc": "half-width in ticks",
+          "required": false,
+          "type": "int"
+        }
+      },
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Session VWAP (RTH, typical price \u00d7 volume), from the New York session open.",
+      "mirror": "price",
+      "name": "vwap",
+      "output": "price",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    }
+  ],
+  "schema": {
+    "$defs": {
+      "Breakeven": {
+        "additionalProperties": false,
+        "properties": {
+          "atR": {
+            "default": 1.0,
+            "title": "Atr",
+            "type": "number"
+          },
+          "offsetTicks": {
+            "default": 1,
+            "title": "Offsetticks",
+            "type": "integer"
+          }
+        },
+        "title": "Breakeven",
+        "type": "object"
+      },
+      "Constraints": {
+        "additionalProperties": false,
+        "properties": {
+          "cooldownBars": {
+            "default": 5,
+            "title": "Cooldownbars",
+            "type": "integer"
+          },
+          "maxConcurrentPositions": {
+            "default": 1,
+            "title": "Maxconcurrentpositions",
+            "type": "integer"
+          },
+          "maxTradesPerDay": {
+            "default": 3,
+            "title": "Maxtradesperday",
+            "type": "integer"
+          },
+          "stopAfterConsecutiveLosses": {
+            "default": 2,
+            "title": "Stopafterconsecutivelosses",
+            "type": "integer"
+          }
+        },
+        "title": "Constraints",
+        "type": "object"
+      },
+      "Entry": {
+        "additionalProperties": false,
+        "properties": {
+          "limitOffsetTicks": {
+            "default": 0,
+            "title": "Limitoffsetticks",
+            "type": "integer"
+          },
+          "orderType": {
+            "default": "market",
+            "enum": [
+              "market",
+              "limit",
+              "stop"
+            ],
+            "title": "Ordertype",
+            "type": "string"
+          },
+          "sequence": {
+            "items": {
+              "$ref": "#/$defs/SequenceStep"
+            },
+            "title": "Sequence",
+            "type": "array"
+          },
+          "stopOffsetTicks": {
+            "default": 1,
+            "title": "Stopoffsetticks",
+            "type": "integer"
+          },
+          "timeoutBars": {
+            "default": 3,
+            "title": "Timeoutbars",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger"
+          }
+        },
+        "required": [
+          "trigger"
+        ],
+        "title": "Entry",
+        "type": "object"
+      },
+      "Execution": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "default": "ticks",
+            "enum": [
+              "bars",
+              "ticks",
+              "l3"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "slippageTicksOverride": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slippageticksoverride"
+          }
+        },
+        "title": "Execution",
+        "type": "object"
+      },
+      "Exit": {
+        "additionalProperties": false,
+        "properties": {
+          "breakeven": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Breakeven"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "scaleOut": {
+            "items": {
+              "$ref": "#/$defs/ScaleOut"
+            },
+            "title": "Scaleout",
+            "type": "array"
+          },
+          "stop": {
+            "$ref": "#/$defs/Stop"
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          },
+          "timeStop": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TimeStop"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "trailing": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Trailing"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "Exit",
+        "type": "object"
+      },
+      "Instrument": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "default": "ES",
+            "title": "Root",
+            "type": "string"
+          },
+          "symbol": {
+            "default": "ES1!",
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "title": "Instrument",
+        "type": "object"
+      },
+      "Lineage": {
+        "additionalProperties": false,
+        "properties": {
+          "changedVariable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Changedvariable"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parentid"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "trialIndex": {
+            "default": 0,
+            "title": "Trialindex",
+            "type": "integer"
+          }
+        },
+        "title": "Lineage",
+        "type": "object"
+      },
+      "Origin": {
+        "additionalProperties": false,
+        "properties": {
+          "sourceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sourceid"
+          },
+          "type": {
+            "default": "manual",
+            "enum": [
+              "prompt",
+              "teaching",
+              "manual"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "Origin",
+        "type": "object"
+      },
+      "PassCriteria": {
+        "additionalProperties": false,
+        "properties": {
+          "maxDrawdownPct": {
+            "default": 10,
+            "title": "Maxdrawdownpct",
+            "type": "number"
+          },
+          "maxMonteCarloDrawdown95Pct": {
+            "default": 15,
+            "title": "Maxmontecarlodrawdown95Pct",
+            "type": "number"
+          },
+          "minDeflatedSharpeProb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mindeflatedsharpeprob"
+          },
+          "minExpectancyR": {
+            "default": 0.15,
+            "title": "Minexpectancyr",
+            "type": "number"
+          },
+          "minOosProfitFactor": {
+            "default": 1.1,
+            "title": "Minoosprofitfactor",
+            "type": "number"
+          },
+          "minProfitFactor": {
+            "default": 1.3,
+            "title": "Minprofitfactor",
+            "type": "number"
+          },
+          "minTradesInSample": {
+            "default": 100,
+            "title": "Mintradesinsample",
+            "type": "integer"
+          },
+          "minTradesOutOfSample": {
+            "default": 30,
+            "title": "Mintradesoutofsample",
+            "type": "integer"
+          },
+          "minWalkForwardWindowsPositive": {
+            "default": 2,
+            "title": "Minwalkforwardwindowspositive",
+            "type": "integer"
+          }
+        },
+        "title": "PassCriteria",
+        "type": "object"
+      },
+      "RiskProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "accountSize": {
+            "default": 100000,
+            "title": "Accountsize",
+            "type": "number"
+          },
+          "dailyLossLimitPct": {
+            "default": 2.0,
+            "title": "Dailylosslimitpct",
+            "type": "number"
+          },
+          "maxContracts": {
+            "default": 5,
+            "title": "Maxcontracts",
+            "type": "integer"
+          },
+          "maxTradesPerDay": {
+            "default": 5,
+            "title": "Maxtradesperday",
+            "type": "integer"
+          },
+          "passCriteria": {
+            "$ref": "#/$defs/PassCriteria"
+          },
+          "proposedBy": {
+            "default": "default",
+            "enum": [
+              "agent",
+              "user",
+              "default"
+            ],
+            "title": "Proposedby",
+            "type": "string"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "riskPerTradePct": {
+            "default": 0.5,
+            "title": "Riskpertradepct",
+            "type": "number"
+          },
+          "stopAfterConsecutiveLosses": {
+            "default": 3,
+            "title": "Stopafterconsecutivelosses",
+            "type": "integer"
+          },
+          "weeklyLossLimitPct": {
+            "default": 5.0,
+            "title": "Weeklylosslimitpct",
+            "type": "number"
+          },
+          "weeklyTargetPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Weeklytargetpct"
+          }
+        },
+        "title": "RiskProfile",
+        "type": "object"
+      },
+      "ScaleOut": {
+        "additionalProperties": false,
+        "properties": {
+          "atR": {
+            "title": "Atr",
+            "type": "number"
+          },
+          "fraction": {
+            "title": "Fraction",
+            "type": "number"
+          }
+        },
+        "required": [
+          "atR",
+          "fraction"
+        ],
+        "title": "ScaleOut",
+        "type": "object"
+      },
+      "SequenceStep": {
+        "additionalProperties": false,
+        "properties": {
+          "when": {
+            "title": "When"
+          },
+          "withinBars": {
+            "default": 20,
+            "title": "Withinbars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "when"
+        ],
+        "title": "SequenceStep",
+        "type": "object"
+      },
+      "Session": {
+        "additionalProperties": false,
+        "properties": {
+          "entryWindow": {
+            "$ref": "#/$defs/Window"
+          },
+          "flattenAt": {
+            "default": "15:58",
+            "title": "Flattenat",
+            "type": "string"
+          },
+          "noTradeWindows": {
+            "items": {
+              "$ref": "#/$defs/Window"
+            },
+            "title": "Notradewindows",
+            "type": "array"
+          }
+        },
+        "title": "Session",
+        "type": "object"
+      },
+      "Sizing": {
+        "additionalProperties": false,
+        "properties": {
+          "maxContracts": {
+            "default": 5,
+            "title": "Maxcontracts",
+            "type": "integer"
+          },
+          "period": {
+            "default": 14,
+            "title": "Period",
+            "type": "integer"
+          },
+          "type": {
+            "default": "fixed_risk",
+            "enum": [
+              "fixed_risk",
+              "fixed_contracts",
+              "vol_scaled"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "default": 0.5,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "title": "Sizing",
+        "type": "object"
+      },
+      "Stop": {
+        "additionalProperties": false,
+        "properties": {
+          "bufferTicks": {
+            "default": 2,
+            "title": "Bufferticks",
+            "type": "integer"
+          },
+          "period": {
+            "default": 14,
+            "title": "Period",
+            "type": "integer"
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "swing_low",
+                  "swing_high",
+                  "or_low",
+                  "or_high",
+                  "session_low",
+                  "session_high",
+                  "bar_low",
+                  "bar_high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Structure"
+          },
+          "type": {
+            "default": "ticks",
+            "enum": [
+              "atr",
+              "ticks",
+              "points",
+              "percent",
+              "structure"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 20,
+            "title": "Value"
+          }
+        },
+        "title": "Stop",
+        "type": "object"
+      },
+      "Target": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "session_high",
+                  "session_low",
+                  "vah",
+                  "val",
+                  "poc",
+                  "prior_day_high",
+                  "prior_day_low",
+                  "or_high",
+                  "or_low",
+                  "vwap"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Level"
+          },
+          "type": {
+            "default": "rr",
+            "enum": [
+              "rr",
+              "ticks",
+              "points",
+              "level"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 2.0,
+            "title": "Value"
+          }
+        },
+        "title": "Target",
+        "type": "object"
+      },
+      "TimeStop": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "title": "Bars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bars"
+        ],
+        "title": "TimeStop",
+        "type": "object"
+      },
+      "Timeframes": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "items": {
+              "enum": [
+                "1min",
+                "5min",
+                "15min",
+                "30min",
+                "1h",
+                "4h",
+                "1D"
+              ],
+              "type": "string"
+            },
+            "title": "Context",
+            "type": "array"
+          },
+          "primary": {
+            "default": "1min",
+            "enum": [
+              "1min",
+              "5min",
+              "15min",
+              "30min",
+              "1h",
+              "4h",
+              "1D"
+            ],
+            "title": "Primary",
+            "type": "string"
+          }
+        },
+        "title": "Timeframes",
+        "type": "object"
+      },
+      "Trailing": {
+        "additionalProperties": false,
+        "properties": {
+          "activateAtR": {
+            "default": 1.0,
+            "title": "Activateatr",
+            "type": "number"
+          },
+          "period": {
+            "default": 14,
+            "title": "Period",
+            "type": "integer"
+          },
+          "type": {
+            "default": "ticks",
+            "enum": [
+              "atr",
+              "ticks"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "default": 8,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "title": "Trailing",
+        "type": "object"
+      },
+      "Window": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Window",
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "constraints": {
+        "$ref": "#/$defs/Constraints"
+      },
+      "description": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Description"
+      },
+      "direction": {
+        "default": "long",
+        "enum": [
+          "long",
+          "short",
+          "both"
+        ],
+        "title": "Direction",
+        "type": "string"
+      },
+      "entry": {
+        "$ref": "#/$defs/Entry"
+      },
+      "execution": {
+        "$ref": "#/$defs/Execution"
+      },
+      "exit": {
+        "$ref": "#/$defs/Exit"
+      },
+      "filters": {
+        "items": {},
+        "title": "Filters",
+        "type": "array"
+      },
+      "id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Id"
+      },
+      "instrument": {
+        "$ref": "#/$defs/Instrument"
+      },
+      "lineage": {
+        "$ref": "#/$defs/Lineage"
+      },
+      "meta": {
+        "additionalProperties": true,
+        "title": "Meta",
+        "type": "object"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "origin": {
+        "$ref": "#/$defs/Origin"
+      },
+      "risk": {
+        "$ref": "#/$defs/RiskProfile"
+      },
+      "schemaVersion": {
+        "const": 2,
+        "default": 2,
+        "title": "Schemaversion",
+        "type": "integer"
+      },
+      "session": {
+        "$ref": "#/$defs/Session"
+      },
+      "sizing": {
+        "$ref": "#/$defs/Sizing"
+      },
+      "status": {
+        "default": "draft",
+        "enum": [
+          "draft",
+          "testing",
+          "candidate",
+          "forward_test",
+          "live",
+          "rejected",
+          "retired"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "timeframes": {
+        "$ref": "#/$defs/Timeframes"
+      }
+    },
+    "required": [
+      "name",
+      "entry"
+    ],
+    "title": "StrategySpec v2",
+    "type": "object",
+    "x-fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "delta"
+    ],
+    "x-operators": [
+      "and",
+      "bars_since",
+      "between",
+      "cross_above",
+      "cross_below",
+      "eq",
+      "falling",
+      "gt",
+      "gte",
+      "held_above",
+      "held_below",
+      "lt",
+      "lte",
+      "not",
+      "or",
+      "retest",
+      "rising",
+      "touched",
+      "within_ticks"
+    ],
+    "x-timeframes": [
+      "1min",
+      "5min",
+      "15min",
+      "30min",
+      "1h",
+      "4h",
+      "1D"
+    ]
+  },
+  "structures": [
+    "swing_low",
+    "swing_high",
+    "or_low",
+    "or_high",
+    "session_low",
+    "session_high",
+    "bar_low",
+    "bar_high"
+  ],
+  "timeframes": [
+    "1min",
+    "5min",
+    "15min",
+    "30min",
+    "1h",
+    "4h",
+    "1D"
+  ]
+}

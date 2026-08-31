@@ -14,11 +14,11 @@ plugin's toolset in a shared agent namespace.
 """
 
 _SCHEMAS = {
-    "trading_get_condition_vocabulary": {
+    "trading_get_spec_schema": {
         "type": "function",
         "function": {
-            "name": "trading_get_condition_vocabulary",
-            "description": "The exact entry-condition/stop/target vocabulary the backtest engine understands, read live from strategy_spec.py \u2014 call this before building a strategy so the rule set you generate is guaranteed valid.",
+            "name": "trading_get_spec_schema",
+            "description": "The Strategy Spec v2 JSON Schema, every executable primitive with its parameters and docstring, the expression operators, and three worked examples (an ORB breakout, an ORB retest, a teaching-derived spec). Call this before building or revising a strategy: the expression tree may only reference primitives listed here; concepts that are missing must be composed from these or requested with request_primitive (Phase 4).",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -29,59 +29,17 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_create_strategy",
-            "description": "Validate and save a new strategy. direction is 'long', 'short', or 'both' (saves two sibling strategies sharing a directionGroup id, since the engine is single-directional per run).",
+            "description": "Validate and save a new Strategy Spec v2 (pass the whole spec as `spec`). Errors come back as readable messages \u2014 fix them and call again. The legacy v1 keyword form (name, symbol, direction, conditions, stop, target, ...) is still accepted and converted; `direction: \"both\"` is a single v2 strategy whose short side mirrors the long rules.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {
-                        "type": "string"
-                    },
-                    "symbol": {
-                        "type": "string"
-                    },
-                    "direction": {
-                        "type": "string",
-                        "enum": [
-                            "long",
-                            "short",
-                            "both"
-                        ]
-                    },
-                    "conditions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object"
-                        },
-                        "description": "entry conditions (ANDed); see get_condition_vocabulary"
-                    },
-                    "stop": {
+                    "spec": {
                         "type": "object",
-                        "description": "{type: percent|fixed_points|atr, value, period?, mult?}"
-                    },
-                    "target": {
-                        "type": "object",
-                        "description": "{type: rr|percent|fixed_points, value}"
-                    },
-                    "sizing": {
-                        "type": "object",
-                        "description": "optional {type: fixed_qty|percent_equity, value}"
-                    },
-                    "session": {
-                        "type": "object",
-                        "description": "optional {start: 'HH:MM', end: 'HH:MM'} UTC"
-                    },
-                    "interval": {
-                        "type": "string",
-                        "description": "bar interval \u2014 one of get_condition_vocabulary's `intervals`, default '1min'"
+                        "description": "a complete Strategy Spec v2 document (see get_spec_schema)"
                     }
                 },
                 "required": [
-                    "name",
-                    "symbol",
-                    "direction",
-                    "conditions",
-                    "stop",
-                    "target"
+                    "spec"
                 ]
             }
         }
@@ -119,7 +77,7 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_propose_strategy_revision",
-            "description": "Clone an existing strategy with changes applied (e.g. new conditions/ stop/target from a winners-vs-losers finding) and save it as a new strategy, so it can be backtested and compared against the original without overwriting it. `changes` is shallow-merged onto the base spec.",
+            "description": "Clone a strategy with ONE variable changed and save it as a lineage child (parentId = base, trialIndex + 1). `changes` maps dotted paths to values, e.g. {\"exit.target.value\": 3.0} or {\"filters\": [...]}. Say which variable changed in `changed_variable`; if two fields move together because one is the unit of the other, that counts as one change.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -150,7 +108,7 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_update_strategy",
-            "description": "Edit a saved strategy IN PLACE \u2014 same id, same file, no second copy in the trader's list. This is what to use when the trader asks you to change the strategy they already have (\"make the target 3R\", \"move the session to the US open\", \"tighten the stop\"): they want their strategy fixed, and the next run_backtest on this id picks the change up. `changes` is shallow-merged onto the current spec, so pass only the fields you are changing. Destructive \u2014 the previous values are gone and cannot be compared against. For your OWN A/B experiments, where the point is to keep the original and rank the two, use propose_strategy_revision instead.",
+            "description": "Edit a saved strategy IN PLACE (same id). `changes` maps dotted paths or top-level keys to values. Destructive \u2014 for A/B experiments use propose_strategy_revision.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -329,7 +287,7 @@ _SCHEMAS = {
         "type": "function",
         "function": {
             "name": "trading_find_near_miss_entries",
-            "description": "Bars where entry almost triggered \u2014 all but (up to) max_conditions_missing of the entry conditions were true, during the trading session, but the strategy didn't actually enter (either a condition fell just short, or the strategy was already in a position \u2014 this doesn't distinguish the two). Useful for judging whether thresholds are too tight, not a bug detector for the backtest engine itself.",
+            "description": "Bars inside the entry window where all but (up to) max_conditions_missing of the entry sub-conditions (the trigger's top-level AND terms plus the filters) were true, but the trigger did not fire. Useful for judging whether thresholds are too tight; it does not distinguish \"a condition fell just short\" from \"already in a position\".",
             "parameters": {
                 "type": "object",
                 "properties": {

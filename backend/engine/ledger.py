@@ -34,6 +34,9 @@ class OpenTrade:
     commission: float = 0.0
     entry_context_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    initial_risk: float | None = None
+    breakeven_done: bool = False
+    scaled: set = field(default_factory=set)
 
     def __post_init__(self):
         self.mae_price = self.entry_price

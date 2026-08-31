@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { HeaderSlotContext } from './headerSlot';
 import CandlestickPage from './pages/CandlestickPage';
 import ReviewPicker from './pages/ReviewPicker';
+import StrategyPage from './pages/StrategyPage';
 
 // The app is a strategy-review tool: a chart only ever exists inside
 // /review/:backtestId, so what's on screen always names the strategy it
@@ -28,6 +29,7 @@ export default function App() {
           <Routes>
             <Route path="/review" element={<ReviewPicker />} />
             <Route path="/review/:backtestId" element={<CandlestickPage />} />
+            <Route path="/strategies/:strategyId" element={<StrategyPage />} />
             {/* Everything else — including old deep links to a bare chart —
                 lands on the chooser rather than an unattached chart. */}
             <Route path="*" element={<Navigate to="/review" replace />} />

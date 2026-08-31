@@ -98,6 +98,44 @@ export async function fetchStrategies() {
   return json(await fetch(`${BASE}/strategies`));
 }
 
+export async function fetchStrategy(id) {
+  return json(await fetch(`${BASE}/strategies/${id}`));
+}
+
+// Create (no id) or update (with id) a Strategy Spec v2; v1 documents are converted.
+export async function saveStrategy(spec) {
+  return json(await fetch(`${BASE}/strategies`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(spec),
+  }));
+}
+
+// -> { valid, errors[], requiredMode }
+export async function validateStrategy(spec) {
+  return json(await fetch(`${BASE}/strategies/validate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(spec),
+  }));
+}
+
+export async function fetchStrategyLineage(id) {
+  return json(await fetch(`${BASE}/strategies/${id}/lineage`));
+}
+
+export async function patchStrategyRisk(id, risk) {
+  return json(await fetch(`${BASE}/strategies/${id}/risk`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(risk),
+  }));
+}
+
+export async function setStrategyStatus(id, status) {
+  return json(await fetch(`${BASE}/strategies/${id}/status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+  }));
+}
+
+export async function fetchSpecSchema() {
+  return json(await fetch(`${BASE}/strategies/schema/spec`));
+}
+
 // --- backtests ---
 
 export async function fetchBacktests() {

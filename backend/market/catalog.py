@@ -53,10 +53,13 @@ def parse_outright(symbol: str, spec: RootSpec, as_of: date) -> tuple[int, int]:
     month = MONTH_CODES[tail[0]]
     digit = int(tail[1:])
     base = as_of.year - as_of.year % 10
+    from datetime import timedelta
+
     for year in range(base - 10 + digit, base + 20, 10):
         if year < 2000:
             continue
-        if third_friday(year, month) >= as_of:
+        # A week of grace: the expiry-day file still carries the contract.
+        if third_friday(year, month) + timedelta(days=7) >= as_of:
             return year, month
     raise ValueError(f"cannot resolve contract year for {symbol} as of {as_of}")
 

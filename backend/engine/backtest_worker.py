@@ -94,6 +94,12 @@ def exec_params(spec: dict, as_of: date | None = None) -> dict:
         "cooldown_bars": int((spec.get("constraints") or {}).get("cooldownBars", 0) or 0),
         "stop_after_losses": (spec.get("constraints") or {}).get("stopAfterConsecutiveLosses", risk.get("stopAfterConsecutiveLosses")),
         "order_type": (spec.get("entry") or {}).get("orderType", "market"),
+        "limit_offset_ticks": int((spec.get("entry") or {}).get("limitOffsetTicks", 0) or 0),
+        "stop_offset_ticks": int((spec.get("entry") or {}).get("stopOffsetTicks", 1) or 1),
+        "entry_timeout_bars": int((spec.get("entry") or {}).get("timeoutBars", 3) or 3),
+        "trailing": exit_.get("trailing"),
+        "breakeven": exit_.get("breakeven"),
+        "scale_out": list(exit_.get("scaleOut") or []),
         "slippage_ticks": (spec.get("execution") or {}).get("slippageTicksOverride"),
     }
 
@@ -124,6 +130,7 @@ def _make_strategy_class():
             self.open: OpenTrade | None = None
             self.pending_entry: dict | None = None
             self.exit_ids: dict[str, str] = {}      # client_order_id -> reason
+            self.scale_cids: set[str] = set()
             self.pending_exit_reason: str | None = None
             self.pending_exit_ref: float | None = None
             self.session: date | None = None
@@ -259,11 +266,17 @@ def _make_strategy_class():
                 self.tick_sell += int(tick.size)
             self.tick_high = px if self.tick_high is None else max(self.tick_high, px)
             self.tick_low = px if self.tick_low is None else min(self.tick_low, px)
+            if hasattr(self.rules, "on_trade"):
+                self.rules.on_trade(int(tick.ts_event), px, int(tick.size), "B" if side == "BUYER" else "A" if side == "SELLER" else "N")
             if self.open is not None:
                 self.open.observe(px, px)
                 d = self.session or session_date(int(tick.ts_event))
                 if int(tick.ts_event) >= self._et_ns(d, self.p["flatten_at"]) and self.pending_exit_reason is None:
                     self._flatten("flatten", px)
+                elif self.pending_exit_reason is None:
+                    self._manage_stops(px, px, tick_mode=True)
+            if self.pending_entry is not None and self.pending_entry.get("resting") and self.pending_exit_reason is None:
+                self._check_entry_timeout(int(tick.ts_event))
 
         # -- bars -----------------------------------------------------------
         def on_bar(self, bar):
@@ -282,6 +295,8 @@ def _make_strategy_class():
 
             if self.open is not None:
                 self._manage_open(b, d)
+            if self.pending_entry is not None and self.pending_entry.get("resting"):
+                self._check_entry_timeout(b.ts_close, bar_index=b.index)
             if self.open is None and self.pending_entry is None and self.pending_exit_reason is None:
                 self._maybe_enter(b, d)
 
@@ -302,6 +317,8 @@ def _make_strategy_class():
                     return
             if self.pending_exit_reason is not None:
                 return
+            if self.mode == "bars":
+                self._manage_stops(b.high, b.low, tick_mode=False)
             if self.p["time_stop_bars"] and b.index - t.entry_bar_index >= int(self.p["time_stop_bars"]):
                 self._flatten("time_stop", b.close, b)
                 return
@@ -317,13 +334,120 @@ def _make_strategy_class():
                 self.stats["blocked"] += 1
                 return
             stop, target = self._levels(direction, b.close, b)
+            if stop is None and target is None and self.p["stop"].get("type") == "structure":
+                self.stats["blocked"] += 1      # structure level unavailable or on the wrong side
+                return
             qty = self._size(b.close, stop)
             side = OrderSide.BUY if direction == "long" else OrderSide.SELL
-            order = self.order_factory.market(self.inst.id, side, Quantity.from_int(qty), tags=["entry"])
+            sign = 1 if direction == "long" else -1
+            otype = self.p["order_type"] if self.mode != "bars" else "market"
+            if otype == "limit":
+                px = P.round_to_tick(b.close + sign * self.p["limit_offset_ticks"] * self.cspec.tick_size, self.cspec)
+                order = self.order_factory.limit(self.inst.id, side, Quantity.from_int(qty), price=Price.from_str(f"{px:.2f}"), tags=["entry"])
+            elif otype == "stop":
+                px = P.round_to_tick(b.close + sign * self.p["stop_offset_ticks"] * self.cspec.tick_size, self.cspec)
+                order = self.order_factory.stop_market(self.inst.id, side, Quantity.from_int(qty), trigger_price=Price.from_str(f"{px:.2f}"), tags=["entry"])
+            else:
+                order = self.order_factory.market(self.inst.id, side, Quantity.from_int(qty), tags=["entry"])
             self.pending_entry = {"direction": direction, "ref": b.close, "stop": stop, "target": target,
                                   "bar_index": b.index, "qty": qty, "cid": str(order.client_order_id),
-                                  "absolute": self._levels_absolute, "bar": b}
+                                  "absolute": self._levels_absolute, "bar": b, "resting": otype != "market",
+                                  "expires_bar": b.index + self.p["entry_timeout_bars"]}
             self.submit_order(order)
+
+        def _check_entry_timeout(self, ts: int, bar_index: int | None = None):
+            pe = self.pending_entry
+            if pe is None or not pe.get("resting"):
+                return
+            idx = bar_index if bar_index is not None else self.bar_index
+            if idx >= pe["expires_bar"] and self.open is None:
+                o = self.cache.order(self._cid(pe["cid"]))
+                if o is not None and o.is_open:
+                    self.cancel_order(o)
+                self.pending_entry = None
+                self.stats["blocked"] += 1
+
+        def _manage_stops(self, high: float, low: float, tick_mode: bool):
+            """Breakeven, trailing stop and scale-outs on the open trade."""
+            t = self.open
+            if t is None or t.stop_price is None:
+                return
+            sign = P.direction_sign(t.direction)
+            risk = abs(t.entry_price - t.stop_price) if t.initial_risk is None else t.initial_risk
+            if t.initial_risk is None:
+                t.initial_risk = risk
+            if risk <= 0:
+                return
+            fav = (high - t.entry_price) * sign if sign > 0 else (t.entry_price - low)
+            r_now = fav / risk
+            new_stop = None
+            be = self.p["breakeven"]
+            if be and not t.breakeven_done and r_now >= float(be.get("atR", 1.0)):
+                new_stop = t.entry_price + sign * int(be.get("offsetTicks", 1)) * self.cspec.tick_size
+                t.breakeven_done = True
+            tr = self.p["trailing"]
+            if tr and r_now >= float(tr.get("activateAtR", 1.0)):
+                if tr.get("type") == "atr":
+                    a = self.rules.atr(int(tr.get("period", 14)))
+                    dist = (a or 0) * float(tr.get("value", 2.0))
+                else:
+                    dist = float(tr.get("value", 8)) * self.cspec.tick_size
+                extreme = t.mfe_price
+                cand = extreme - sign * dist if dist > 0 else None
+                if cand is not None and (new_stop is None or (cand - new_stop) * sign > 0):
+                    new_stop = cand
+            if new_stop is not None and (new_stop - t.stop_price) * sign > 0:
+                t.stop_price = P.round_to_tick(new_stop, self.cspec)
+                self._replace_stop_order(t)
+            for i, so in enumerate(self.p["scale_out"]):
+                if i in t.scaled and t.contracts > 1:
+                    continue
+                if i not in t.scaled and r_now >= float(so.get("atR", 1.0)) and t.contracts > 1:
+                    n = max(1, int(round(t.contracts * float(so.get("fraction", 0.5)))))
+                    if n < t.contracts:
+                        t.scaled.add(i)
+                        self._scale_out(t, n, high if sign > 0 else low)
+
+        def _replace_stop_order(self, t: OpenTrade):
+            if self.mode == "bars":
+                return
+            for cid, reason in list(self.exit_ids.items()):
+                if reason == "stop":
+                    o = self.cache.order(self._cid(cid))
+                    if o is not None and o.is_open:
+                        self.cancel_order(o)
+                    self.exit_ids.pop(cid, None)
+            side = OrderSide.SELL if t.direction == "long" else OrderSide.BUY
+            o = self.order_factory.stop_market(self.inst.id, side, Quantity.from_int(t.contracts), trigger_price=Price.from_str(f"{t.stop_price:.2f}"),
+                                               reduce_only=True, tags=["stop"])
+            self.exit_ids[str(o.client_order_id)] = "stop"
+            self.submit_order(o)
+
+        def _scale_out(self, t: OpenTrade, n: int, ref_price: float):
+            """Book a partial exit as its own trade record; reduce the open trade."""
+            exit_px = ref_price
+            if self.mode == "bars":
+                exit_px = P.apply_slippage(ref_price, t.direction, self.slip, self.cspec, entering=False)
+            part = OpenTrade(direction=t.direction, contracts=n, entry_ts=t.entry_ts, entry_price=t.entry_price, ref_price=t.ref_price,
+                             stop_price=t.stop_price, target_price=t.target_price, entry_bar_index=t.entry_bar_index)
+            part.mae_price, part.mfe_price = t.mae_price, t.mfe_price
+            part.commission = P.commission_usd(n, self.cspec)
+            rec = self.ledger.close(part, self.clock.timestamp_ns(), exit_px, "scale_out", self.bar_index, exit_ref_price=ref_price)
+            self.session_pnl += rec["pnlUsd"]
+            t.contracts -= n
+            t.commission = max(0.0, t.commission - self.cspec.commission_per_side * n)
+            side = OrderSide.SELL if t.direction == "long" else OrderSide.BUY
+            so = self.order_factory.market(self.inst.id, side, Quantity.from_int(n), reduce_only=True, tags=["scale"])
+            self.scale_cids.add(str(so.client_order_id))
+            self.submit_order(so)
+            if self.mode != "bars":
+                # resize the brackets
+                for cid in list(self.exit_ids):
+                    o = self.cache.order(self._cid(cid))
+                    if o is not None and o.is_open:
+                        self.cancel_order(o)
+                self.exit_ids.clear()
+                self._place_brackets(t)
 
         # -- exits ----------------------------------------------------------
         def _synthetic_exit(self, b: Bar, price: float, reason: str, ref: float):
@@ -408,7 +532,9 @@ def _make_strategy_class():
                             if o is not None and o.is_open:
                                 self.cancel_order(o)
                 return
-            if self.open is not None:   # flatten / synthetic market close
+            if cid in self.scale_cids:
+                return                      # partial exit: commission already booked on its own record
+            if self.open is not None:       # flatten / synthetic market close
                 self.open.commission += comm
 
         def on_position_opened(self, ev):
@@ -426,7 +552,6 @@ def _make_strategy_class():
                 exit_px, exit_ts, ref = self._synthetic_price, self._synthetic_ts or int(ev.ts_closed), self.pending_exit_ref
             else:
                 exit_px, exit_ts, ref = float(ev.avg_px_close), int(ev.ts_closed), self.pending_exit_ref
-            t.contracts = int(ev.peak_qty)
             t.entry_price = float(ev.avg_px_open)
             rec = self.ledger.close(t, exit_ts, exit_px, reason, self.bar_index, exit_ref_price=ref,
                                     commission=t.commission if t.commission else None)
