@@ -19,8 +19,8 @@ logged in [DECISIONS.md](DECISIONS.md).
 | 1 | Data layer v2 (tiered Parquet, instruments) | done — [docs/01-data.md](docs/01-data.md) |
 | 2 | Backtester v2 and validation | done — [docs/02-backtester.md](docs/02-backtester.md) |
 | 3 | Strategy DSL v2 and primitive registry | done — [docs/03-dsl.md](docs/03-dsl.md) |
-| 4 | Agent v2: runs, knowledge graph, research | next |
-| 5 | Chart, tick replay, order-flow visuals | |
+| 4 | Agent v2: runs, knowledge graph, research | done — [docs/04-agent.md](docs/04-agent.md) |
+| 5 | Chart, tick replay, order-flow visuals | next |
 | 6 | Teaching mode | |
 | 7 | Desk view and packaging | |
 
@@ -36,8 +36,11 @@ logged in [DECISIONS.md](DECISIONS.md).
   in a subprocess with futures PnL, commissions, slippage, ET sessions,
   in-sample / walk-forward / out-of-sample windows, Monte Carlo, deflated
   Sharpe and a risk-profile verdict (see [docs/02-backtester.md](docs/02-backtester.md)).
-- **Chat analyst** and strategy generation over the Anthropic API
-  (`ANTHROPIC_API_KEY`), plus the same tools exposed to the Hermes plugin.
+- **Agent runs** (prompt → variants → in-sample/walk-forward → ≤5 single-variable
+  experiments → one out-of-sample look → verdict; pause-to-ask; resumable),
+  **research worker** (web search → scored sources → knowledge facts) and the
+  **chat analyst**, all over the Anthropic API with a budget guard
+  ([docs/04-agent.md](docs/04-agent.md)); the same tools are exposed to the Hermes plugin.
 
 ## Running
 

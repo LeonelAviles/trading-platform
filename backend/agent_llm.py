@@ -495,10 +495,23 @@ def stream_chat(messages: list[dict], context: dict | None = None):
         return
 
     try:
+        from agent import client as llm_client
+        from agent import prompts as agent_prompts
+        from agent import tools_v2
+        from knowledge import graph as kg
+        from knowledge.local_store import format_facts
+
+        llm = llm_client.LLM(client)
+        last_user = next((m["content"] for m in reversed(wire) if m["role"] == "user" and isinstance(m["content"], str)), "")
+        facts = kg.search(last_user, k=8) if last_user else []
+        capped = llm_client.usage_summary().get("capped")
+        system = [{"type": "text", "text": CHAT_SYSTEM_PROMPT + agent_prompts.CHAT_EXTRA + (
+            "\n\nBUDGET CAP REACHED: answer from the knowledge block and conversation only; do not call tools." if capped else "")},
+                  {"type": "text", "text": format_facts(facts)}]
+        chat_tools = None if capped else tools_v2.anthropic_tools(include_ask=False, include_finalize=False, include_start_run=True)
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
-            with client.messages.stream(
-                model=MODEL, max_tokens=1536, system=CHAT_SYSTEM_PROMPT,
-                tools=agent_tools.ANTHROPIC_TOOLS, messages=wire,
+            with llm.stream(
+                purpose="chat", max_tokens=1536, system=system, tools=chat_tools, messages=wire,
             ) as stream:
                 for text in stream.text_stream:
                     yield {"type": "delta", "text": text}

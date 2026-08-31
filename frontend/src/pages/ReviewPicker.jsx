@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createBacktest, deleteBacktest, fetchBacktests, fetchStrategies } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import { describeExpr, describeStop, describeTarget } from '../spec/describe';
+import AgentRuns from '../components/AgentRuns';
 
 function formatWhen(iso) {
   if (!iso) return '';
@@ -129,6 +130,9 @@ export default function ReviewPicker() {
         </div>
 
         {error && <div className="review-error">{error}</div>}
+
+        <AgentRuns />
+        <div className="review-links"><Link to="/research">Research &amp; knowledge →</Link></div>
 
         {loading ? (
           <div className="review-empty">Loading…</div>

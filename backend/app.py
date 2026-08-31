@@ -43,6 +43,14 @@ async def _lifespan(_app: FastAPI):
     # engine set PLATFORM_SKIP_DB_INIT=1.
     if os.environ.get("PLATFORM_SKIP_DB_INIT") != "1":
         database.init_db()
+        try:
+            from agent import runs as agent_runs
+
+            resumed = agent_runs.resume_pending()
+            if resumed:
+                print(f"resumed agent runs: {resumed}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"agent run resume failed: {e}", flush=True)
     yield
 
 

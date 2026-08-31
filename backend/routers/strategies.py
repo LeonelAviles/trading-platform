@@ -41,20 +41,16 @@ def validate_strategy(strategy: dict = Body(...)):
 
 @router.post("/generate")
 def generate_strategy(body: dict = Body(...)):
-    """Idea -> strategy via the agent (blocking until Phase 4 makes it a run)."""
-    for field in ("name", "symbol", "direction", "prompt"):
-        if not body.get(field):
-            raise HTTPException(400, f"'{field}' is required")
-    try:
-        return agent_llm.generate_strategy(
-            name=body["name"], symbol=body["symbol"], direction=body["direction"],
-            prompt=body["prompt"], interval=body.get("interval") or None,
-            risk=body.get("risk"),
-        )
-    except agent_llm.LLMNotConfigured as e:
-        raise HTTPException(400, f"AI strategy generation not configured: {e}")
-    except Exception as e:
-        raise HTTPException(502, f"strategy generation failed: {e}")
+    """Idea -> strategies, as a resumable background AgentRun (Phase 4).
+    Returns the run; watch it at /api/agent/runs/:id or /ws/agent/:id.
+    Only `prompt` is required — name, symbol, direction and interval may be
+    left to the agent (direction is often one of the ambiguities)."""
+    from agent import runs
+
+    if not (body.get("prompt") or "").strip():
+        raise HTTPException(400, "'prompt' is required")
+    input_ = {k: body.get(k) for k in ("prompt", "symbol", "direction", "name", "interval", "risk") if body.get(k) is not None}
+    return runs.start_run("generate", input_)
 
 
 @router.get("/{strategy_id}")

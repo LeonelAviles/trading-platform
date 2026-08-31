@@ -1,0 +1,15 @@
+# Seed research topics (PLATFORM-SPEC.md §4.8). Loaded into research_queue on first run.
+topics:
+  - order flow and auction market theory for index futures
+  - "footprint charts: diagonal imbalance, stacked imbalances, absorption and exhaustion"
+  - opening range breakout and initial balance strategies on ES futures
+  - "volume profile: point of control, value area, profile shapes (P, b, D)"
+  - cumulative volume delta and delta divergence in futures trading
+  - VWAP strategies for intraday index futures
+  - ES and NQ microstructure, CME Globex sessions and roll dates
+  - position sizing, fixed fractional risk, Kelly fraction and risk of ruin for futures traders
+  - daily loss limits, drawdown control and consecutive-loss rules for discretionary and systematic traders
+  - walk-forward analysis and cross-validation for trading strategies
+  - deflated Sharpe ratio and backtest overfitting (Bailey, López de Prado)
+  - market regime detection for intraday futures strategies
+  - execution costs, slippage and commissions on E-mini index futures

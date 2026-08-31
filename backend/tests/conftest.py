@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pytest
 
+# Tests never download the sentence-transformers model or touch Neo4j.
+os.environ.setdefault("KNOWLEDGE_EMBEDDER", "hash")
+os.environ.setdefault("KNOWLEDGE_BACKEND", "local")
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))

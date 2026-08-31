@@ -272,6 +272,27 @@ class LlmUsage(Base):
     )
 
 
+class KnowledgeFact(Base):
+    """Local knowledge store — facts/claims/notes with an embedding, mirrored
+    from (or standing in for) the Graphiti graph (PLATFORM-SPEC.md §4.8)."""
+
+    __tablename__ = "knowledge_facts"
+
+    id: Mapped[str] = _id()
+    kind: Mapped[str] = mapped_column(String(24), default="fact", index=True)   # fact | claim | hypothesis | note | experiment | finding | teaching
+    text: Mapped[str] = mapped_column(Text)
+    tags_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("research_sources.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credibility: Mapped[float] = mapped_column(Float, default=0.5)
+    evidence_type: Mapped[str | None] = mapped_column(String(24), nullable=True)   # theory | backtest | anecdote | regulation
+    embedding_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    ref_id: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)   # strategy/backtest/session id it came from
+    created_at: Mapped[str] = _ts(index=True)
+    invalid_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

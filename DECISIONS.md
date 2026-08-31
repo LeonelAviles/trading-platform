@@ -146,3 +146,25 @@ decisions". Newest at the bottom.
     after migration, so old backtest rows still resolve.
 36. **ajv uses the 2020-12 dialect class** (`ajv/dist/2020`) because
     Pydantic emits `$schema: 2020-12`.
+
+## Phase 4 — Agent v2 (2026-08-31)
+
+37. **Knowledge backend falls back to a local SQLite store when Neo4j is not
+    reachable.** Docker is not installed here, so Graphiti cannot be
+    exercised; the facade keeps one API (`search`, `record_*`) and mirrors
+    every write into `knowledge_facts` regardless of backend, so the agent
+    and the tests work either way and the graph adds structure when present.
+38. **Protocol rules are enforced in `agent/flows.py`, not only in the
+    prompt**: variant cap, IS+WF-only backtests, OOS guard on every read
+    tool, change budget, early-stop advice, one OOS look per lineage.
+39. **`declare_variants` is a tool** so the ambiguity table is captured as
+    data (state + report) instead of parsed from prose.
+40. **`propose_risk_profile` takes the agent's numbers** (derived from
+    knowledge facts it cites) rather than computing them server-side; the
+    tool fills defaults, never overwrites a user-edited profile, and keeps
+    the agent proposal for the modal's reset button.
+41. **The WebSocket feed polls the persisted event log** (0.8 s) rather than
+    an in-process pub/sub — single user, restart-safe, and the same log is
+    what the REST endpoint returns.
+42. **Unattended acceptance run answers `ask_user` with the first offered
+    option** (see docs/04-agent.md); interactive use answers from the UI.

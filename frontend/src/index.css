@@ -705,3 +705,27 @@ select.chevron {
 .settings-table td, .settings-table th { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border); }
 .settings-table input { width: 120px; background: var(--surface-2, #1e222d); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
 .btn-sm { padding: 2px 8px; font-size: 11px; }
+
+
+/* --- Phase 4: agent runs / research ------------------------------------- */
+.agent-run-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.agent-run { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.agent-run-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; cursor: pointer; font-size: 13px; }
+.agent-run-prompt { flex: 1; min-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-status.running { background: #42a5f5; color: #fff; }
+.agent-status.paused_for_user { background: #ffc107; color: #222; }
+.agent-status.done { background: #26a69a; color: #fff; }
+.agent-status.error, .agent-status.budget_exhausted { background: #ef5350; color: #fff; }
+.agent-run-body { margin-top: 8px; }
+.agent-feed { max-height: 260px; overflow-y: auto; font-size: 12px; line-height: 1.45; background: var(--surface-2, #1e222d); border-radius: 6px; padding: 8px; }
+.agent-ev { padding: 2px 0; word-break: break-word; }
+.agent-ev-text { white-space: pre-wrap; }
+.agent-question { border: 1px solid #ffc107; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+.agent-question-text { font-weight: 600; margin-bottom: 6px; }
+.agent-question-options { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.agent-answer-input { flex: 1; background: var(--surface-2, #1e222d); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.agent-report { white-space: pre-wrap; font-size: 12px; line-height: 1.5; background: var(--surface-2, #1e222d); padding: 10px; border-radius: 6px; max-height: 400px; overflow: auto; }
+.agent-start { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.budget-gauge { height: 8px; background: var(--surface-3, #2a2e39); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.budget-fill { height: 100%; }
+.review-links { margin: 10px 0; font-size: 13px; }

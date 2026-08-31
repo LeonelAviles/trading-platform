@@ -223,3 +223,61 @@ export async function streamChat(messages, context, { onDelta, onTool, onError }
     }
   }
 }
+
+
+// --- agent runs (Phase 4) ---
+
+export async function fetchAgentRuns() {
+  return json(await fetch(`${BASE}/agent/runs`));
+}
+
+export async function fetchAgentRun(id) {
+  return json(await fetch(`${BASE}/agent/runs/${id}`));
+}
+
+// { kind: 'generate', prompt, symbol?, direction?, name?, interval?, risk? }
+export async function startAgentRun(body) {
+  return json(await fetch(`${BASE}/agent/runs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
+export async function answerAgentRun(id, text) {
+  return json(await fetch(`${BASE}/agent/runs/${id}/answer`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+  }));
+}
+
+export async function cancelAgentRun(id) {
+  return json(await fetch(`${BASE}/agent/runs/${id}/cancel`, { method: 'POST' }));
+}
+
+// Live event feed for one run. Calls onEvent(event) for each message; returns a close() fn.
+export function subscribeAgentRun(id, onEvent) {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${window.location.host}/ws/agent/${id}`);
+  ws.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch { /* ignore */ } };
+  return () => ws.close();
+}
+
+// --- research / knowledge / usage ---
+
+export async function fetchResearchQueue() { return json(await fetch(`${BASE}/research/queue`)); }
+export async function addResearchTopic(topic) {
+  return json(await fetch(`${BASE}/research/queue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic }) }));
+}
+export async function runResearch(maxTopics = 1) {
+  return json(await fetch(`${BASE}/research/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxTopics }) }));
+}
+export async function fetchResearchStatus() { return json(await fetch(`${BASE}/research/status`)); }
+export async function fetchResearchSources() { return json(await fetch(`${BASE}/research/sources`)); }
+export async function fetchPrimitiveRequests() { return json(await fetch(`${BASE}/research/primitive-requests`)); }
+export async function setPrimitiveRequestStatus(id, status) {
+  return json(await fetch(`${BASE}/research/primitive-requests/${id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }));
+}
+export async function searchKnowledge(q) { return json(await fetch(`${BASE}/knowledge/search?q=${encodeURIComponent(q)}`)); }
+export async function fetchUsage() { return json(await fetch(`${BASE}/usage`)); }
+export async function fetchSettings() { return json(await fetch(`${BASE}/settings`)); }
+export async function putSettings(values) {
+  return json(await fetch(`${BASE}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) }));
+}

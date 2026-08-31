@@ -15,7 +15,13 @@ function maxWidth() {
 // listed falls back to `Running <name>`, so this map only needs to cover the
 // tools whose raw name reads badly in the UI.
 const TOOL_LABELS = {
-  get_condition_vocabulary: 'Checking the rule vocabulary',
+  get_spec_schema: 'Reading the strategy schema',
+  search_knowledge: 'Searching the knowledge graph',
+  start_agent_run: 'Starting a background run',
+  propose_risk_profile: 'Proposing a risk profile',
+  evaluate_candidate: 'Evaluating against the risk profile',
+  get_regime_breakdown: 'Reading regime breakdown',
+  get_monte_carlo: 'Running Monte Carlo',
   create_strategy: 'Building the strategy',
   get_strategy: 'Reading the strategy',
   list_strategies: 'Reading strategies',

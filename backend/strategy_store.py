@@ -34,7 +34,10 @@ def coerce(doc: dict) -> dict:
 
 
 def validate(doc: dict) -> list[str]:
-    return spec_mod.validate_spec(coerce(doc))
+    spec = dict(coerce(doc))
+    for k in ("createdAt", "updatedAt"):
+        spec.pop(k, None)
+    return spec_mod.validate_spec(spec)
 
 
 def _to_dict(row: Strategy) -> dict:
