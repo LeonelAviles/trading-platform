@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import {
   addResearchSource, addResearchTopic, fetchPrimitiveRequests, fetchResearchQueue, fetchResearchSettings, fetchResearchSources,
   fetchResearchStatus, fetchUsage, putResearchSettings, putSettings, runResearch, searchKnowledge, setPrimitiveRequestStatus,
@@ -271,7 +272,10 @@ export default function ResearchPage() {
         </section>
 
         <section className="review-card">
-          <div className="review-card-name">Knowledge search</div>
+          <header className="review-card-head">
+            <div className="review-card-name">Knowledge search</div>
+            <Link className="btn btn-sm" to="/knowledge">Open the knowledge graph →</Link>
+          </header>
           <div className="chat-input-row">
             <input className="agent-answer-input" value={q} placeholder="e.g. daily loss limit" onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') searchKnowledge(q).then(setHits); }} />

@@ -24,3 +24,4 @@ httpx
 
 # Raw-data archive to S3 (scripts/archive.py, scripts/restore.py)
 boto3
+networkx>=3.2          # knowledge graph communities (Louvain) for the /knowledge page

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "ajv": "^8.20.0",
+    "d3-force": "^3.0.0",
     "lightweight-charts": "^5.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

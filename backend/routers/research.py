@@ -113,6 +113,34 @@ def set_primitive_request_status(req_id: str, body: dict = Body(...)):
         return {"id": row.id, "status": status}
 
 
+@router.get("/knowledge/graph")
+def knowledge_graph(min_credibility: float = 0.0, kinds: str | None = None, tiers: str | None = None, sources: bool = True, max_nodes: int = 600):
+    """Nodes / edges / clusters / central concepts / gaps for the /knowledge page.
+    `kinds` and `tiers` are comma-separated filters."""
+    from knowledge import graph_view
+
+    k = tuple(x for x in (kinds or "").split(",") if x) or None
+    t = tuple(int(x) for x in (tiers or "").split(",") if x.strip().isdigit()) or None
+    return graph_view.build(min_credibility=min_credibility, kinds=k, tiers=t, include_sources=sources, max_nodes=max(50, min(2000, max_nodes)))
+
+
+@router.get("/knowledge/graph/node/{node_id:path}")
+def knowledge_graph_node(node_id: str):
+    from knowledge import graph_view
+
+    d = graph_view.node_detail(node_id)
+    if d is None:
+        raise HTTPException(404, "node not found")
+    return d
+
+
+@router.get("/knowledge/facts")
+def knowledge_facts(ids: str):
+    from knowledge import graph_view
+
+    return graph_view.facts_by_id([x for x in ids.split(",") if x][:200])
+
+
 @router.get("/knowledge/search")
 def knowledge_search(q: str, k: int = 12, min_credibility: float = 0.4):
     return kg.search(q, k=k, min_credibility=min_credibility)

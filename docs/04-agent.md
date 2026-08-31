@@ -172,6 +172,46 @@ decisions incl. the budget cap, routes). Live reading still needs Anthropic
 credits (DECISIONS #43): the smoke test on this machine got as far as the
 scorer and recorded the "credit balance is too low" error on the job.
 
+## Knowledge graph page (`/knowledge`)
+
+An interactive picture of what the agent knows (`backend/knowledge/graph_view.py`,
+`GET /api/knowledge/graph`, `frontend/src/pages/KnowledgePage.jsx`):
+
+- **Nodes**: concepts (the tags the summariser put on each fact, normalised —
+  `order-flow` and `order flow` are one node), topics (queue topics that
+  produced facts), instruments, regimes, sources (square; gold ring when you
+  provided it), strategies and teaching sessions (diamonds, from `ref_id`).
+  Size = number of facts; colour = cluster.
+- **Edges**: two concept-like nodes on the same fact (weight = how many
+  facts); source / strategy → concept for the facts they carry. Every edge
+  keeps the ids of the facts behind it, so clicking a neighbour chip shows
+  exactly the facts that connect two concepts.
+- **Clusters**: Louvain communities (networkx, seeded) of the concept +
+  regime subgraph — topics and instruments are hubs on nearly every fact and
+  are kept out of the community step so the graph does not collapse into one
+  blob. Named by their three most-mentioned concepts.
+- **Analytics panel**: main topics (click to focus), most central concepts
+  (weighted degree, with how many other clusters they bridge), hubs, and
+  **content gaps**: queued topics with no facts yet, thin clusters (several
+  concepts, ≤3 facts), islands, isolated concepts and concepts whose facts
+  average credibility < 0.4 — each with a suggested topic and a **queue
+  topic** button that feeds self-study.
+- **Interaction**: drag to pan, wheel to zoom, drag nodes (d3-force
+  simulation on a canvas), hover to highlight a neighbourhood, click for the
+  facts with credibility / kind / source, double-click a concept to reveal
+  its sources and strategies. Filters: min credibility, min facts per node,
+  kinds, source tier, node types, find-a-concept (highlights).
+
+The graph is built from the local fact store, which mirrors everything that
+goes to Neo4j, so the page works the same with either backend. On this
+machine's 170 facts: 239 nodes, 1,539 edges, 24 clusters (many are 2–3 concept
+footprint sub-clusters), built in ~0.15 s;
+the gaps list is the ten unread seed topics plus five thin footprint
+sub-clusters and six low-credibility hubs (order flow, risk management,
+reversal…) — the same conclusion as the earlier review, now visible.
+Typed Graphiti relationships (SUPPORTED_BY, TESTED_ON) are not drawn yet;
+edges are co-occurrence in both modes.
+
 ## Deferred
 
 - Neo4j/Graphiti path is wired but unverified on this machine (no Docker); the local store is the

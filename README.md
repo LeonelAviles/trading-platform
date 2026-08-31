@@ -68,7 +68,9 @@ logged in [DECISIONS.md](DECISIONS.md).
   **research worker** (web search → scored sources → knowledge facts; a
   self-study schedule reads the queue on its own within the daily budget,
   you can hand it a URL / PDF / pasted text, and trusted-domain lists pin
-  source tiers) and the **chat analyst**, all over the Anthropic API with a budget guard
+  source tiers; `/knowledge` draws the knowledge graph — concepts, sources,
+  strategies, clusters, central concepts and content gaps — interactively)
+  and the **chat analyst**, all over the Anthropic API with a budget guard
   ([docs/04-agent.md](docs/04-agent.md)); the same tools are exposed to the Hermes plugin.
 
 ## Running

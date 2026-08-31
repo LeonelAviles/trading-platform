@@ -286,3 +286,19 @@ decisions". Newest at the bottom.
     and the "worker already running" lock, and records every skip with its
     reason. Interval and topics-per-run live in settings; `RESEARCH_SCHEDULER=0`
     turns the loop off for tests and one-shot scripts.
+
+## Knowledge graph page (2026-08-31)
+
+64. **The graph view is built from the local fact store, not Neo4j**, and
+    its edges are co-occurrence of concept tags on a fact. The local store
+    mirrors every fact that goes to Graphiti, so the page is complete on both
+    backends and needs no Docker; typed relationships from the Graphiti
+    ontology can be layered on later without changing the page.
+65. **Communities are computed over concepts and regimes only.** Topics and
+    instruments sit on almost every fact; including them gave one cluster of
+    215 nodes. They are drawn as hubs (white / light nodes) and listed
+    separately. Louvain via `networkx` (added to requirements; seeded, so the
+    picture is stable across reloads) with label propagation as the fallback.
+66. **Sources, strategies and sessions are hidden by default** and appear on
+    demand (toggle, or double-click a concept) — with them always on, 14
+    sources each linked to ~12 concepts dominate the layout.

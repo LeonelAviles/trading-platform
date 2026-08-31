@@ -359,3 +359,13 @@ export async function uploadResearchSource(file, { title, topic } = {}) {
     method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
   }));
 }
+
+// --- Knowledge graph --------------------------------------------------------
+export async function fetchKnowledgeGraph({ minCredibility = 0, kinds = [], tiers = [], sources = true } = {}) {
+  const p = new URLSearchParams({ min_credibility: String(minCredibility), sources: String(sources) });
+  if (kinds.length) p.set('kinds', kinds.join(','));
+  if (tiers.length) p.set('tiers', tiers.join(','));
+  return json(await fetch(`${BASE}/knowledge/graph?${p}`));
+}
+export async function fetchKnowledgeNode(id) { return json(await fetch(`${BASE}/knowledge/graph/node/${encodeURIComponent(id)}`)); }
+export async function fetchKnowledgeFacts(ids) { return json(await fetch(`${BASE}/knowledge/facts?ids=${encodeURIComponent(ids.join(','))}`)); }

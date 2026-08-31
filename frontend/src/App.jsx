@@ -8,6 +8,7 @@ import StrategyPage from './pages/StrategyPage';
 import ResearchPage from './pages/ResearchPage';
 import ChartPage from './pages/ChartPage';
 import TeachPage from './pages/TeachPage';
+import KnowledgePage from './pages/KnowledgePage';
 
 // Two kinds of chart: /review/:backtestId is bound to the backtest it names
 // (no symbol picker there), and /chart/:symbol is the free chart with tick
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/review/:backtestId" element={<CandlestickPage />} />
             <Route path="/strategies/:strategyId" element={<StrategyPage />} />
             <Route path="/research" element={<ResearchPage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
             <Route path="/chart/:symbol" element={<ChartPage />} />
             <Route path="/chart" element={<Navigate to="/chart/ES1!" replace />} />
             <Route path="/teach/:sessionId" element={<TeachPage />} />

@@ -130,6 +130,7 @@ export default function DeskPage() {
             <Link to="/review">Strategy reviews →</Link>
             <Link to="/chart/ES1!">Chart &amp; tick replay →</Link>
             <Link to="/research">Research &amp; knowledge →</Link>
+            <Link to="/knowledge">Knowledge graph →</Link>
             <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>Import package…</button>
             <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
           </div>
