@@ -668,3 +668,16 @@ select.chevron {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
 }
+
+
+/* --- Phase 2: validation / verdict --------------------------------------- */
+.validation-wrap { display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
+.verdict-banner { padding: 8px 12px; border-radius: 6px; font-size: 13px; border: 1px solid var(--border, #333); }
+.verdict-banner.pass { background: rgba(38, 166, 154, 0.15); border-color: #26a69a; }
+.verdict-banner.fail { background: rgba(239, 83, 80, 0.15); border-color: #ef5350; }
+.verdict-banner.untestable { background: rgba(255, 193, 7, 0.12); border-color: #ffc107; }
+.verdict-banner ul { margin: 6px 0 0 18px; padding: 0; font-weight: normal; opacity: 0.85; }
+.review-chip { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; margin-right: 4px; border: 1px solid var(--border, #444); opacity: 0.9; }
+.review-chip.verdict.pass { background: #26a69a; color: #fff; border-color: #26a69a; }
+.review-chip.verdict.fail { background: #ef5350; color: #fff; border-color: #ef5350; }
+.review-chip.verdict.untestable { background: #ffc107; color: #222; border-color: #ffc107; }

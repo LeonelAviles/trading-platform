@@ -200,10 +200,22 @@ def generate_mbo(cfg: SynthConfig | None = None) -> pd.DataFrame:
                 seq += 1
                 rows.append((ts, ts, symbol, "C", s, px, sz, oid, seq, 0))
 
-            # Random-walk the mid by re-seeding a level when the touch empties.
-            if book.best(resting_side) is None or rng.random() < cfg.volatility_ticks_per_s / max(rate, 1e-9) * 0.1:
-                px = best + (cfg.tick_size if aggressor_buy else -cfg.tick_size) * cfg.depth
-                act, s, p, sz, oid = book.add(resting_side, round(px / cfg.tick_size) * cfg.tick_size)
+            # Random walk driven by aggressor flow. The spread is kept at one
+            # tick: whichever side fell behind after a sweep gets a fresh
+            # resting order one tick inside the other side's best, so the
+            # mid moves with the flow and the two ladders never drift apart.
+            bb, ba = book.best("B"), book.best("A")
+            tick = cfg.tick_size
+            if ba is None and bb is not None:
+                ev = book.add("A", round((bb + tick) / tick) * tick)
+            elif bb is None and ba is not None:
+                ev = book.add("B", round((ba - tick) / tick) * tick)
+            elif bb is not None and ba is not None and ba - bb > tick + 1e-9:
+                ev = book.add("B", round((ba - tick) / tick) * tick) if aggressor_buy else book.add("A", round((bb + tick) / tick) * tick)
+            else:
+                ev = None
+            if ev is not None:
+                act, s, p, sz, oid = ev
                 seq += 1
                 rows.append((ts, ts, symbol, act, s, p, sz, oid, seq, 0))
 

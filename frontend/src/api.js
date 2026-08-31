@@ -113,13 +113,32 @@ export async function deleteBacktest(id) {
 }
 
 // Kicks off an engine run for a strategy and returns the (initially
-// 'preparing') job — the review route polls it from there.
-export async function createBacktest(strategyId) {
+// 'queued') job — the review route polls it from there.
+// options: { mode: 'bars'|'ticks'|'l3', windowKind: 'is'|'wf1'|'wf2'|'wf3'|'oos'|'full' }
+export async function createBacktest(strategyId, options = {}) {
   return json(await fetch(`${BASE}/backtests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ strategyId }),
+    body: JSON.stringify({ strategyId, ...options }),
   }));
+}
+
+// Queues IS + WF1–3 for a strategy (never OOS); returns the jobs.
+export async function createValidation(strategyId, mode) {
+  return json(await fetch(`${BASE}/backtests/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ strategyId, mode }),
+  }));
+}
+
+export async function fetchBacktestAnalytics(id) {
+  return json(await fetch(`${BASE}/backtests/${id}/analytics`));
+}
+
+// IS / WF / OOS (hidden until finalize) / Monte Carlo / DSR / verdict.
+export async function fetchBacktestValidation(id) {
+  return json(await fetch(`${BASE}/backtests/${id}/validation`));
 }
 
 // --- assistant chat ---

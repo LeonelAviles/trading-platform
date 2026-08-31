@@ -82,3 +82,35 @@ decisions". Newest at the bottom.
     `catalog_manifest.json` per day. Bars/CVD treat `N` as zero delta.
 19. **MBP-10 files are relocated but not ingested** (schema not in §4.1);
     the manifest records them so archive/restore still covers them.
+
+## Phase 2 — Backtester v2 (2026-08-31)
+
+20. **Market fills use NautilusTrader's L1 model** — the order fills at the
+    venue's current last price (the print that closed the signal bar) plus
+    one tick, rather than the spec's "next trade price". The difference is
+    one print and the slippage tick covers it; keeping Nautilus's matching
+    means the same numbers appear in its own account and position events.
+21. **Limit exits fill one tick worse** (`FillModel(prob_slippage=1)` applies
+    to limits too). This is taken as the implementation of the spec's
+    conservative `trade_through` rule for bar/tick modes.
+22. **Bars mode books stop/target exits at the level** (stop − slippage,
+    stop first when both touched) in the ledger while flattening Nautilus at
+    market; the ledger is the source of truth for PnL, Nautilus is the
+    matching/event engine. Ticks mode uses Nautilus fills verbatim.
+23. **Brackets are placed once the entry is fully filled** — market orders
+    fill across several prints and a stop sized on a partial fill leaves
+    contracts unprotected (found on real data).
+24. **Stop/target are re-anchored to the entry fill** for distance-based
+    types so an N-tick stop is exactly N ticks of risk; structure levels
+    from rules are absolute.
+25. **`l3` mode falls back to `ticks`** with a note until Phase 5 produces
+    `OrderBookDelta` data.
+26. **Legacy v1 strategies run on the new engine through `V1Rules`** (no
+    conversion needed yet; the v1→v2 converter is Phase 3). Their UTC
+    sessions are converted to ET on the run's first date and clamped to RTH;
+    `percent_equity` sizing is treated as 0.5 % fixed risk; default mode for
+    v1 specs is `bars` (fast), for v2 specs `ticks` per §4.3.
+27. **UI default window is `full`**; the agent tool `run_backtest` uses `is`.
+    OOS blindness is an agent property, not a human one.
+28. **IS jobs store their verdict on the row** (`metrics_json.verdict`) at
+    finish so lists show chips without recomputing Monte Carlo per request.

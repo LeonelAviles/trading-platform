@@ -676,6 +676,8 @@ export default function CandlestickPage() {
         cvd={visibleCvd}
         open={analysisPanelOpen}
         onToggle={() => setAnalysisPanelOpen((o) => !o)}
+        backtestId={backtestId}
+        jobStatus={job?.status}
       />
     </div>
   );

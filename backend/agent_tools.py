@@ -194,7 +194,9 @@ def run_backtest(strategy_id: str, timeout_s: float = 180.0) -> dict:
     trades back to analyze next, so it waits rather than returning a job id
     to poll."""
     strategy = get_strategy(strategy_id)
-    job = nautilus_runner.start_backtest(strategy)
+    # In-sample only: the agent never sees out-of-sample data before
+    # finalize (PLATFORM-SPEC.md §4.5). Walk-forward rows join in Phase 4.
+    job = nautilus_runner.start_backtest(strategy, window_kind="is")
     job_id = job["id"]
 
     import time

@@ -89,6 +89,13 @@ export default function ReviewPicker() {
             <button className="review-run-open" onClick={() => navigate(`/review/${b.id}`)}>
               <span className="review-run-tf">{b.interval || '1min'}</span>
               <span className="review-run-when">{formatWhen(b.createdAt)}</span>
+              {b.windowKind && b.windowKind !== 'full' && <span className="review-chip window">{b.windowKind.toUpperCase()}</span>}
+              {b.mode && <span className="review-chip mode">{b.mode}</span>}
+              {b.metrics?.verdict && (
+                <span className={`review-chip verdict ${b.metrics.verdict.status}`} title={(b.metrics.verdict.failures || []).join('\n')}>
+                  {b.metrics.verdict.status}
+                </span>
+              )}
               {b.status === 'done' && b.summary ? (
                 <span className="review-run-stats">
                   <span>{b.summary.trades} trades</span>

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchBacktestAnalytics, fetchBacktestValidation } from '../api';
 import { useResizable } from '../hooks/useResizable';
 
 const MIN_HEIGHT = 120;
@@ -19,14 +20,164 @@ const TABS = [
   { id: 'trades', label: 'Trades' },
   { id: 'performance', label: 'Performance' },
   { id: 'cvd', label: 'CVD' },
+  { id: 'validation', label: 'Validation' },
+  { id: 'montecarlo', label: 'Monte Carlo' },
+  { id: 'regimes', label: 'Regimes' },
 ];
+
+const fmtNum = (v, d = 2) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(d));
+const fmtPct = (v, d = 1) => (v == null ? '—' : `${Number(v).toFixed(d)}%`);
+
+// Metrics table for one validation window (IS / WF / OOS).
+function MetricsRow({ label, m, hidden }) {
+  if (hidden) {
+    return (
+      <tr><td>{label}</td><td colSpan={6} className="muted">hidden until finalize</td></tr>
+    );
+  }
+  if (!m) return <tr><td>{label}</td><td colSpan={6} className="muted">not run</td></tr>;
+  return (
+    <tr>
+      <td>{label}</td>
+      <td>{m.trades}</td>
+      <td className={m.netPnl >= 0 ? 'pos' : 'neg'}>{fmtMoney(m.netPnl || 0)}</td>
+      <td>{fmtNum(m.profitFactor)}</td>
+      <td>{fmtNum(m.expectancyR, 3)}</td>
+      <td>{fmtPct(m.maxDrawdownPct)}</td>
+      <td>{fmtNum(m.sharpe)}</td>
+    </tr>
+  );
+}
+
+function ValidationTab({ report, loading }) {
+  if (loading) return <div className="analysis-empty">Loading validation…</div>;
+  if (!report || !report.inSample) {
+    return <div className="analysis-empty">No in-sample run yet — queue a validation (IS + walk-forward) for this strategy.</div>;
+  }
+  const v = report.verdict;
+  return (
+    <div className="validation-wrap">
+      {v && (
+        <div className={`verdict-banner ${v.status}`}>
+          <b>{v.status === 'pass' ? 'PASS — candidate for forward test' : v.status === 'fail' ? 'FAIL' : 'UNTESTABLE'}</b>
+          {v.failures?.length > 0 && <ul>{v.failures.map((f) => <li key={f}>{f}</li>)}</ul>}
+        </div>
+      )}
+      <table className="trades-table">
+        <thead><tr><th>Window</th><th>Trades</th><th>Net P&amp;L</th><th>PF</th><th>Exp. R</th><th>Max DD</th><th>Sharpe</th></tr></thead>
+        <tbody>
+          <MetricsRow label={`In-sample ${report.windows?.is ? `${report.windows.is.dateFrom} → ${report.windows.is.dateTo}` : ''}`} m={report.inSample} />
+          {(report.walkForward || []).map((w) => (
+            <MetricsRow key={w.window} label={`${w.window.toUpperCase()}`} m={w} />
+          ))}
+          <MetricsRow label="Out-of-sample" m={report.outOfSample} hidden={report.oosHidden} />
+        </tbody>
+      </table>
+      {report.deflatedSharpe && (
+        <div className="analysis-stats-row">
+          <span>Deflated Sharpe <b>{fmtNum(report.deflatedSharpe.dsr, 3)}</b></span>
+          <span>Annualised SR <b>{fmtNum(report.deflatedSharpe.sharpeAnnualized)}</b></span>
+          <span>Trials <b>{report.deflatedSharpe.trials}</b></span>
+          <span>Sessions <b>{report.deflatedSharpe.observations}</b></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MonteCarloTab({ report, loading }) {
+  const mc = report?.monteCarlo;
+  if (loading) return <div className="analysis-empty">Loading Monte Carlo…</div>;
+  if (!mc) return <div className="analysis-empty">Monte Carlo needs a finished in-sample run.</div>;
+  const b = mc.bootstrap; const k = mc.skip;
+  const row = (label, o, money = true) => (
+    <tr key={label}><td>{label}</td>
+      {['p5', 'p50', 'p95'].map((q) => <td key={q}>{o ? (money ? fmtMoney(o[q]) : fmtPct(o[q])) : '—'}</td>)}
+    </tr>
+  );
+  return (
+    <div className="validation-wrap">
+      <table className="trades-table">
+        <thead><tr><th>Bootstrap ({b.runs} reshuffles of {b.trades} trades)</th><th>5th</th><th>50th</th><th>95th</th></tr></thead>
+        <tbody>
+          {row('Max drawdown ($)', b.maxDrawdown)}
+          {b.maxDrawdownPct && row('Max drawdown (%)', b.maxDrawdownPct, false)}
+          {row('Final equity ($)', b.finalEquity)}
+        </tbody>
+      </table>
+      <table className="trades-table">
+        <thead><tr><th>Skip test (drop {Math.round(k.dropFraction * 100)}% of trades, {k.runs} runs)</th><th>5th</th><th>50th</th><th>95th</th></tr></thead>
+        <tbody>
+          {row('Final equity ($)', k.finalEquity)}
+          {row('Max drawdown ($)', k.maxDrawdown)}
+        </tbody>
+      </table>
+      <div className="analysis-stats-row">
+        <span>P(loss) bootstrap <b>{fmtPct(b.probLoss * 100)}</b></span>
+        <span>P(loss) skip test <b>{fmtPct(k.probLoss * 100)}</b></span>
+        <span>Baseline <b>{fmtMoney(k.baseline)}</b></span>
+      </div>
+    </div>
+  );
+}
+
+function RegimesTab({ analytics, loading }) {
+  if (loading) return <div className="analysis-empty">Loading regimes…</div>;
+  const by = analytics?.byRegime || {};
+  const tags = Object.keys(by);
+  if (!tags.length) return <div className="analysis-empty">No regime tags on these trades yet.</div>;
+  return (
+    <div className="validation-wrap">
+      <table className="trades-table">
+        <thead><tr><th>Regime</th><th>Trades</th><th>Net P&amp;L</th><th>Win rate</th><th>PF</th><th>Exp. R</th></tr></thead>
+        <tbody>
+          {tags.map((t) => (
+            <tr key={t}>
+              <td>{t}</td><td>{by[t].trades}</td>
+              <td className={by[t].netPnl >= 0 ? 'pos' : 'neg'}>{fmtMoney(by[t].netPnl)}</td>
+              <td>{fmtPct(by[t].winRate)}</td><td>{fmtNum(by[t].profitFactor)}</td><td>{fmtNum(by[t].expectancyR, 3)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {analytics?.byHour?.length > 0 && (
+        <table className="trades-table">
+          <thead><tr><th>Entry hour (ET)</th><th>Trades</th><th>Net P&amp;L</th><th>Win rate</th><th>PF</th></tr></thead>
+          <tbody>
+            {analytics.byHour.map((h) => (
+              <tr key={h.hourEt}><td>{h.hourEt}:00</td><td>{h.trades}</td>
+                <td className={h.netPnl >= 0 ? 'pos' : 'neg'}>{fmtMoney(h.netPnl)}</td><td>{fmtPct(h.winRate)}</td><td>{fmtNum(h.profitFactor)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 // Bottom dock on the chart page: switches between the trade log, an equity
 // curve, and cumulative volume delta — the surfaces you'd use while
 // analyzing a backtest or a replay in progress. Collapsible, like the
 // strategy panel — collapsed leaves just the tab bar visible.
-export default function AnalysisPanel({ trades, cvd, open, onToggle }) {
+export default function AnalysisPanel({ trades, cvd, open, onToggle, backtestId, jobStatus }) {
   const [tab, setTab] = useState('trades');
+  // Validation report + full analytics are fetched lazily, once per finished job.
+  const [report, setReport] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [loadingExtra, setLoadingExtra] = useState(false);
+  useEffect(() => {
+    setReport(null); setAnalytics(null);
+  }, [backtestId]);
+  useEffect(() => {
+    const needs = ['validation', 'montecarlo', 'regimes'].includes(tab);
+    if (!needs || !backtestId || jobStatus !== 'done' || report || loadingExtra) return;
+    let cancelled = false;
+    setLoadingExtra(true);
+    Promise.all([fetchBacktestValidation(backtestId).catch(() => null), fetchBacktestAnalytics(backtestId).catch(() => null)])
+      .then(([r, a]) => { if (!cancelled) { setReport(r || {}); setAnalytics(a); } })
+      .finally(() => { if (!cancelled) setLoadingExtra(false); });
+    return () => { cancelled = true; };
+  }, [tab, backtestId, jobStatus, report, loadingExtra]);
   const panelRef = useRef(null);
   const { size: height, resizing, bind } = useResizable({
     key: 'analysisPanelHeight', defaultSize: 230, min: MIN_HEIGHT, max: maxHeight, cursor: 'row-resize',
@@ -129,9 +280,13 @@ export default function AnalysisPanel({ trades, cvd, open, onToggle }) {
                 <LineChart points={cvd.map((p) => p.cvd)} />
               )
             )}
+
+            {tab === 'validation' && <ValidationTab report={report} loading={loadingExtra} />}
+            {tab === 'montecarlo' && <MonteCarloTab report={report} loading={loadingExtra} />}
+            {tab === 'regimes' && <RegimesTab analytics={analytics} loading={loadingExtra} />}
           </div>
 
-          {stats && tab !== 'cvd' && (
+          {stats && ['trades', 'performance'].includes(tab) && (
             <div className="analysis-stats-row">
               <span>Net P&amp;L <b className={stats.totalPnl >= 0 ? 'pos' : 'neg'}>{fmtMoney(stats.totalPnl)}</b></span>
               <span>Win rate <b>{stats.winRate}%</b></span>
