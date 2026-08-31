@@ -70,8 +70,42 @@ def get_spec_schema() -> dict:
         {"name": "ORB 15m — retest", "spec": _EXAMPLE_ORB_RETEST},
         {"name": "Teaching-derived: OR-low absorption longs", "spec": _EXAMPLE_TEACHING},
     ]
-    return {"schema": spec_mod.json_schema(), "primitives": spec_mod.primitive_docs(), "operators": sorted(X.OPS),
-            "fields": list(X.FIELDS), "timeframes": list(spec_mod.TIMEFRAMES), "examples": examples}
+    # Compact on purpose: the full JSON Schema is 40 KB and would be truncated in a tool result.
+    prims = [{"name": d["name"], "doc": d["doc"], "output": d["output"], "updateOn": d["updateOn"], "tf": d["tfCapable"],
+              "params": {k: (v["type"] + (f" default {v['default']}" if v.get("default") is not None else " REQUIRED") + (f" one of {v['choices']}" if v.get("choices") else ""))
+                         for k, v in d["params"].items()}} for d in spec_mod.primitive_docs()]
+    return {"specShape": _SPEC_SHAPE, "primitives": prims, "operators": sorted(X.OPS), "operatorSemantics": _OPERATOR_DOCS,
+            "fields": list(X.FIELDS), "timeframes": list(spec_mod.TIMEFRAMES), "structures": list(spec_mod.STRUCTURES),
+            "levels": list(spec_mod.LEVELS), "examples": examples,
+            "notes": ["Omit fields that equal their defaults to keep tool inputs short.",
+                      "Leaves: numbers, {\"ind\": name, \"params\": {...}, \"tf\"?}, {\"field\": open|high|low|close|volume|delta, \"tf\"?}.",
+                      "Context timeframes must be coarser multiples of the primary and listed in timeframes.context."]}
+
+
+_SPEC_SHAPE = {
+    "schemaVersion": 2, "name": "str", "description": "str?",
+    "instrument": {"root": "ES|NQ|MES|MNQ", "symbol": "ES1!|NQ1!|..."},
+    "timeframes": {"primary": "1min|5min|15min|30min|1h|4h|1D", "context": ["same choices, coarser than primary"]},
+    "direction": "long|short|both (both = short side mirrors the long rules)",
+    "session": {"entryWindow": {"start": "HH:MM ET", "end": "HH:MM ET"}, "noTradeWindows": [{"start": "HH:MM", "end": "HH:MM"}], "flattenAt": "HH:MM ET (default 15:58)"},
+    "entry": {"trigger": "expr", "sequence": [{"when": "expr", "withinBars": "int"}], "orderType": "market|limit|stop",
+              "limitOffsetTicks": "int", "stopOffsetTicks": "int", "timeoutBars": "int"},
+    "filters": ["expr (ANDed with trigger; one per toggle-able idea)"],
+    "exit": {"stop": {"type": "atr|ticks|points|percent|structure", "value": "number", "period": "int (atr)", "structure": "swing_low|swing_high|or_low|or_high|session_low|session_high|bar_low|bar_high", "bufferTicks": "int"},
+             "target": {"type": "rr|ticks|points|level", "value": "number", "level": "session_high|session_low|vah|val|poc|prior_day_high|prior_day_low|or_high|or_low|vwap"},
+             "trailing": {"type": "atr|ticks", "value": "number", "period": "int", "activateAtR": "number"}, "breakeven": {"atR": "number", "offsetTicks": "int"},
+             "timeStop": {"bars": "int"}, "scaleOut": [{"atR": "number", "fraction": "0-1"}]},
+    "sizing": {"type": "fixed_risk|fixed_contracts|vol_scaled", "value": "number (% risk or contracts)", "maxContracts": "int"},
+    "constraints": {"maxTradesPerDay": "int", "cooldownBars": "int", "stopAfterConsecutiveLosses": "int"},
+    "execution": {"mode": "bars|ticks|l3"},
+}
+_OPERATOR_DOCS = {
+    "and/or/not": "boolean combinators", "gt/gte/lt/lte/eq": "compare two values", "between(x, lo, hi)": "lo <= x <= hi",
+    "cross_above(a, b)/cross_below(a, b)": "a crossed b on this bar close", "rising(x, bars)/falling(x, bars)": "x monotonic for N bars",
+    "within_ticks(a, b, n)": "|a - b| <= n ticks", "touched(level, toleranceTicks, withinBars)": "price came within tolerance of level in the last N bars",
+    "held_above(level, bars)/held_below(level, bars)": "closes stayed beyond level for N bars", "bars_since(expr)": "bars since expr was last true (compare with gt/gte)",
+    "retest(level, toleranceTicks, withinBars)": "broke level in the trade direction, came back within tolerance, closed back on the breakout side",
+}
 
 
 def get_condition_vocabulary() -> dict:

@@ -70,7 +70,7 @@ def test_full_generate_flow_with_pause_and_finalize(store):
         [("tool_use", "create_strategy", {"spec": {**SPEC, "name": "ORB (breakout)"}})],
         [("tool_use", "propose_risk_profile", {"strategy_id": "$S0", "risk": {"riskPerTradePct": 0.5, "dailyLossLimitPct": 2}, "rationale": "sizing facts"})],
         [("tool_use", "run_backtest", {"strategy_id": "$S0"})],
-        [("tool_use", "get_backtest", {"job_id": "$OOSPROBE"})],          # OOS blindness: probing a non-existent id is harmless; the guard is tested below
+        [("text", "")],   # an empty turn must be nudged, not treated as done
         [("tool_use", "ask_user", {"question": "Attack the stop or the target?", "options": ["stop", "target"]})],
         [("tool_use", "propose_strategy_revision", {"base_strategy_id": "$S0", "changes": {"exit.target.value": 3.0}, "rationale": "answer said target (job $J0)", "changed_variable": "exit.target.value"})],
         [("tool_use", "finalize_strategy", {"strategy_id": "$S0", "reason": "baseline"})],

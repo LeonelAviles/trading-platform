@@ -677,7 +677,7 @@ export default function CandlestickPage() {
         open={analysisPanelOpen}
         onToggle={() => setAnalysisPanelOpen((o) => !o)}
         backtestId={backtestId}
-        jobStatus={job?.status}
+        jobStatus={selectedJob?.status}
       />
     </div>
   );

@@ -29,7 +29,7 @@ def _ok(result: dict) -> bool:
 
 class GenerateFlow:
     kind = "generate"
-    max_tokens = 2048
+    max_tokens = 8192
 
     # -- prompt --------------------------------------------------------------
     def init_state(self, input_: dict, state: dict) -> dict:

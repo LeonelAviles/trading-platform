@@ -225,6 +225,21 @@ def _loop(run_id: str) -> None:
             for t in texts:
                 _emit(state, run_id, "text", text=t[:4000])
             tool_calls = [b for b in blocks if b.get("type") == "tool_use"]
+            stop_reason = getattr(response, "stop_reason", None)
+            if not tool_calls and (stop_reason == "max_tokens" or not "".join(texts).strip()):
+                # Cut off mid-message (or an empty turn): nudge once per round instead of finishing.
+                state["nudges"] = state.get("nudges", 0) + 1
+                if state["nudges"] > 3:
+                    state["error"] = "model produced no usable output after 3 nudges"
+                    _emit(state, run_id, "error", message=state["error"])
+                    _save(run_id, state, status="error")
+                    return
+                _emit(state, run_id, "nudge", reason=stop_reason or "empty")
+                state["messages"].append({"role": "user", "content": (
+                    "Your last message was cut off by the length limit or was empty. Continue from where you stopped; "
+                    "keep tool inputs compact (omit spec fields that equal their defaults).")})
+                _save(run_id, state, status="running")
+                continue
             if not tool_calls:
                 state = flow.finish(input_, state, "\n\n".join(texts))
                 _emit(state, run_id, "done", report=state.get("report"))
