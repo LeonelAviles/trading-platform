@@ -897,3 +897,17 @@ select.chevron {
 .compare-verdict { margin-top: 8px; font-size: 13px; }
 .compare-warning { font-size: 12px; color: #ffc107; margin-top: 4px; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* --- Research: owner sources, self-study, trusted domains ---------------- */
+.research-add { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.research-topic { max-width: 220px; }
+.research-paste { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 8px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2, transparent); color: var(--text); }
+.research-selfstudy { display: flex; flex-direction: column; gap: 8px; }
+.research-switch { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.research-switch input[type="number"] { width: 56px; }
+.research-last { font-size: 12px; }
+.research-domains-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; font-size: 12px; }
+.research-domains-grid label { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); }
+.research-domains-grid textarea { font: inherit; font-size: 12px; padding: 6px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2, transparent); color: var(--text); resize: vertical; }
+@media (max-width: 800px) { .research-domains-grid { grid-template-columns: 1fr; } }
+.desk-selfstudy { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }

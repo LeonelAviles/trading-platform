@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import strategy_store
 from agent import client as llm_client
+from agent import research
 from agent import runs as agent_runs
 from engine import jobs, validation
 from teaching import store as teaching_store
@@ -88,6 +89,7 @@ def summary() -> dict:
         "testing": {"agentRuns": active_runs, "backtests": running_jobs, "recentRuns": runs[:8]},
         "teaching": _safe(lambda: teaching_store.list_sessions(20), []),
         "budget": _safe(llm_client.usage_summary, {}),
+        "research": _safe(research.autorun_status, {}),
         "coverage": _safe(_coverage, {"roots": {}, "replayCache": [], "sizes": {}}),
         "lineage": roots,
     }

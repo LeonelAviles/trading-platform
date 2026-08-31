@@ -63,5 +63,8 @@ test-frontend:
 lint:
 	cd $(ROOT)/frontend && npm run lint
 
+research:
+	cd $(ROOT)/backend && $(PY) scripts/research.py --topics $(or $(TOPICS),1)
+
 warm:
 	cd $(ROOT)/backend && $(PY) scripts/warm_replay.py $(ROOT_SYMBOL) $(DATE)

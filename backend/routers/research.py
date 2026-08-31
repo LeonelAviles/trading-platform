@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import threading
-
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 
 import database
 from agent import client as llm_client
@@ -13,8 +11,6 @@ from knowledge import graph as kg
 from models import PrimitiveRequest
 
 router = APIRouter(prefix="/api", tags=["research"])
-_worker_lock = threading.Lock()
-_worker: threading.Thread | None = None
 
 
 @router.get("/research/queue")
@@ -34,24 +30,66 @@ def add_topic(body: dict = Body(...)):
 @router.post("/research/run")
 def run_research(body: dict = Body(default={})):
     """Run up to `maxTopics` queued topics in a background thread (stops at the daily budget)."""
-    global _worker
     n = int(body.get("maxTopics") or 1)
-    with _worker_lock:
-        if _worker is not None and _worker.is_alive():
-            return {"started": False, "reason": "research worker already running"}
-        _worker = threading.Thread(target=research.run_once, args=(n,), daemon=True, name="research-worker")
-        _worker.start()
-    return {"started": True, "maxTopics": n}
+    return research.start_worker(n, requested_by="user")
 
 
 @router.get("/research/status")
 def research_status():
-    return {"workerRunning": _worker is not None and _worker.is_alive(), "knowledge": kg.status(), "usage": llm_client.usage_summary()}
+    return {"workerRunning": research.worker_running(), "knowledge": kg.status(), "usage": llm_client.usage_summary(),
+            "autorun": research.autorun_status()}
 
 
 @router.get("/research/sources")
 def get_sources():
-    return research.sources()
+    return {"sources": research.sources(), "jobs": research.source_jobs()}
+
+
+@router.post("/research/sources")
+def add_source(body: dict = Body(...)):
+    """Hand the agent a source: {url, topic?} or {text, title?, topic?}. Fetched,
+    scored and summarised in the background; watch `jobs` in GET /research/sources."""
+    try:
+        return research.add_source(url=body.get("url"), text=body.get("text"), title=body.get("title"), topic=body.get("topic"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/research/sources/upload")
+async def upload_source(request: Request, title: str | None = None, topic: str | None = None, filename: str | None = None):
+    """Raw PDF or text file as the request body (Content-Type application/pdf or text/*)."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty body")
+    try:
+        t, text = research.text_from_upload(data, request.headers.get("content-type"), filename)
+        return research.add_source(text=text, title=title or t or filename, topic=topic)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001 — unreadable PDF etc.
+        raise HTTPException(400, f"could not read the file: {type(e).__name__}: {e}")
+
+
+@router.get("/research/settings")
+def get_research_settings():
+    """Self-study schedule and trusted domains (stored under settings key research.settings)."""
+    return research.settings()
+
+
+@router.put("/research/settings")
+def put_research_settings(body: dict = Body(...)):
+    return research.update_settings(body)
+
+
+@router.get("/research/autorun")
+def get_autorun():
+    return research.autorun_status()
+
+
+@router.post("/research/autorun/tick")
+def autorun_now():
+    """Run the scheduler step now (what the background loop does every minute)."""
+    return research.autorun_tick()
 
 
 @router.get("/research/primitive-requests")

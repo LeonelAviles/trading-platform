@@ -65,8 +65,10 @@ logged in [DECISIONS.md](DECISIONS.md).
   Sharpe and a risk-profile verdict (see [docs/02-backtester.md](docs/02-backtester.md)).
 - **Agent runs** (prompt → variants → in-sample/walk-forward → ≤5 single-variable
   experiments → one out-of-sample look → verdict; pause-to-ask; resumable),
-  **research worker** (web search → scored sources → knowledge facts) and the
-  **chat analyst**, all over the Anthropic API with a budget guard
+  **research worker** (web search → scored sources → knowledge facts; a
+  self-study schedule reads the queue on its own within the daily budget,
+  you can hand it a URL / PDF / pasted text, and trusted-domain lists pin
+  source tiers) and the **chat analyst**, all over the Anthropic API with a budget guard
   ([docs/04-agent.md](docs/04-agent.md)); the same tools are exposed to the Hermes plugin.
 
 ## Running
@@ -107,6 +109,7 @@ Tiered layout (PLATFORM-SPEC.md §4.1, details in [docs/01-data.md](docs/01-data
 make ingest     # organizes raw/, decodes once per file, writes the tiers (runs with the backend up)
 make catalog    # NautilusTrader ParquetDataCatalog (incremental)
 make warm ROOT_SYMBOL=ES DATE=2026-06-12   # pre-decode a day for tick replay (the UI does this on first use)
+make research TOPICS=2                     # read the next research topics now (the Self-study switch on /research does this on a schedule)
 ```
 
 Instruments, session (09:30–16:00 America/New_York, DST-safe) and the cost

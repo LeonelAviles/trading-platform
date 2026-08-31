@@ -13,8 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import urllib.robotparser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -29,6 +30,18 @@ from models import ResearchDoc, ResearchQueueItem, ResearchSource, new_id, utc_n
 
 SEED = Path(__file__).resolve().parent.parent / "config" / "research_seed.yaml"
 TIER_BASE = {1: 1.0, 2: 0.75, 3: 0.45, 4: 0.0}
+SETTINGS_KEY = "research.settings"
+AUTORUN_STATE_KEY = "research.autorun.state"
+# Domains whose tier is fixed by rule, not by the model's reading of the page.
+# Editable on the Research page (stored under SETTINGS_KEY); suffix match.
+DEFAULT_TRUSTED = {
+    "tier1": ["arxiv.org", "ssrn.com", "cmegroup.com", "cftc.gov", "sec.gov", "nber.org", "jstor.org", "sciencedirect.com",
+              "link.springer.com", "onlinelibrary.wiley.com", "tandfonline.com", "bis.org", "federalreserve.gov", "ecb.europa.eu"],
+    "tier2": ["quantpedia.com", "quantocracy.com", "robotwealth.com", "quantstart.com", "tradingstats.net", "hudsonthames.org",
+              "papers.nips.cc", "nautilustrader.io"],
+    "blocked": [],
+}
+DEFAULT_SETTINGS = {"autoRun": False, "intervalHours": 6, "topicsPerRun": 2, "trustedDomains": DEFAULT_TRUSTED}
 MAX_URLS_PER_TOPIC = 6
 MAX_TEXT_CHARS = 20_000
 USER_AGENT = "trading-platform-research/1.0 (+local research bot; respects robots.txt)"
@@ -68,6 +81,98 @@ def _json_from(text: str) -> dict:
         except json.JSONDecodeError:
             claims.append({"text": obj.group(1), "evidenceType": "theory", "tags": []})
     return {"claims": claims, "definitions": [], "truncated": True} if claims else {}
+
+
+# ----------------------------------------------------------------------------
+# Settings (self-study schedule, trusted domains)
+# ----------------------------------------------------------------------------
+
+def _setting(key: str, default):
+    from models import Setting
+
+    with database.session_scope() as db:
+        row = db.get(Setting, key)
+        return dict(row.value_json) if row and isinstance(row.value_json, dict) else default
+
+
+def _put_setting(key: str, value: dict) -> None:
+    from models import Setting
+
+    with database.session_scope() as db:
+        row = db.get(Setting, key)
+        if row is None:
+            db.add(Setting(key=key, value_json=value))
+        else:
+            row.value_json = value
+
+
+def settings() -> dict:
+    stored = _setting(SETTINGS_KEY, {})
+    out = {**DEFAULT_SETTINGS, **stored}
+    td = {**DEFAULT_TRUSTED, **(stored.get("trustedDomains") or {})}
+    out["trustedDomains"] = {k: _domains(td.get(k)) for k in ("tier1", "tier2", "blocked")}
+    out["intervalHours"] = max(1, float(out.get("intervalHours") or 6))
+    out["topicsPerRun"] = max(1, min(10, int(out.get("topicsPerRun") or 2)))
+    out["autoRun"] = bool(out.get("autoRun"))
+    return out
+
+
+def update_settings(changes: dict) -> dict:
+    cur = {**DEFAULT_SETTINGS, **_setting(SETTINGS_KEY, {})}
+    for k in ("autoRun", "intervalHours", "topicsPerRun"):
+        if k in changes:
+            cur[k] = changes[k]
+    if "trustedDomains" in changes and isinstance(changes["trustedDomains"], dict):
+        td = {**(cur.get("trustedDomains") or DEFAULT_TRUSTED)}
+        for k in ("tier1", "tier2", "blocked"):
+            if k in changes["trustedDomains"]:
+                td[k] = _domains(changes["trustedDomains"][k])
+        cur["trustedDomains"] = td
+    _put_setting(SETTINGS_KEY, cur)
+    return settings()
+
+
+def _domains(value) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[\s,]+", value)
+    out = []
+    for v in value or []:
+        d = str(v).strip().lower()
+        d = re.sub(r"^https?://", "", d).split("/")[0]
+        if d.startswith("www."):
+            d = d[4:]
+        if d and d not in out:
+            out.append(d)
+    return out
+
+
+def domain_rule(url: str, trusted: dict | None = None) -> str | None:
+    """'tier1' | 'tier2' | 'blocked' | None for a URL, by domain suffix."""
+    host = (urlparse(url).netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return None
+    td = trusted or settings()["trustedDomains"]
+    for key in ("blocked", "tier1", "tier2"):
+        for d in td.get(key) or []:
+            if host == d or host.endswith("." + d):
+                return key
+    return None
+
+
+def apply_domain_rules(url: str, scored: dict, trusted: dict | None = None) -> dict:
+    rule = domain_rule(url, trusted)
+    if rule == "blocked":
+        scored["tier"] = 4
+    elif rule == "tier1":
+        scored["tier"] = 1
+    elif rule == "tier2":
+        scored["tier"] = min(int(scored.get("tier") or 3), 2)
+    if rule:
+        scored["domainRule"] = rule
+    scored["credibility"] = credibility_from(scored)
+    return scored
 
 
 # ----------------------------------------------------------------------------
@@ -204,8 +309,7 @@ def score_source(url: str, title: str, text: str, llm: llm_client.LLM) -> dict:
                           messages=[{"role": "user", "content": f"URL: {url}\nTitle: {title}\n\n{text[:6000]}"}])
     scored = _json_from("".join(getattr(b, "text", "") for b in response.content))
     scored.setdefault("tier", 3)
-    scored["credibility"] = credibility_from(scored)
-    return scored
+    return apply_domain_rules(url, scored)
 
 
 def summarize(url: str, title: str, text: str, llm: llm_client.LLM) -> dict:
@@ -224,8 +328,9 @@ def corroborate(text: str, credibility: float, source_id: str | None) -> float:
     return credibility
 
 
-def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client.LLM) -> dict:
-    domain = urlparse(url).netloc
+def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client.LLM, provided_by: str = "worker") -> dict:
+    domain = urlparse(url).netloc or "owner"
+    extra_tags = ["owner"] if provided_by == "user" else []
     with database.session_scope() as db:
         src = db.query(ResearchSource).filter(ResearchSource.url == url).one_or_none()
         if src is None:
@@ -242,6 +347,7 @@ def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client
     if already:
         return {"sourceId": source_id, "skipped": "already ingested for this topic"}
     scored = prior_scored if prior_scored and prior_scored.get("credibility") is not None else score_source(url, title, text, llm)
+    scored["providedBy"] = provided_by if provided_by == "user" else scored.get("providedBy", provided_by)
     with database.session_scope() as db:
         src = db.get(ResearchSource, source_id)
         src.tier = int(scored.get("tier") or 3)
@@ -261,13 +367,13 @@ def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client
             continue
         cred = corroborate(ctext, scored["credibility"], source_id)
         kg.record_fact(ctext, source={"id": source_id, "title": title or domain, "url": url}, credibility=cred,
-                       tags=list(dict.fromkeys((c.get("tags") or []) + (c.get("instruments") or []) + (c.get("regimes") or []) + [topic])),
+                       tags=list(dict.fromkeys((c.get("tags") or []) + (c.get("instruments") or []) + (c.get("regimes") or []) + [topic] + extra_tags)),
                        evidence_type=c.get("evidenceType"))
         n += 1
     for d in summary.get("definitions") or []:
         if d.get("term") and d.get("definition"):
             kg.record_fact(f"{d['term']}: {d['definition']}", source={"id": source_id, "title": title or domain, "url": url},
-                           credibility=scored["credibility"], tags=["definition", topic], evidence_type="theory")
+                           credibility=scored["credibility"], tags=["definition", topic] + extra_tags, evidence_type="theory")
             n += 1
     with database.session_scope() as db:
         db.add(ResearchDoc(id=new_id(), source_id=source_id, topic=topic, summary=json.dumps(summary)[:4000], chunk_count=n, ingested_to_graph=1, created_at=utc_now()))
@@ -328,3 +434,197 @@ def run_once(max_topics: int = 1, llm: llm_client.LLM | None = None) -> list[dic
         if r.get("status") == "queued":   # budget hit
             break
     return out
+
+
+# ----------------------------------------------------------------------------
+# Owner-provided sources ("hand it a book")
+# ----------------------------------------------------------------------------
+
+OWNER_TOPIC = "owner-provided"
+_source_jobs: dict[str, dict] = {}
+_source_lock = threading.Lock()
+
+
+def text_from_upload(data: bytes, content_type: str | None, filename: str | None = None) -> tuple[str, str]:
+    """(title, text) for an uploaded PDF or text file."""
+    ctype = (content_type or "").lower()
+    name = filename or ""
+    if "pdf" in ctype or name.lower().endswith(".pdf"):
+        from io import BytesIO
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(data))
+        text = "\n".join((pg.extract_text() or "") for pg in reader.pages[:60])
+        title = ((reader.metadata or {}).get("/Title") if reader.metadata else "") or name
+        return str(title or ""), text[:MAX_TEXT_CHARS]
+    return name, data.decode("utf-8", errors="replace")[:MAX_TEXT_CHARS]
+
+
+def add_source(*, url: str | None = None, text: str | None = None, title: str | None = None, topic: str | None = None,
+               llm: llm_client.LLM | None = None, fetch=fetch_text, background: bool = True) -> dict:
+    """Ingest one source the owner chose: a URL (fetched like the worker does)
+    or pasted / uploaded text. Facts it yields carry the `owner` tag and the
+    source row says `providedBy: user`. Runs in a thread unless told otherwise."""
+    topic = (topic or "").strip() or OWNER_TOPIC
+    if not url and not (text or "").strip():
+        raise ValueError("give a url or some text")
+    if url:
+        url = url.strip()
+        if not re.match(r"^https?://", url):
+            raise ValueError("url must start with http:// or https://")
+    else:
+        digest = hashlib.sha256((text or "").encode()).hexdigest()[:16]
+        url = f"owner://{digest}"
+    job = {"id": new_id(), "url": url, "title": title, "topic": topic, "status": "queued", "startedAt": utc_now(), "result": None}
+    with _source_lock:
+        _source_jobs[job["id"]] = job
+        for old in list(_source_jobs)[:-20]:
+            _source_jobs.pop(old, None)
+
+    def work():
+        job["status"] = "running"
+        try:
+            if text is None or not text.strip():
+                t, body = fetch(url)
+            else:
+                t, body = title or "", text
+            if len(body.strip()) < 200:
+                raise ValueError("less than 200 characters of text — nothing to learn from")
+            job["result"] = ingest_document(url, title or t or url, body, topic, llm or llm_client.LLM(), provided_by="user")
+            job["status"] = "done"
+        except llm_client.BudgetExhausted as e:
+            job.update(status="budget", error=str(e))
+        except Exception as e:  # noqa: BLE001
+            job.update(status="error", error=f"{type(e).__name__}: {e}")
+        job["finishedAt"] = utc_now()
+
+    if background:
+        threading.Thread(target=work, daemon=True, name=f"research-source-{job['id']}").start()
+    else:
+        work()
+    return job
+
+
+def source_jobs() -> list[dict]:
+    with _source_lock:
+        return [dict(j) for j in list(_source_jobs.values())[::-1]]
+
+
+# ----------------------------------------------------------------------------
+# Worker thread + self-study schedule
+# ----------------------------------------------------------------------------
+
+_worker_lock = threading.Lock()
+_worker: threading.Thread | None = None
+
+
+def worker_running() -> bool:
+    return _worker is not None and _worker.is_alive()
+
+
+def start_worker(max_topics: int = 1, requested_by: str = "user") -> dict:
+    """Run up to `max_topics` queued topics in a background thread (stops at the daily budget)."""
+    global _worker
+    with _worker_lock:
+        if worker_running():
+            return {"started": False, "reason": "research worker already running"}
+
+        def work():
+            results = run_once(max_topics)
+            _record_run(requested_by, results)
+
+        _worker = threading.Thread(target=work, daemon=True, name="research-worker")
+        _worker.start()
+    return {"started": True, "maxTopics": max_topics, "requestedBy": requested_by}
+
+
+def _record_run(requested_by: str, results: list[dict]) -> None:
+    facts = sum(s.get("facts") or 0 for r in results for s in r.get("sources") or [])
+    state = _setting(AUTORUN_STATE_KEY, {})
+    state.update({
+        "lastRunAt": utc_now(), "lastRunBy": requested_by,
+        "lastResult": {"topics": [r.get("topic") for r in results], "statuses": [r.get("status") for r in results],
+                       "sources": sum(len(r.get("sources") or []) for r in results), "facts": facts,
+                       "errors": [e.get("error") for r in results for e in r.get("errors") or [] if e.get("error")][:5]},
+    })
+    _put_setting(AUTORUN_STATE_KEY, state)
+
+
+def autorun_status(now: datetime | None = None) -> dict:
+    cfg = settings()
+    state = _setting(AUTORUN_STATE_KEY, {})
+    now = now or datetime.now(timezone.utc)
+    last = state.get("lastRunAt")
+    next_at = None
+    if cfg["autoRun"]:
+        if last:
+            next_at = (datetime.fromisoformat(last) + timedelta(hours=cfg["intervalHours"])).isoformat(timespec="seconds")
+        else:
+            next_at = now.isoformat(timespec="seconds")
+    with database.session_scope() as db:
+        queued = db.query(ResearchQueueItem).filter(ResearchQueueItem.status == "queued").count()
+    usage = llm_client.usage_summary()
+    return {
+        "enabled": cfg["autoRun"], "intervalHours": cfg["intervalHours"], "topicsPerRun": cfg["topicsPerRun"],
+        "lastRunAt": last, "lastRunBy": state.get("lastRunBy"), "lastResult": state.get("lastResult"), "nextRunAt": next_at,
+        "running": worker_running(), "queued": queued, "researchCapped": usage.get("researchCapped"),
+        "skipped": state.get("skipped"), "sourceJobs": source_jobs()[:5],
+    }
+
+
+def autorun_tick(now: datetime | None = None, start=None) -> dict:
+    """One scheduler step: start a worker run when self-study is on, the
+    interval has elapsed, there is something queued and the daily research
+    budget is not spent. Returns what it decided (testable with `start`)."""
+    cfg = settings()
+    if not cfg["autoRun"]:
+        return {"ran": False, "reason": "disabled"}
+    now = now or datetime.now(timezone.utc)
+    state = _setting(AUTORUN_STATE_KEY, {})
+    last = state.get("lastRunAt")
+    if last and now < datetime.fromisoformat(last) + timedelta(hours=cfg["intervalHours"]):
+        return {"ran": False, "reason": "not due"}
+    if worker_running():
+        return {"ran": False, "reason": "worker busy"}
+    with database.session_scope() as db:
+        queued = db.query(ResearchQueueItem).filter(ResearchQueueItem.status == "queued").count()
+    if queued == 0:
+        _note_skip(state, "queue empty")
+        return {"ran": False, "reason": "queue empty"}
+    if llm_client.usage_summary().get("researchCapped"):
+        _note_skip(state, "daily research budget spent")
+        return {"ran": False, "reason": "daily research budget spent"}
+    res = (start or start_worker)(cfg["topicsPerRun"], "autorun")
+    return {"ran": bool(res.get("started")), "reason": res.get("reason"), "topics": cfg["topicsPerRun"]}
+
+
+def _note_skip(state: dict, reason: str) -> None:
+    state["skipped"] = {"at": utc_now(), "reason": reason}
+    _put_setting(AUTORUN_STATE_KEY, state)
+
+
+_scheduler_stop = threading.Event()
+_scheduler: threading.Thread | None = None
+
+
+def start_scheduler(poll_seconds: float = 60.0) -> None:
+    """Daemon loop behind the self-study switch; safe to call once at startup."""
+    global _scheduler
+    if _scheduler is not None and _scheduler.is_alive():
+        return
+    _scheduler_stop.clear()
+
+    def loop():
+        while not _scheduler_stop.wait(poll_seconds):
+            try:
+                autorun_tick()
+            except Exception as e:  # noqa: BLE001
+                print(f"research scheduler: {type(e).__name__}: {e}", flush=True)
+
+    _scheduler = threading.Thread(target=loop, daemon=True, name="research-scheduler")
+    _scheduler.start()
+
+
+def stop_scheduler() -> None:
+    _scheduler_stop.set()

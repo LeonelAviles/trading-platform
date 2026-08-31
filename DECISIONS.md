@@ -267,3 +267,22 @@ decisions". Newest at the bottom.
 60. **The desk lists a lineage only when its tree has more than one node or its
     root is a candidate**, so thirteen single-node drafts do not become
     thirteen empty trees; `/review` still shows every strategy.
+
+## Research self-study (2026-08-31)
+
+61. **Owner-provided sources go through the same scorer as everything else**
+    — no credibility bonus for "the owner said so". They are marked
+    (`providedBy: user`, facts tagged `owner`) so the agent and the UI can
+    tell them apart, and the trusted-domain lists are the honest way to raise
+    a source's tier. Pasted / uploaded text gets an `owner://<sha>` URL so the
+    unique-URL source table needs no schema change.
+62. **Trusted domains are a rule applied after the model's rubric, not a
+    prompt hint.** Tier 1 / tier 2 / blocked lists match by domain suffix;
+    the rubric's other fields (data, citations, conflict of interest, age)
+    still adjust credibility. Defaults are academic / exchange / regulator
+    domains; the owner edits them on `/research`.
+63. **Self-study is a one-minute poll in the app process, not a cron job**,
+    so it needs nothing outside `make dev`, honours the daily research cap
+    and the "worker already running" lock, and records every skip with its
+    reason. Interval and topics-per-run live in settings; `RESEARCH_SCHEDULER=0`
+    turns the loop off for tests and one-shot scripts.

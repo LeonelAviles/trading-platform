@@ -203,6 +203,13 @@ export default function DeskPage() {
                     <span>${num(budget.researchDaySpendUsd)} / ${num(budget.dailyResearchBudgetUsd, 0)}{budget.researchCapped ? ' · capped' : ''}</span>
                   </div>
                   <div className="desk-bar"><div className={`desk-bar-fill ${budget.researchCapped ? 'capped' : ''}`} style={{ width: `${Math.min(100, budget.dailyResearchBudgetUsd ? (budget.researchDaySpendUsd / budget.dailyResearchBudgetUsd) * 100 : 0)}%` }} /></div>
+                  {desk.research && !desk.research.error && (
+                    <div className="desk-selfstudy">
+                      <span>Self-study {desk.research.enabled ? 'on' : 'off'}</span>
+                      <span className="muted">last read {fmtWhen(desk.research.lastRunAt) || 'never'} · next {desk.research.enabled ? (fmtWhen(desk.research.nextRunAt) || 'now') : '—'} · {desk.research.queued} queued</span>
+                      <Link to="/research">Research →</Link>
+                    </div>
+                  )}
                   {budget.byPurpose && Object.keys(budget.byPurpose).length > 0 && (
                     <table className="desk-table">
                       <tbody>

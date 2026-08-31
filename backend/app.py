@@ -52,7 +52,17 @@ async def _lifespan(_app: FastAPI):
                 print(f"resumed agent runs: {resumed}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"agent run resume failed: {e}", flush=True)
+        if os.environ.get("RESEARCH_SCHEDULER", "1") != "0":
+            from agent import research
+
+            research.start_scheduler()
     yield
+    try:
+        from agent import research
+
+        research.stop_scheduler()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def create_app() -> FastAPI:

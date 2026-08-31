@@ -130,6 +130,48 @@ reason. The run's Phase 2 findings ("`delta > 0` — no change", "entry window t
 were artefacts of the placeholder and should be read as void; the run itself (variants, pause/answer,
 change budget, lineage, OOS guard) exercised the machinery correctly and stays as the Phase 4 record.
 
+## Self-study, owner sources and trusted domains (added after Phase 7)
+
+Three additions so the research worker does not sit idle waiting for a click
+(`backend/agent/research.py`, routes in `routers/research.py`, UI on
+`/research`):
+
+- **Hand it a source.** `POST /api/research/sources {url | text, title?, topic?}`
+  and `POST /api/research/sources/upload` (raw PDF / text body) push one
+  document the owner chose through the same fetch → score → summarise path
+  as the worker's own finds. Pasted or uploaded text gets a synthetic
+  `owner://<sha>` URL; the source row carries `providedBy: user`, every fact
+  it yields is tagged `owner`, and the default topic is `owner-provided`.
+  Ingestion runs in a thread; the last 20 jobs (status, error, tier, fact
+  count) come back in `GET /api/research/sources` as `jobs`. CLI:
+  `python scripts/research.py --url https://…`.
+- **Trusted domains.** `research.settings` (`GET/PUT /api/research/settings`)
+  holds `trustedDomains.{tier1, tier2, blocked}`; `apply_domain_rules` fixes
+  the tier by domain suffix before the rubric's credibility is computed
+  (tier-1 list → tier 1 regardless of the model's reading; tier-2 list caps
+  at 2; blocked → tier 4, credibility 0, never enters the graph). Defaults:
+  arXiv, SSRN, CME Group, CFTC, SEC, NBER, JSTOR, ScienceDirect, Springer,
+  Wiley, T&F, BIS, Fed, ECB as tier 1; a handful of established quant sites
+  as tier 2. The Sources table shows "(rule)" next to a tier set this way.
+- **Self-study.** `autoRun`, `intervalHours` (default 6) and `topicsPerRun`
+  (default 2) in the same settings; a daemon loop started in the app
+  lifespan (`RESEARCH_SCHEDULER=0` disables it) calls `autorun_tick` every
+  minute, which starts a worker run when the switch is on, the interval has
+  elapsed, the queue is non-empty and the daily research budget is not
+  spent — skips are recorded with a reason. Runs from the button, the
+  scheduler and `make research TOPICS=n` all stamp
+  `research.autorun.state` (last run, who, topics, sources, facts, errors),
+  shown on `/research` and on the desk's Research budget tile ("last read /
+  next"). The queue order is unchanged: seed priority, then the owner's
+  topics (10), then what the agent asked for during runs (5).
+
+Tests: `tests/test_research_owner.py` (domain rules incl. subdomains and
+normalisation, `score_source` override, owner text → owner-tagged facts,
+URL path with a fake fetch, bad input, upload extraction, scheduler
+decisions incl. the budget cap, routes). Live reading still needs Anthropic
+credits (DECISIONS #43): the smoke test on this machine got as far as the
+scorer and recorded the "credit balance is too low" error on the job.
+
 ## Deferred
 
 - Neo4j/Graphiti path is wired but unverified on this machine (no Docker); the local store is the

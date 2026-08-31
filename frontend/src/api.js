@@ -336,3 +336,26 @@ export async function forwardTestStrategy(id) {
 export async function compareStrategies(a, b, window = 'is') {
   return json(await fetch(`${BASE}/strategies/${a}/compare/${b}?window=${window}`));
 }
+
+// --- Research: owner sources, self-study, trusted domains -------------------
+export async function fetchResearchSettings() { return json(await fetch(`${BASE}/research/settings`)); }
+export async function putResearchSettings(values) {
+  return json(await fetch(`${BASE}/research/settings`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+  }));
+}
+export async function fetchAutorun() { return json(await fetch(`${BASE}/research/autorun`)); }
+export async function tickAutorun() { return json(await fetch(`${BASE}/research/autorun/tick`, { method: 'POST' })); }
+export async function addResearchSource(body) {
+  return json(await fetch(`${BASE}/research/sources`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+export async function uploadResearchSource(file, { title, topic } = {}) {
+  const params = new URLSearchParams({ filename: file.name });
+  if (title) params.set('title', title);
+  if (topic) params.set('topic', topic);
+  return json(await fetch(`${BASE}/research/sources/upload?${params}`, {
+    method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+  }));
+}
