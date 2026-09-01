@@ -5,7 +5,7 @@ row; its trade list lives on disk at `backtests/<id>/trades.json`
 (`trades_path`). One worker subprocess runs at a time (a queue), which is
 what keeps NautilusTrader + DuckDB + the API inside the 8.6 GB budget.
 
-`get_job()` returns the dict shape the review page and the agent tools have
+`get_job()` returns the dict shape the review page has
 always consumed: {id, createdAt, strategyId, strategyName, symbol, interval,
 status, message, source, summary, trades, mode, windowKind, dateFrom, dateTo}.
 """
@@ -64,7 +64,6 @@ def _row_to_job(row: Backtest, with_trades: bool = False) -> dict:
         "strategyName": m.get("strategyName"), "symbol": m.get("symbol"), "interval": m.get("interval", "1min"),
         "status": row.status, "message": row.message, "source": "nautilus",
         "mode": row.mode, "windowKind": row.window_kind, "dateFrom": row.date_from, "dateTo": row.date_to,
-        "agentRunId": row.agent_run_id,
         "summary": m.get("summary"),
         "metrics": {k: v for k, v in m.items() if k not in ("summary", "strategyName", "symbol", "interval", "legacyStrategyId")} or None,
     }
@@ -172,7 +171,7 @@ def _symbol(strategy: dict) -> str:
 
 
 def create_job(strategy: dict, *, mode: str | None = None, window_kind: str = "full",
-               date_from: date | None = None, date_to: date | None = None, agent_run_id: str | None = None) -> dict:
+               date_from: date | None = None, date_to: date | None = None) -> dict:
     from engine import validation
 
     mode = mode or default_mode(strategy)
@@ -193,7 +192,7 @@ def create_job(strategy: dict, *, mode: str | None = None, window_kind: str = "f
         row = Backtest(id=job_id, strategy_id=strategy.get("id") if _strategy_exists(db, strategy.get("id")) else None,
                        mode=mode, window_kind=window_kind, date_from=date_from.isoformat(), date_to=date_to.isoformat(),
                        status="queued", message="queued", trades_path=_rel(job_dir / "trades.json"),
-                       metrics_json={**metrics, "legacyStrategyId": strategy.get("id")}, agent_run_id=agent_run_id)
+                       metrics_json={**metrics, "legacyStrategyId": strategy.get("id")})
         db.add(row)
         db.flush()
         job = _row_to_job(row)
@@ -298,8 +297,8 @@ def start(job_id: str) -> None:
 
 
 def start_backtest(strategy: dict, *, mode: str | None = None, window_kind: str = "full",
-                   date_from: date | None = None, date_to: date | None = None, agent_run_id: str | None = None) -> dict:
-    job = create_job(strategy, mode=mode, window_kind=window_kind, date_from=date_from, date_to=date_to, agent_run_id=agent_run_id)
+                   date_from: date | None = None, date_to: date | None = None) -> dict:
+    job = create_job(strategy, mode=mode, window_kind=window_kind, date_from=date_from, date_to=date_to)
     start(job["id"])
     return job
 
@@ -318,14 +317,14 @@ def run_sync(strategy: dict, *, mode: str | None = None, window_kind: str = "ful
     raise TimeoutError(f"backtest {job['id']} still running after {timeout_s}s")
 
 
-def run_validation(strategy: dict, mode: str | None = None, agent_run_id: str | None = None) -> list[dict]:
-    """IS + WF1–3 as separate queued jobs (never OOS — that is finalize's job)."""
+def run_validation(strategy: dict, mode: str | None = None) -> list[dict]:
+    """IS + WF1–3 as separate queued jobs (never OOS — that is a deliberate, separate look)."""
     from engine import validation
 
     root = load_instruments().root_for_symbol(_symbol(strategy)).root
     kinds = [k for k in ("is", "wf1", "wf2", "wf3") if k in validation.windows(root)]
-    return [start_backtest(strategy, mode=mode, window_kind=k, agent_run_id=agent_run_id) for k in kinds]
+    return [start_backtest(strategy, mode=mode, window_kind=k) for k in kinds]
 
 
-def run_oos(strategy: dict, mode: str | None = None, agent_run_id: str | None = None) -> dict:
-    return start_backtest(strategy, mode=mode, window_kind="oos", agent_run_id=agent_run_id)
+def run_oos(strategy: dict, mode: str | None = None) -> dict:
+    return start_backtest(strategy, mode=mode, window_kind="oos")

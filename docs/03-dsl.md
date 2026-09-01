@@ -2,6 +2,11 @@
 
 Status: **done** (2026-08-31). Spec: PLATFORM-SPEC.md §4.4, §5 Phase 3.
 
+> The agent tools, Hermes schemas and the teaching path this page mentions
+> were removed on 2026-08-31 (DECISIONS.md, "Agent removal", "Teaching
+> removal"); the schema, primitive registry and editor are unchanged. `GET /api/strategies/schema/spec` is the
+> schema's only consumer now.
+
 ## The shared strategy schema
 
 Both ideas (prompt → agent, teaching → agent) produce one JSON object, validated by

@@ -50,7 +50,7 @@ def test_windows_from_splits(store):
     assert w["full"] == ("2026-06-15", "2026-06-19")
     assert validation.windows("NQ") == {}
     with pytest.raises(ValueError):
-        validation.window_for("ES", "teaching")
+        validation.window_for("ES", "bogus")
 
 
 STRATEGY = {

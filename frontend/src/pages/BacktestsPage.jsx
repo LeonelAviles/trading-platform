@@ -43,7 +43,7 @@ export default function BacktestsPage() {
     setError('');
     try {
       const job = await createBacktest(pick, { windowKind, ...(mode ? { mode } : {}) });
-      navigate(`/review/${job.id}`, { state: { openChat: true } });
+      navigate(`/review/${job.id}`);
     } catch (e) {
       setError(e.message);
       setStarting(false);

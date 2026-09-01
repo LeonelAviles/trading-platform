@@ -1,20 +1,15 @@
 """Desk summary (PLATFORM-SPEC.md §5 Phase 7): one payload for the `/` page —
-candidates with their latest verdict, what is testing right now, teaching
-sessions, the research budget and data coverage. Everything here is a read
-over the metadata DB and the on-disk tiers; nothing is computed that a tile
-could not show in one glance."""
+candidates with their latest verdict, what is testing right now and data
+coverage. Everything here is a read over the metadata DB
+and the on-disk tiers; nothing is computed that a tile could not show in one
+glance."""
 
 from __future__ import annotations
 
 import strategy_store
-from agent import client as llm_client
-from agent import research
-from agent import runs as agent_runs
 from engine import jobs, validation
-from teaching import store as teaching_store
 
 DESK_STATUSES = ("candidate", "forward_test", "live")
-ACTIVE_RUN_STATUSES = ("queued", "running", "paused_for_user")
 
 
 def regime_notes(is_metrics: dict | None) -> list[str]:
@@ -64,8 +59,6 @@ def summary() -> dict:
     candidates = [candidate_card(s) for s in strategies if s.get("status") in DESK_STATUSES]
     candidates.sort(key=lambda c: (c["status"] != "live", c["status"] != "forward_test", -(c.get("inSample") or {}).get("expectancyR", -9) or 0))
 
-    runs = agent_runs.list_runs(100)
-    active_runs = [r for r in runs if r["status"] in ACTIVE_RUN_STATUSES]
     backtests = jobs.list_jobs()
     running_jobs = [b for b in backtests if b["status"] in ("queued", "running")]
     by_status: dict[str, int] = {}
@@ -86,10 +79,7 @@ def summary() -> dict:
     return {
         "candidates": candidates,
         "strategies": {"total": len(strategies), "byStatus": by_status},
-        "testing": {"agentRuns": active_runs, "backtests": running_jobs, "recentRuns": runs[:8]},
-        "teaching": _safe(lambda: teaching_store.list_sessions(20), []),
-        "budget": _safe(llm_client.usage_summary, {}),
-        "research": _safe(research.autorun_status, {}),
+        "testing": {"backtests": running_jobs, "recentBacktests": backtests[:8]},
         "coverage": _safe(_coverage, {"roots": {}, "replayCache": [], "sizes": {}}),
         "lineage": roots,
     }

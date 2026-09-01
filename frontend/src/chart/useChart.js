@@ -3,7 +3,7 @@ import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineSty
 
 // Owns one lightweight-charts instance (candles + volume histogram) inside
 // `innerRef`, sized to `areaRef`. Extracted from CandlestickPage so the
-// review page and the teaching chart page share exactly one chart setup.
+// review page has exactly one chart setup.
 //
 // Returns { api, tick, hoverTime }: `api` is null until the chart exists, then
 // { chart, candleSeries, volumeSeries, forceUpdate }. `tick` increments on

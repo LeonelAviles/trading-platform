@@ -174,7 +174,7 @@ export default function StrategyPage() {
         <PageHeader
           crumbs={[{ label: 'Strategies', to: '/strategies' }, { label: spec.name }]}
           title={spec.name}
-          subtitle={<>{spec.instrument?.symbol} · {spec.timeframes?.primary} · <span className={`review-dir ${spec.direction}`}>{spec.direction}</span> · {spec.origin?.type === 'prompt' ? 'built by the agent' : spec.origin?.type === 'teaching' ? 'compiled from a teaching session' : 'written by hand'}{spec.lineage?.parentId ? <> · variant of <Link to={`/strategies/${spec.lineage.parentId}`}>{spec.lineage.changedVariable || 'parent'}</Link></> : ''}</>}
+          subtitle={<>{spec.instrument?.symbol} · {spec.timeframes?.primary} · <span className={`review-dir ${spec.direction}`}>{spec.direction}</span> · {'written by hand'}{spec.lineage?.parentId ? <> · variant of <Link to={`/strategies/${spec.lineage.parentId}`}>{spec.lineage.changedVariable || 'parent'}</Link></> : ''}</>}
           actions={(
             <>
               <select value={spec.status} onChange={(e) => changeStatus(e.target.value)} title="Status">
@@ -215,7 +215,7 @@ export default function StrategyPage() {
                   <div className="stat-tile"><div className="stat-label">Profit factor</div><div className={`stat-value ${validation.profitFactor >= 1.3 ? 'good' : validation.profitFactor < 1 ? 'bad' : ''}`}>{validation.profitFactor ?? '—'}</div><div className="stat-sub">expectancy {validation.expectancyR ?? '—'} R</div></div>
                   <div className="stat-tile"><div className="stat-label">Max drawdown</div><div className="stat-value">{validation.maxDrawdownPct != null ? `${Number(validation.maxDrawdownPct).toFixed(1)}%` : '—'}</div><div className="stat-sub">WF positive {wf.filter((w) => (w.summary?.totalPnl || 0) > 0).length}/{wf.length}</div></div>
                 </div>
-              ) : <div className="inline-note">Validate runs the in-sample window plus three walk-forward windows and computes Monte Carlo, deflated Sharpe and the verdict. The out-of-sample look is reserved for the agent's finalize step.</div>}
+              ) : <div className="inline-note">Validate runs the in-sample window plus three walk-forward windows and computes Monte Carlo, deflated Sharpe and the verdict. The out-of-sample window is a separate, deliberate run.</div>}
               {running.length > 0 && <div className="inline-note" style={{ marginTop: 8 }}>{running.length} run(s) in progress…</div>}
             </Card>
           </div>
@@ -239,7 +239,7 @@ export default function StrategyPage() {
         )}
 
         {tab === 'lineage' && (
-          <Card title="Lineage" sub="Root idea and every variant the agent or a teaching compile derived from it. ★ marks the champion." actions={(
+          <Card title="Lineage" sub="Root idea and every variant derived from it. ★ marks the champion." actions={(
             <>
               <span className="inline-note">{compareSel.length}/2 selected</span>
               <button className="btn btn-sm" disabled={compareSel.length !== 2} onClick={() => setComparing([...compareSel])}>Compare two nodes</button>

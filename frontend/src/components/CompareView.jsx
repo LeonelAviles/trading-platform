@@ -12,8 +12,8 @@ function fmt(v) {
   return String(v);
 }
 
-// "Compare two nodes" (Phase 7): the agent's compare_backtests output for the
-// latest finished in-sample run of each strategy, side by side.
+// "Compare two nodes" (Phase 7): engine.compare's output for the latest
+// finished in-sample run of each strategy, side by side.
 export default function CompareView({ a, b, window = 'is', onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');

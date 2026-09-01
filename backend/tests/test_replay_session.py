@@ -168,33 +168,6 @@ def test_speed_above_25_degrades_book_to_approx(synth_mbo):
     assert len(trades) > 50 and all(a["ts"] <= b["ts"] for a, b in zip(trades, trades[1:]))
 
 
-def test_teaching_order_fills_like_ticks_mode(synth_mbo):
-    sink = Sink()
-    s, src, clock = _session(synth_mbo, sink)
-
-    async def go():
-        await _run_for(s, clock, 40, cmds=[{"type": "resume"},
-                                           {"type": "order", "side": "buy", "contracts": 2, "stopTicks": 4, "targetTicks": 8}])
-
-    asyncio.run(go())
-    fills = sink.of("fill")
-    assert fills and fills[0]["position"] is not None
-    pos = fills[0]["position"]
-    first = next(t for m in sink.of("trades") for t in m["items"] if t["ts"] >= pos["entryTs"])
-    assert pos["entryPrice"] == first["price"] + 0.25          # market buy pays one tick
-    assert pos["stop"] == pos["entryPrice"] - 1.0 and pos["target"] == pos["entryPrice"] + 2.0
-    exits = [m for m in fills if m["trade"] is not None]
-    if exits:
-        tr = exits[0]["trade"]
-        assert tr["reason"] in ("stop", "target")
-        if tr["reason"] == "stop":
-            assert tr["exitPrice"] == tr["stop"] - 0.25
-        else:
-            assert tr["exitPrice"] == tr["target"]
-        assert tr["pnl"] == pytest.approx((tr["exitPrice"] - tr["entryPrice"]) * 50 * 2)
-    assert sink.of("position")
-
-
 def test_closed_footprint_matches_bar(synth_mbo):
     sink = Sink()
     s, src, clock = _session(synth_mbo, sink, speed=5)

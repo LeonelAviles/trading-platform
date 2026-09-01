@@ -32,7 +32,6 @@ def _finished(db, sid, kind, metrics, trades=None, jobs_dir=None):
         d = jobs_dir / b.id
         d.mkdir(parents=True, exist_ok=True)
         (d / "trades.json").write_text(json.dumps({"trades": trades, "dailyReturns": [{"date": "2026-04-01", "returnPct": 0.1}] * 5}))
-        (d / "findings.json").write_text(json.dumps([{"id": "f1", "category": "time", "summary": "winners early", "confidence": 0.7}]))
     return b.id
 
 
@@ -40,8 +39,8 @@ def test_empty_desk(store):
     d = desk.summary()
     assert d["candidates"] == [] and d["lineage"] == []
     assert d["strategies"] == {"total": 0, "byStatus": {}}
-    assert d["testing"]["agentRuns"] == [] and d["testing"]["backtests"] == []
-    assert "monthSpendUsd" in d["budget"]
+    assert d["testing"]["backtests"] == [] and d["testing"]["recentBacktests"] == []
+    assert "budget" not in d and "research" not in d
     assert "roots" in d["coverage"] and "replayCache" in d["coverage"]
 
 
@@ -80,4 +79,5 @@ def test_desk_route(client):
     r = client.get("/api/desk")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) >= {"candidates", "testing", "teaching", "budget", "coverage", "lineage", "strategies"}
+    assert set(body) >= {"candidates", "testing", "coverage", "lineage", "strategies"}
+    assert "teaching" not in body

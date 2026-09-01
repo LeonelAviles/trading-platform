@@ -7,10 +7,6 @@ of scope here) would need to run and audit the strategy:
     risk.json                 the risk profile (proposedBy, limits, pass criteria)
     validation_report.json    IS / WF / OOS / Monte Carlo / DSR / verdict (engine.validation.report)
     lineage.json              the tree the strategy belongs to, champion marked
-    evidence/findings.json    agent findings logged against the strategy's backtests
-    evidence/knowledge.json   knowledge facts recorded from this strategy or its run
-    evidence/agent_run.json   the originating agent run's report and citations (prompt origin)
-    evidence/teaching.json    the originating teaching session's similarity report (teaching origin)
     nautilus_config.json      ImportableStrategyConfig stub pointing at the execution strategy
     manifest.json             package version, export time, platform commit, file list
 
@@ -28,10 +24,8 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import database
 import strategy_store
-from engine import jobs, validation
-from models import KnowledgeFact
+from engine import validation
 
 PACKAGE_VERSION = 1
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -71,47 +65,6 @@ def nautilus_config(spec: dict) -> dict:
     }
 
 
-def evidence(spec: dict) -> dict:
-    sid = spec["id"]
-    origin = spec.get("origin") or {}
-    findings = []
-    for job in jobs.list_jobs():
-        if job.get("strategyId") != sid:
-            continue
-        for f in _findings_for(job["id"]):
-            findings.append({**f, "backtestId": job["id"], "windowKind": job.get("windowKind"), "mode": job.get("mode")})
-    ref_ids = {sid, origin.get("sourceId")} - {None}
-    with database.session_scope() as db:
-        facts = [
-            {"id": r.id, "kind": r.kind, "text": r.text, "tags": r.tags_json, "credibility": r.credibility,
-             "source": {"id": r.source_id, "title": r.source_title, "url": r.source_url}, "refId": r.ref_id, "createdAt": r.created_at}
-            for r in db.query(KnowledgeFact).filter(KnowledgeFact.ref_id.in_(ref_ids), KnowledgeFact.invalid_at.is_(None)).all()
-        ]
-    out = {"findings": findings, "knowledge": facts}
-    if origin.get("type") == "prompt" and origin.get("sourceId"):
-        from agent import runs as agent_runs
-
-        run = agent_runs.get(origin["sourceId"])
-        if run:
-            out["agent_run"] = {"id": run["id"], "kind": run["kind"], "status": run["status"], "input": run.get("input"),
-                                "report": run.get("report"), "costUsd": run.get("costUsd")}
-    if origin.get("type") == "teaching" and origin.get("sourceId"):
-        from teaching import store as teaching_store
-
-        sess = teaching_store.get_session(origin["sourceId"])
-        if sess:
-            out["teaching"] = sess
-    return out
-
-
-def _findings_for(job_id: str) -> list[dict]:
-    path = jobs._job_dir(job_id) / "findings.json"
-    try:
-        return json.loads(path.read_text()) if path.exists() else []
-    except Exception:
-        return []
-
-
 def build(strategy_id: str) -> bytes:
     spec = strategy_store.get_strategy(strategy_id)
     if spec is None:
@@ -122,20 +75,13 @@ def build(strategy_id: str) -> bytes:
         lineage = strategy_store.lineage(strategy_id)
     except strategy_store.StrategyError:
         lineage = None
-    ev = evidence(spec)
     files = {
         "spec.json": spec,
         "risk.json": risk,
         "validation_report.json": report,
         "lineage.json": lineage,
-        "evidence/findings.json": ev["findings"],
-        "evidence/knowledge.json": ev["knowledge"],
         "nautilus_config.json": nautilus_config(spec),
     }
-    if "agent_run" in ev:
-        files["evidence/agent_run.json"] = ev["agent_run"]
-    if "teaching" in ev:
-        files["evidence/teaching.json"] = ev["teaching"]
     manifest = {
         "packageVersion": PACKAGE_VERSION, "strategyId": strategy_id, "name": spec.get("name"), "status": spec.get("status"),
         "exportedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "platformCommit": _commit(),

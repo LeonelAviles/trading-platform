@@ -5,7 +5,7 @@ reference (`{"ind": "ema", "params": {"period": 9, "tf": "15min"}}`). Each
 class declares its parameter schema, output kind, when it updates and how
 many bars it needs; instances are created per (name, params, tf) by the
 `FeatureContext`, which feeds them closed bars (per timeframe), trades and
-book views. The docstring is what the agent sees in `get_spec_schema`.
+book views. The docstring is what the spec editor shows as primitive docs.
 
 `mirror` says how a comparison involving the primitive flips for the short
 side of a `direction: both` strategy: `price` (levels/prices — comparisons

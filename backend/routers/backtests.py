@@ -5,7 +5,6 @@ from datetime import date
 
 from fastapi import APIRouter, Body, HTTPException
 
-import agent_llm
 from engine import jobs as nautilus_runner
 from engine import validation
 from routers.strategies import load_strategy
@@ -52,7 +51,7 @@ def get_backtest_analytics(job_id: str):
 @router.post("/backtests")
 def create_backtest(body: dict = Body(...)):
     """{strategyId, mode?: bars|ticks|l3, windowKind?: is|wf1|wf2|wf3|oos|full, dateFrom?, dateTo?}.
-    Default window is `full` (human review); the agent tools use `is`/`wf*`."""
+    Default window is `full` (review on the chart); validation uses `is`/`wf*`."""
     strategy_id = body.get("strategyId")
     if not strategy_id:
         raise HTTPException(400, "'strategyId' is required")
@@ -87,7 +86,7 @@ def create_validation(body: dict = Body(...)):
 @router.get("/backtests/{job_id}/validation")
 def get_validation(job_id: str):
     """IS / WF / OOS / Monte Carlo / DSR / regimes / verdict for the job's strategy.
-    OOS numbers appear only once an `oos` run exists (finalize, Phase 4)."""
+    OOS numbers appear only once an `oos` run exists."""
     job = nautilus_runner.get_job(job_id)
     if job is None:
         raise HTTPException(404, f"backtest '{job_id}' not found")
@@ -113,23 +112,3 @@ def _root_of(job: dict) -> str:
 @router.get("/validation/windows")
 def get_windows(root: str = "ES"):
     return validation.windows(root)
-
-
-@router.post("/backtests/{job_id}/insights")
-def get_backtest_insights(job_id: str):
-    """One-shot analysis of a finished backtest — the "AI Insights" button.
-
-    Seeded as a normal chat turn naming the job id, so the model reaches the
-    numbers through the same tools (get_backtest_analytics, get_win_rate,
-    compare_winners_vs_losers) it would use if asked in the panel, rather
-    than through a second, separately-maintained prompt path.
-    """
-    job = nautilus_runner.get_job(job_id)
-    if job is None:
-        raise HTTPException(404, f"backtest '{job_id}' not found")
-    prompt = (
-        f"Analyze backtest {job_id}. Pull its analytics and compare winners against "
-        f"losers, then give me the two or three things that most stand out — what's "
-        f"working, what's losing money, and the single change most worth testing next."
-    )
-    return agent_llm.chat([{"role": "user", "content": prompt}])

@@ -6,7 +6,7 @@
     python scripts/warm_replay.py --evict              # apply the LRU cap now
 
 The web UI warms a day on first replay; this is for pre-warming a few
-sessions before a teaching sitting. Only this script, scripts/ingest.py and
+sessions ahead of a review sitting. Only this script, scripts/ingest.py and
 the in-app warmer read raw .dbn.zst files (PLATFORM-SPEC.md §4.1).
 """
 

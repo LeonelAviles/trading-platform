@@ -7,21 +7,16 @@ import StrategiesPage from './pages/StrategiesPage';
 import StrategyPage from './pages/StrategyPage';
 import BacktestsPage from './pages/BacktestsPage';
 import CandlestickPage from './pages/CandlestickPage';
-import ChartPage from './pages/ChartPage';
-import TeachingPage from './pages/TeachingPage';
-import TeachPage from './pages/TeachPage';
-import ResearchPage from './pages/ResearchPage';
-import KnowledgePage from './pages/KnowledgePage';
 import SettingsPage from './pages/SettingsPage';
 
-const CHART_ROUTES = ['/chart', '/review/'];
+const CHART_ROUTES = ['/review/'];
 
 function readPref() {
   try { return localStorage.getItem('sidebar.collapsed') === '1'; } catch { return false; }
 }
 
 // App shell: persistent sidebar + a top bar pages portal their controls into
-// (the chart pages fill it with their toolbars) + the routed page.
+// (the review chart fills it with its toolbar) + the routed page.
 export default function App() {
   const { pathname } = useLocation();
   const onChart = CHART_ROUTES.some((p) => pathname.startsWith(p));
@@ -53,12 +48,6 @@ export default function App() {
               <Route path="/backtests" element={<BacktestsPage />} />
               <Route path="/review" element={<Navigate to="/backtests" replace />} />
               <Route path="/review/:backtestId" element={<CandlestickPage />} />
-              <Route path="/chart/:symbol" element={<ChartPage />} />
-              <Route path="/chart" element={<Navigate to="/teaching" replace />} />
-              <Route path="/teaching" element={<TeachingPage />} />
-              <Route path="/teach/:sessionId" element={<TeachPage />} />
-              <Route path="/research" element={<ResearchPage />} />
-              <Route path="/knowledge" element={<KnowledgePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

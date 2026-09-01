@@ -1162,12 +1162,8 @@
             "title": "Sourceid"
           },
           "type": {
+            "const": "manual",
             "default": "manual",
-            "enum": [
-              "prompt",
-              "teaching",
-              "manual"
-            ],
             "title": "Type",
             "type": "string"
           }
@@ -1242,19 +1238,6 @@
             "title": "Accountsize",
             "type": "number"
           },
-          "agentProposal": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Agentproposal"
-          },
           "dailyLossLimitPct": {
             "default": 2.0,
             "title": "Dailylosslimitpct",
@@ -1276,7 +1259,6 @@
           "proposedBy": {
             "default": "default",
             "enum": [
-              "agent",
               "user",
               "default"
             ],

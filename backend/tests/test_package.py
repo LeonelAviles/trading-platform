@@ -39,14 +39,13 @@ def _finish(api, sid, kind, metrics, trades=None):
     d = jobs._job_dir(bid)
     d.mkdir(parents=True, exist_ok=True)
     (d / "trades.json").write_text(json.dumps({"trades": trades or []}))
-    (d / "findings.json").write_text(json.dumps([{"id": "f1", "category": "time", "summary": "winners early", "confidence": 0.7}]))
     return bid
 
 
 def test_package_contents_and_reimport(api):
     root = _mk(api, "ORB root")
     s = _mk(api, "ORB child", lineage={"parentId": root["id"], "changedVariable": "exit.target.value", "trialIndex": 2},
-            origin={"type": "prompt", "sourceId": "run123456789"})
+            origin={"type": "manual"})
     sid = s["id"]
     _finish(api, sid, "is", {"trades": 3, "profitFactor": 1.5, "expectancyR": 0.3, "verdict": {"status": "untestable", "failures": ["x"]}},
             trades=[{"pnlUsd": 500.0, "r": 1.0}, {"pnlUsd": -250.0, "r": -0.5}, {"pnlUsd": 500.0, "r": 1.0}])
@@ -55,8 +54,8 @@ def test_package_contents_and_reimport(api):
     assert sid in r.headers["content-disposition"]
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     names = set(zf.namelist())
-    assert {"manifest.json", "spec.json", "risk.json", "validation_report.json", "lineage.json", "evidence/findings.json",
-            "evidence/knowledge.json", "nautilus_config.json"} <= names
+    assert {"manifest.json", "spec.json", "risk.json", "validation_report.json", "lineage.json", "nautilus_config.json"} <= names
+    assert not [n for n in names if n in ("evidence/findings.json", "evidence/knowledge.json", "evidence/agent_run.json")]
     manifest = json.loads(zf.read("manifest.json"))
     assert manifest["packageVersion"] == pk.PACKAGE_VERSION and manifest["strategyId"] == sid
     spec = json.loads(zf.read("spec.json"))
@@ -66,8 +65,6 @@ def test_package_contents_and_reimport(api):
     assert rep["inSample"]["trades"] == 3 and rep["monteCarlo"]["bootstrap"]["runs"] == 1000 and rep["verdict"]
     lin = json.loads(zf.read("lineage.json"))
     assert lin["rootId"] == root["id"] and lin["champion"] == sid
-    findings = json.loads(zf.read("evidence/findings.json"))
-    assert findings and findings[0]["summary"] == "winners early" and findings[0]["windowKind"] == "is"
     nc = json.loads(zf.read("nautilus_config.json"))
     assert nc["strategy_path"] == "engine.backtest_worker:ExecStrategy" and nc["config"]["spec_path"] == "spec.json"
     assert nc["config"]["instrument_id"].startswith("ES") and "1-MINUTE" in nc["config"]["bar_type"]
@@ -83,7 +80,7 @@ def test_package_contents_and_reimport(api):
     for k in ("name", "direction", "instrument", "timeframes", "session", "entry", "exit", "filters", "risk", "execution", "origin"):
         assert again.get(k) == original.get(k), k
     assert again["lineage"]["parentId"] == root["id"]
-    assert again["origin"] == {"type": "prompt", "sourceId": "run123456789"}
+    assert again["origin"] == {"type": "manual", "sourceId": None}
     assert imp["validationReport"]["inSample"]["trades"] == 3
 
     # Deleted locally: the import restores the original id, and the package validates as a strategy.

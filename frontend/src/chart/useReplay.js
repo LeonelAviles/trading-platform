@@ -9,7 +9,7 @@ function initialState() {
     symbol: null, root: null, date: null, tickSize: 0.25, dayStart: null, dayEnd: null,
     clock: null, paused: true, speed: 1, bookMode: 'off', ended: false,
     bars: {}, book: null, trades: [], lastTrade: null,
-    footprint: null, footprints: {}, position: null, fills: [], vap: new Map(), cvd: 0, marks: [],
+    footprint: null, footprints: {}, vap: new Map(), cvd: 0,
     stats: { messages: 0 },
   };
 }
@@ -41,7 +41,7 @@ export function useReplay() {
           dayStart: m.dayStart, dayEnd: m.dayEnd, clock: m.clock, paused: m.paused, speed: m.speed,
           bookMode: m.bookMode, ended: false, bars: m.bars, book: m.book ? { ...m.book, approx: m.bookMode !== 'l3' } : null,
           trades: m.lastTrades || [], lastTrade: m.lastTrades?.length ? m.lastTrades[m.lastTrades.length - 1] : null,
-          footprint: m.footprint, position: m.position, fills: m.trades || [], cvd: m.cvd,
+          footprint: m.footprint, cvd: m.cvd,
         });
         s.vap = new Map((m.volumeAtPrice || []).map(([p, v]) => [p, v]));
         s.footprints = {};
@@ -74,17 +74,10 @@ export function useReplay() {
         if (m.closed) s.footprints[m.time] = m.levels;
         else s.footprint = m;
         break;
-      case 'position':
-        s.position = m.position; break;
-      case 'fill':
-        if (m.trade) { s.fills = [...s.fills, m.trade]; s.position = null; } else s.position = m.position;
-        break;
       case 'mode':
         s.bookMode = m.bookMode; s.speed = m.speed; break;
       case 'end':
         s.ended = true; s.paused = true; break;
-      case 'marked':
-        s.marks = [...s.marks, m]; break;
       case 'error':
         s.error = m.message; if (s.status !== 'ready') s.status = 'error'; break;
       default:

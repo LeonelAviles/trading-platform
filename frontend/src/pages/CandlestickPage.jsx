@@ -1,10 +1,9 @@
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fetchBacktest, deleteBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import AnalysisPanel from '../components/AnalysisPanel';
-import ChatPanel from '../components/ChatPanel';
 import { useOrderFlowChart } from '../chart/useOrderFlowChart';
 import { intervalToSeconds } from '../drawing/geometry';
 
@@ -12,14 +11,12 @@ import { intervalToSeconds } from '../drawing/geometry';
 // named by the route. The strategy and the symbol both come from that job, so
 // there is nothing to pick here and no way to end up staring at bars that
 // aren't attached to a strategy. The chart itself — tick replay, order-flow
-// layers, docks — is `useOrderFlowChart`, the same chart the teaching page
-// uses; this file adds the backtest on top: its trades drawn on the bars (and
-// revealed as the replay clock passes them), the analysis dock and Stratos.
+// layers, docks — is `useOrderFlowChart`; this file adds the backtest on top: its trades drawn on the bars (and
+// revealed as the replay clock passes them) and the analysis dock.
 export default function CandlestickPage() {
   const { leading: leadingSlot, main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const { backtestId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
 
   // The job under review, loaded from the route param. Everything else on the
   // page hangs off it — including the symbol, which is why the header has no
@@ -30,18 +27,11 @@ export default function CandlestickPage() {
   const [backtestTrades, setBacktestTrades] = useState([]);
   const [cvdData, setCvdData] = useState([]);
 
-  // Bottom analysis dock and right assistant dock both persist their
-  // open/closed state. The assistant additionally opens itself when arriving
-  // straight off "Run backtest", so there's somewhere to talk about the run
-  // the moment it lands.
+  // The bottom analysis dock persists its open/closed state.
   const [analysisPanelOpen, setAnalysisPanelOpen] = useState(
     () => localStorage.getItem('analysisPanelOpen') !== 'false',
   );
-  const [chatOpen, setChatOpen] = useState(
-    () => Boolean(location.state?.openChat) || localStorage.getItem('chatOpen') === 'true',
-  );
   useEffect(() => { localStorage.setItem('analysisPanelOpen', String(analysisPanelOpen)); }, [analysisPanelOpen]);
-  useEffect(() => { localStorage.setItem('chatOpen', String(chatOpen)); }, [chatOpen]);
 
   const chart = useOrderFlowChart({ symbol, interval, setInterval: setInterval_ });
   const { bars, clockTime, shapes } = chart;
@@ -128,15 +118,7 @@ export default function CandlestickPage() {
           </div>
         </div>
       ), leadingSlot)}
-      {headerSlot && createPortal(chart.renderToolbar(
-        <button className={`chat-toggle ${chatOpen ? 'active' : ''}`} title="Stratos" onClick={() => setChatOpen((o) => !o)}>
-          <svg className="chat-toggle-spark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M9 2.5l1.4 3.7 3.7 1.4-3.7 1.4L9 12.7 7.6 9 3.9 7.6l3.7-1.4z" />
-            <path d="M17.5 12l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" />
-          </svg>
-          Ask Stratos
-        </button>
-      ), headerSlot)}
+      {headerSlot && createPortal(chart.renderToolbar(), headerSlot)}
       {trailingSlot && createPortal(chart.settingsButton, trailingSlot)}
       {chart.settingsModal}
       <div className="page-body">
@@ -169,15 +151,6 @@ export default function CandlestickPage() {
           ),
         })}
         {chart.rightDock}
-        {chatOpen && (
-          <ChatPanel
-            symbol={symbol}
-            interval={interval}
-            backtestId={backtestId}
-            strategyName={selectedJob?.strategyName}
-            backtestStatus={selectedJob?.status}
-          />
-        )}
       </div>
       <AnalysisPanel
         trades={visibleTrades}

@@ -33,7 +33,7 @@ class _M(BaseModel):
 
 
 class Origin(_M):
-    type: Literal["prompt", "teaching", "manual"] = "manual"
+    type: Literal["manual"] = "manual"
     sourceId: str | None = None
 
 
@@ -155,7 +155,7 @@ class PassCriteria(_M):
 
 
 class RiskProfile(_M):
-    proposedBy: Literal["agent", "user", "default"] = "default"
+    proposedBy: Literal["user", "default"] = "default"
     rationale: str | None = None
     accountSize: float = 100000
     riskPerTradePct: float = 0.5
@@ -166,7 +166,6 @@ class RiskProfile(_M):
     stopAfterConsecutiveLosses: int = 3
     weeklyTargetPct: float | None = None
     passCriteria: PassCriteria = Field(default_factory=PassCriteria)
-    agentProposal: dict[str, Any] | None = None   # the agent's numbers, kept for "Reset to agent proposal"
 
 
 class StrategySpec(_M):
@@ -188,7 +187,7 @@ class StrategySpec(_M):
     constraints: Constraints = Field(default_factory=Constraints)
     execution: Execution = Field(default_factory=Execution)
     risk: RiskProfile = Field(default_factory=RiskProfile)
-    # free-form, kept for the UI/agent (v1 `rationale`, `basedOn`, notes)
+    # free-form, kept for the UI (v1 `rationale`, `basedOn`, notes)
     meta: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -29,7 +29,7 @@ DEFAULT_PASS_CRITERIA = {
 
 DEFAULT_RISK = {
     "proposedBy": "default",
-    "rationale": "platform defaults (PLATFORM-SPEC.md §4.6); no agent proposal yet",
+    "rationale": "platform defaults (PLATFORM-SPEC.md §4.6)",
     "accountSize": 100000,
     "riskPerTradePct": 0.5,
     "maxContracts": 5,

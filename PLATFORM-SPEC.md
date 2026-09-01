@@ -5,6 +5,15 @@
 
 **Date:** 2026-08-30. Repo state analyzed at commit `2b02725` ("heatmap").
 
+> **2026-08-31 — agent removed.** This document is kept as the historical
+> design. Everything that involves an LLM — §4.8 knowledge graph, §4.9 LLM
+> usage, §5 Phase 4 (agent runs, research), §7 agent tools, the Hermes plugin,
+> the chat analyst, and the hypothesis / question / compile parts of Phase 6 —
+> was removed from the codebase; see DECISIONS.md "Agent removal". Teaching
+> mode (Phase 6, §4.11's order simulation, the free `/chart/:symbol` page)
+> was removed the same day; see "Teaching removal". The review chart
+> (`/review/:backtestId`) is the only chart.
+
 ---
 
 ## 0. How to work through this document

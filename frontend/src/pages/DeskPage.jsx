@@ -3,15 +3,9 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { fetchDesk, forwardTestStrategy, importStrategyPackage, strategyPackageUrl } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import { AgentRunList } from '../components/AgentRuns';
 import LineageTree from '../components/LineageTree';
 import { PageHeader, StatTile } from '../components/ui';
 
-function fmtWhen(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 function pct(v) { return v == null ? '—' : `${Number(v).toFixed(1)}%`; }
 function num(v, d = 2) { return v == null ? '—' : Number(v).toFixed(d); }
 function gb(bytes) { return `${(bytes / 1e9).toFixed(2)} GB`; }
@@ -61,8 +55,7 @@ function CandidateCard({ c, onForward, busy }) {
 }
 
 // `/` — the desk (PLATFORM-SPEC.md Phase 7): what is worth trading, what is
-// being tested, what has been taught, what research costs, and what data is on
-// disk. One read of /api/desk; refreshes every 20 s while open.
+// being tested, and what data is on disk. One read of /api/desk; refreshes every 20 s while open.
 export default function DeskPage() {
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
   const navigate = useNavigate();
@@ -115,7 +108,6 @@ export default function DeskPage() {
 
   const cov = desk?.coverage || {};
   const roots = cov.roots || {};
-  const budget = desk?.budget || {};
   const testing = desk?.testing || {};
 
   return (
@@ -124,7 +116,7 @@ export default function DeskPage() {
       <div className="page-scroll"><div className="page-inner wide">
         <PageHeader
           title="Desk"
-          subtitle="What is worth attention today: candidates, what is testing, teaching sessions, the research budget and the data on disk."
+          subtitle="What is worth attention today: candidates, what is testing and the data on disk."
           actions={(
             <>
               <button className="btn" onClick={() => fileRef.current?.click()}>Import package…</button>
@@ -137,9 +129,7 @@ export default function DeskPage() {
           <div className="stat-row">
             <StatTile label="Strategies" value={desk.strategies.total} sub={Object.entries(desk.strategies.byStatus).map(([k, n]) => `${n} ${k.replace('_', ' ')}`).join(' · ') || 'none yet'} to="/strategies" />
             <StatTile label="Candidates" value={desk.candidates.length} sub={desk.candidates.length ? 'passed validation' : 'none passed validation yet'} tone={desk.candidates.length ? 'good' : ''} to="/strategies?status=candidate" />
-            <StatTile label="Testing now" value={(testing.agentRuns?.length || 0) + (testing.backtests?.length || 0)} sub={`${testing.agentRuns?.length || 0} agent · ${testing.backtests?.length || 0} backtests`} to="/backtests" />
-            <StatTile label="Teaching sessions" value={desk.teaching.length} sub={desk.teaching.filter((s) => s.compiledStrategyId).length + ' compiled'} to="/teaching" />
-            <StatTile label="Research spend" value={`$${num(budget.monthSpendUsd)}`} sub={`of $${num(budget.monthlyBudgetUsd, 0)} this month`} tone={budget.capped ? 'bad' : ''} to="/research" />
+            <StatTile label="Testing now" value={testing.backtests?.length || 0} sub={`${testing.backtests?.length || 0} backtest${testing.backtests?.length === 1 ? '' : 's'} running`} to="/backtests" />
             <StatTile label="Sessions on disk" value={Object.values(roots).reduce((a, r) => a + (r.sessions || 0), 0)} sub={Object.entries(roots).map(([k, r]) => `${k} ${r.first?.slice(5)} → ${r.last?.slice(5)}`).join(' · ') || 'no data'} to="/settings" />
           </div>
         )}
@@ -163,7 +153,8 @@ export default function DeskPage() {
               )}
             </Tile>
 
-            <Tile title="Testing" sub={`${testing.agentRuns?.length || 0} active agent run(s) · ${testing.backtests?.length || 0} backtest(s) running`} className="desk-tile-wide">
+            <Tile title="Testing" sub={`${testing.backtests?.length || 0} backtest(s) running`} className="desk-tile-wide">
+              {testing.backtests?.length === 0 && <div className="review-card-empty">Nothing running. Start a backtest from Strategies or Backtests.</div>}
               {testing.backtests?.length > 0 && (
                 <ul className="review-run-list">
                   {testing.backtests.map((b) => (
@@ -177,58 +168,6 @@ export default function DeskPage() {
                     </li>
                   ))}
                 </ul>
-              )}
-              <AgentRunList activeOnly emptyText="Nothing running. Start one from Strategies → New strategy → Describe it." />
-            </Tile>
-
-            <Tile title="Teaching sessions" sub={`${desk.teaching.length} session(s)`} extra={<Link className="btn btn-sm" to="/chart/ES1!?teaching=1">Start a teaching session →</Link>}>
-              {desk.teaching.length === 0 ? (
-                <div className="review-card-empty">No teaching sessions yet — start one and trade a replay; the agent learns your rules.</div>
-              ) : (
-                <ul className="desk-list">
-                  {desk.teaching.map((s) => (
-                    <li key={s.id}>
-                      <Link to={`/teach/${s.id}`}>{s.symbol} · {fmtWhen(s.createdAt)}</Link>
-                      <span className={`review-chip status-${s.status}`}>{s.status}</span>
-                      <span className="muted">{s.trades} trade{s.trades === 1 ? '' : 's'}</span>
-                      {s.similarity && <span className="muted">P {num(s.similarity.precision)} · R {num(s.similarity.recall)}</span>}
-                      {s.compiledStrategyId && <Link className="muted" to={`/strategies/${s.compiledStrategyId}`}>compiled →</Link>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Tile>
-
-            <Tile title="Research budget" sub={budget.estimate ? 'estimates at the configured price table' : ''}>
-              {budget.error ? <div className="review-error">{budget.error}</div> : (
-                <div className="desk-budget">
-                  <div className="desk-bar-label">
-                    <span>Month</span>
-                    <span>${num(budget.monthSpendUsd)} / ${num(budget.monthlyBudgetUsd, 0)}{budget.capped ? ' · capped' : ''}</span>
-                  </div>
-                  <div className="desk-bar"><div className={`desk-bar-fill ${budget.capped ? 'capped' : ''}`} style={{ width: `${Math.min(100, (budget.monthFraction || 0) * 100)}%` }} /></div>
-                  <div className="desk-bar-label">
-                    <span>Research today</span>
-                    <span>${num(budget.researchDaySpendUsd)} / ${num(budget.dailyResearchBudgetUsd, 0)}{budget.researchCapped ? ' · capped' : ''}</span>
-                  </div>
-                  <div className="desk-bar"><div className={`desk-bar-fill ${budget.researchCapped ? 'capped' : ''}`} style={{ width: `${Math.min(100, budget.dailyResearchBudgetUsd ? (budget.researchDaySpendUsd / budget.dailyResearchBudgetUsd) * 100 : 0)}%` }} /></div>
-                  {desk.research && !desk.research.error && (
-                    <div className="desk-selfstudy">
-                      <span>Self-study {desk.research.enabled ? 'on' : 'off'}</span>
-                      <span className="muted">last read {fmtWhen(desk.research.lastRunAt) || 'never'} · next {desk.research.enabled ? (fmtWhen(desk.research.nextRunAt) || 'now') : '—'} · {desk.research.queued} queued</span>
-                      <Link to="/research">Research →</Link>
-                    </div>
-                  )}
-                  {budget.byPurpose && Object.keys(budget.byPurpose).length > 0 && (
-                    <table className="desk-table">
-                      <tbody>
-                        {Object.entries(budget.byPurpose).map(([k, v]) => (
-                          <tr key={k}><td className="muted">{k}</td><td>{v.calls} calls</td><td>${num(v.costUsd)}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
               )}
             </Tile>
 
@@ -266,7 +205,7 @@ export default function DeskPage() {
 
             <Tile title="Lineage" sub={`${desk.lineage.length} tree(s) — ★ marks the champion`} className="desk-tile-wide">
               {desk.lineage.length === 0 ? (
-                <div className="review-card-empty">No lineages yet — an agent run or a teaching compile creates one.</div>
+                <div className="review-card-empty">No lineages yet — save a variant with `lineage.parentId` to start one.</div>
               ) : desk.lineage.map((l) => (
                 <div key={l.rootId} className="desk-lineage">
                   <LineageTree lineage={{ tree: l.tree, champion: l.champion, rootId: l.rootId }} />

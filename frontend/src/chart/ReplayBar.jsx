@@ -4,7 +4,7 @@ import { REPLAY_SPEEDS, formatEtClock, etToUnix, etDateString } from './time';
 // Event-time replay controls (PLATFORM-SPEC.md Phase 5 task 3): play/pause,
 // speed 0.25–100×, step tick / bar, jump-to-timestamp in ET, ET clock,
 // "book approximate" badge above 25×.
-export default function ReplayBar({ replay, onPlayPause, onSpeed, onStep, onSeek, onExit, extra }) {
+export default function ReplayBar({ replay, onPlayPause, onSpeed, onStep, onSeek, onExit }) {
   const clockS = replay.clock != null ? replay.clock / 1e9 : null;
   const [jump, setJump] = useState('10:15:00');
   const dateStr = clockS != null ? etDateString(clockS) : replay.date;
@@ -40,7 +40,6 @@ export default function ReplayBar({ replay, onPlayPause, onSpeed, onStep, onSeek
         <input type="time" step="1" value={jump} onChange={(e) => setJump(e.target.value)} title="Jump to ET time" />
         <button className="replay-btn replay-btn-text" type="submit" disabled={busy}>go</button>
       </form>
-      {extra}
       <button className="replay-btn replay-exit" title="Stop replay" onClick={onExit}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>

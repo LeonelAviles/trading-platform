@@ -1,13 +1,8 @@
 """The strategy condition/indicator vocabulary (see strategy_spec.py),
-evaluated per bar. Pure Python, no NautilusTrader import — split out of
-nautilus_backtest.py so it can be shared with agent_tools.py without pulling
+evaluated per bar. Pure Python, no NautilusTrader import — kept separate so
 the (subprocess-only, deliberately isolated from the API process) Nautilus
-BacktestEngine into the live API process.
-
-Both nautilus_backtest.py (the real backtest) and agent_tools.py (trade
-enrichment / near-miss detection) import this, so "what the engine actually
-saw at entry" and "what the agent analyzes" are guaranteed to be the exact
-same computation, not a re-implementation that could drift.
+BacktestEngine never lands in the live API process. `engine/rules.V1Rules`
+evaluates legacy v1 strategies through it.
 """
 
 from collections import deque

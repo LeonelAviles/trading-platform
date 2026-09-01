@@ -2,8 +2,7 @@
 file at data/platform.db, WAL mode (PLATFORM-SPEC.md §4.7).
 
 Market data is *not* here: it lives in DuckDB/Parquet (data_store.py). This
-module covers strategies, backtests, agent runs, findings, teaching
-sessions, research sources/queue, primitive requests, LLM usage and settings.
+module covers strategies, backtests and settings.
 
 DATABASE_URL (env, default `sqlite+pysqlite:///./data/platform.db`). Relative
 sqlite paths are resolved against the repo root so the same URL works whether

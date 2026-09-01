@@ -2,7 +2,10 @@
 
 Spec: PLATFORM-SPEC.md §5 Phase 7. Status: **done** — the last phase of the
 plan. Acceptance ran against the real store (Apr–Jul ES) with the Phase 4
-lineage; see the end of this file.
+lineage; see the end of this file. The agent-related pieces (agent runs in
+the Testing tile, the research budget tile, findings / knowledge / agent-run
+evidence in the package) and then the teaching tile and evidence were removed
+on 2026-08-31; the acceptance notes below describe the state at the time.
 
 ## The desk (`/`)
 
@@ -12,13 +15,11 @@ lineage; see the end of this file.
 | Tile | Source | What it shows |
 |---|---|---|
 | Candidates | strategies with status `candidate` / `forward_test` / `live`, each through `engine.validation.report` | verdict chip, IS trades/PF/expectancy, OOS profit factor (or "not looked" while the OOS split is still unseen), Monte Carlo DD p95, walk-forward windows positive, regime notes (best / worst regime by expectancy from the IS `byRegime` breakdown); **Package** download and the one manual transition, **Forward test →** |
-| Testing | `agent.runs.list_runs` filtered to queued / running / paused-for-user, `engine.jobs.list_jobs` filtered to queued / running | the `AgentRuns` component (answer a paused run in place) above the backtests in flight |
-| Teaching sessions | `teaching.store.list_sessions` | symbol, when, status, trade count, precision / recall once compiled, link to the compiled strategy |
-| Research budget | `agent.client.usage_summary` | month spend vs budget and research spend today vs its daily cap as bars (red when capped), spend by purpose |
+| Testing | `engine.jobs.list_jobs` filtered to queued / running | the backtests in flight |
 | Data coverage | `data_store.coverage()` (dates dropped, counts kept) | per root: sessions, first → last, frozen IS / OOS ranges, raw files and how many are archived; replay-cache days with sizes against `REPLAY_CACHE_MAX_GB` |
 | Lineage | `strategy_store.lineage` for every root strategy whose tree has more than one node (or that is itself a candidate) | the tree with the champion starred — the same `LineageTree` component the strategy page uses |
 
-Every section is wrapped so a missing tier (no ingest yet, no LLM key) shows
+Every section is wrapped so a missing tier (no ingest yet) shows
 an error inside its tile instead of blanking the page. `/review` (the
 strategy-review picker) and every other route are unchanged; unknown routes
 now land on the desk.
@@ -34,10 +35,6 @@ spec.json                 the Strategy Spec v2 exactly as stored
 risk.json                 the risk profile (limits, pass criteria, proposedBy)
 validation_report.json    engine.validation.report: IS / WF / OOS (only if already looked at) / Monte Carlo / DSR / verdict
 lineage.json              the tree the strategy belongs to, champion marked
-evidence/findings.json    agent findings from backtests/<job>/findings.json for every backtest of the strategy
-evidence/knowledge.json   knowledge facts whose ref_id is the strategy or its originating run / session
-evidence/agent_run.json   (origin prompt) the run's input, report and citations
-evidence/teaching.json    (origin teaching) the session with its similarity report
 nautilus_config.json      ImportableStrategyConfig stub — see below
 ```
 
@@ -66,7 +63,7 @@ imported strategy.
 
 `GET /api/strategies/:id/compare/:otherId?window=is` resolves the latest
 finished backtest of that window kind for each strategy and returns the
-agent's `compare_backtests` output (expectancy-ranked metrics table, win-rate
+`engine.compare.compare_backtests` output (expectancy-ranked metrics table, win-rate
 z-test, warnings, winner, verdict). On the strategy page the lineage tree
 grew checkboxes (enabled on nodes that have a finished in-sample run): pick
 two, **Compare two nodes**, and `CompareView` renders the table with the
@@ -120,5 +117,4 @@ Against the real store (`data/platform.db`, 13 strategies, ES 105 sessions
 - Importing evidence (findings, knowledge) into the local stores: not done —
   they reference backtests that do not exist on the importing machine; the
   response carries them for display.
-- The desk polls `/api/desk` every 20 s rather than listening on a WebSocket;
-  the agent-run cards inside the Testing tile do stream over `/ws/agent/:id`.
+- The desk polls `/api/desk` every 20 s rather than listening on a WebSocket.

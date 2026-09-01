@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 // Drag-to-resize for a docked panel: persists the size in localStorage,
 // clamps to [min, max] (max may be a function for viewport-relative caps),
 // and suppresses text-selection/cursor flicker while dragging — same
-// mechanics as ChatPanel's resize handle, generalized for reuse.
+// mechanics as the docks' resize handles, generalized for reuse.
 export function useResizable({ key, defaultSize, min, max, cursor = 'col-resize' }) {
   const [size, setSize] = useState(() => {
     const v = Number(localStorage.getItem(key));

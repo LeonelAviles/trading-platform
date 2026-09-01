@@ -174,104 +174,8 @@ export async function fetchBacktestValidation(id) {
   return json(await fetch(`${BASE}/backtests/${id}/validation`));
 }
 
-// --- assistant chat ---
+// --- settings ---
 
-export async function fetchChatStatus() {
-  return json(await fetch(`${BASE}/chat/status`));
-}
-
-// Streams the assistant reply over SSE. Calls handlers as events arrive:
-//   onDelta(text)  — a piece of assistant text
-//   onTool(name)   — a backend tool call is running
-//   onError(message)
-// Resolves when the stream ends.
-export async function streamChat(messages, context, { onDelta, onTool, onError }) {
-  const res = await fetch(`${BASE}/chat/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, context }),
-  });
-  if (!res.ok || !res.body) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-    throw new Error(detail);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE events are separated by a blank line; keep the trailing partial.
-    const events = buf.split('\n\n');
-    buf = events.pop();
-    for (const raw of events) {
-      const line = raw.split('\n').find((l) => l.startsWith('data: '));
-      if (!line) continue;
-      let event;
-      try { event = JSON.parse(line.slice(6)); } catch { continue; }
-      if (event.type === 'delta') onDelta?.(event.text);
-      else if (event.type === 'tool') onTool?.(event.name);
-      else if (event.type === 'error') onError?.(event.message);
-    }
-  }
-}
-
-
-// --- agent runs (Phase 4) ---
-
-export async function fetchAgentRuns() {
-  return json(await fetch(`${BASE}/agent/runs`));
-}
-
-export async function fetchAgentRun(id) {
-  return json(await fetch(`${BASE}/agent/runs/${id}`));
-}
-
-// { kind: 'generate', prompt, symbol?, direction?, name?, interval?, risk? }
-export async function startAgentRun(body) {
-  return json(await fetch(`${BASE}/agent/runs`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  }));
-}
-
-export async function answerAgentRun(id, text) {
-  return json(await fetch(`${BASE}/agent/runs/${id}/answer`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
-  }));
-}
-
-export async function cancelAgentRun(id) {
-  return json(await fetch(`${BASE}/agent/runs/${id}/cancel`, { method: 'POST' }));
-}
-
-// Live event feed for one run. Calls onEvent(event) for each message; returns a close() fn.
-export function subscribeAgentRun(id, onEvent) {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${window.location.host}/ws/agent/${id}`);
-  ws.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch { /* ignore */ } };
-  return () => ws.close();
-}
-
-// --- research / knowledge / usage ---
-
-export async function fetchResearchQueue() { return json(await fetch(`${BASE}/research/queue`)); }
-export async function addResearchTopic(topic) {
-  return json(await fetch(`${BASE}/research/queue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic }) }));
-}
-export async function runResearch(maxTopics = 1) {
-  return json(await fetch(`${BASE}/research/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxTopics }) }));
-}
-export async function fetchResearchStatus() { return json(await fetch(`${BASE}/research/status`)); }
-export async function fetchResearchSources() { return json(await fetch(`${BASE}/research/sources`)); }
-export async function fetchPrimitiveRequests() { return json(await fetch(`${BASE}/research/primitive-requests`)); }
-export async function setPrimitiveRequestStatus(id, status) {
-  return json(await fetch(`${BASE}/research/primitive-requests/${id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }));
-}
-export async function searchKnowledge(q) { return json(await fetch(`${BASE}/knowledge/search?q=${encodeURIComponent(q)}`)); }
-export async function fetchUsage() { return json(await fetch(`${BASE}/usage`)); }
 export async function fetchSettings() { return json(await fetch(`${BASE}/settings`)); }
 export async function putSettings(values) {
   return json(await fetch(`${BASE}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) }));
@@ -289,34 +193,6 @@ export function replaySocketUrl() {
   return `${proto}://${window.location.host}/ws/replay`;
 }
 
-// Teaching mode (PLATFORM-SPEC.md Phase 6).
-export async function fetchTeachingSessions() { return json(await fetch(`${BASE}/teaching/sessions`)); }
-export async function createTeachingSession(symbol, dateFrom) {
-  return json(await fetch(`${BASE}/teaching/sessions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, dateFrom }),
-  }));
-}
-export async function fetchTeachingSession(id) { return json(await fetch(`${BASE}/teaching/sessions/${id}`)); }
-export async function endTeachingSession(id, notes) {
-  return json(await fetch(`${BASE}/teaching/sessions/${id}/end`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }),
-  }));
-}
-export async function compileTeachingSession(id) {
-  return json(await fetch(`${BASE}/teaching/sessions/${id}/compile`, { method: 'POST' }));
-}
-export async function labelTeachingEntry(id, entryTime, label, reason) {
-  return json(await fetch(`${BASE}/teaching/sessions/${id}/labels`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entryTime, label, reason }),
-  }));
-}
-export async function pickTeachingStrategy(id, strategyId) {
-  return json(await fetch(`${BASE}/teaching/sessions/${id}/pick`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strategyId }),
-  }));
-}
-export async function fetchTeachingSnapshot(id, key) { return json(await fetch(`${BASE}/teaching/sessions/${id}/snapshots/${key}`)); }
-
 // --- Phase 7: desk, packages, compare ---------------------------------------
 export async function fetchDesk() { return json(await fetch(`${BASE}/desk`)); }
 export function strategyPackageUrl(id) { return `${BASE}/strategies/${id}/package`; }
@@ -331,39 +207,6 @@ export async function forwardTestStrategy(id) {
 export async function compareStrategies(a, b, window = 'is') {
   return json(await fetch(`${BASE}/strategies/${a}/compare/${b}?window=${window}`));
 }
-
-// --- Research: owner sources, self-study, trusted domains -------------------
-export async function fetchResearchSettings() { return json(await fetch(`${BASE}/research/settings`)); }
-export async function putResearchSettings(values) {
-  return json(await fetch(`${BASE}/research/settings`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
-  }));
-}
-export async function fetchAutorun() { return json(await fetch(`${BASE}/research/autorun`)); }
-export async function tickAutorun() { return json(await fetch(`${BASE}/research/autorun/tick`, { method: 'POST' })); }
-export async function addResearchSource(body) {
-  return json(await fetch(`${BASE}/research/sources`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  }));
-}
-export async function uploadResearchSource(file, { title, topic } = {}) {
-  const params = new URLSearchParams({ filename: file.name });
-  if (title) params.set('title', title);
-  if (topic) params.set('topic', topic);
-  return json(await fetch(`${BASE}/research/sources/upload?${params}`, {
-    method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
-  }));
-}
-
-// --- Knowledge graph --------------------------------------------------------
-export async function fetchKnowledgeGraph({ minCredibility = 0, kinds = [], tiers = [], sources = true } = {}) {
-  const p = new URLSearchParams({ min_credibility: String(minCredibility), sources: String(sources) });
-  if (kinds.length) p.set('kinds', kinds.join(','));
-  if (tiers.length) p.set('tiers', tiers.join(','));
-  return json(await fetch(`${BASE}/knowledge/graph?${p}`));
-}
-export async function fetchKnowledgeNode(id) { return json(await fetch(`${BASE}/knowledge/graph/node/${encodeURIComponent(id)}`)); }
-export async function fetchKnowledgeFacts(ids) { return json(await fetch(`${BASE}/knowledge/facts?ids=${encodeURIComponent(ids.join(','))}`)); }
 
 export async function deleteStrategy(id) {
   return json(await fetch(`${BASE}/strategies/${id}`, { method: 'DELETE' }));

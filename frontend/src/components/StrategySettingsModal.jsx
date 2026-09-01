@@ -21,15 +21,12 @@ const CRITERIA = [
   ['minDeflatedSharpeProb', 'Min deflated Sharpe prob (blank = report only)', 0.01],
 ];
 
-// Strategy Settings modal — the risk profile (PLATFORM-SPEC.md §4.6). Shows
-// the agent's proposal next to the current value with "Reset to agent proposal".
+// Strategy Settings modal — the risk profile (PLATFORM-SPEC.md §4.6).
 export default function StrategySettingsModal({ open, risk, onApply, onClose }) {
   const [draft, setDraft] = useState(risk || {});
-  const [agent, setAgent] = useState(null);
   useEffect(() => {
     if (!open) return;
     setDraft(JSON.parse(JSON.stringify(risk || {})));
-    setAgent(risk?.proposedBy === 'agent' ? JSON.parse(JSON.stringify(risk)) : (risk?.agentProposal || null));
   }, [open, risk]);
   if (!open) return null;
 
@@ -46,36 +43,27 @@ export default function StrategySettingsModal({ open, risk, onApply, onClose }) 
         </div>
         <div className="modal-body">
           <div className="modal-content">
-            <div className="settings-section-label">
-              PROPOSED BY {String(draft.proposedBy || 'default').toUpperCase()}
-              {agent && (
-                <button className="btn btn-sm" style={{ marginLeft: 12 }} onClick={() => setDraft({ ...agent, proposedBy: 'agent' })}>
-                  Reset to agent proposal
-                </button>
-              )}
-            </div>
+            <div className="settings-section-label">PROPOSED BY {String(draft.proposedBy || 'default').toUpperCase()}</div>
             {draft.rationale && <p className="muted">{draft.rationale}</p>}
             <table className="settings-table">
-              <thead><tr><th>Field</th><th>Current</th>{agent && <th>Agent</th>}</tr></thead>
+              <thead><tr><th>Field</th><th>Current</th></tr></thead>
               <tbody>
                 {FIELDS.map(([k, label, step]) => (
                   <tr key={k}>
                     <td>{label}</td>
                     <td><input type="number" step={step} value={draft[k] ?? ''} onChange={(e) => setField(k, e.target.value)} /></td>
-                    {agent && <td className="muted">{agent[k] ?? '—'}</td>}
                   </tr>
                 ))}
               </tbody>
             </table>
             <div className="settings-section-label">PASS CRITERIA</div>
             <table className="settings-table">
-              <thead><tr><th>Criterion</th><th>Current</th>{agent && <th>Agent</th>}</tr></thead>
+              <thead><tr><th>Criterion</th><th>Current</th></tr></thead>
               <tbody>
                 {CRITERIA.map(([k, label, step]) => (
                   <tr key={k}>
                     <td>{label}</td>
                     <td><input type="number" step={step} value={draft.passCriteria?.[k] ?? ''} onChange={(e) => setCrit(k, e.target.value)} /></td>
-                    {agent && <td className="muted">{agent.passCriteria?.[k] ?? '—'}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -84,7 +72,7 @@ export default function StrategySettingsModal({ open, risk, onApply, onClose }) 
         </div>
         <div className="modal-footer">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => onApply({ ...draft, proposedBy: draft.proposedBy === 'agent' ? 'agent' : 'user' })}>Apply</button>
+          <button className="btn btn-primary" onClick={() => onApply({ ...draft, proposedBy: 'user' })}>Apply</button>
         </div>
       </div>
     </div>

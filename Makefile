@@ -1,7 +1,7 @@
 # Trading platform — developer entry points (PLATFORM-SPEC.md §5 Phase 0).
 #
 #   make dev      bare-metal: backend (uvicorn, :8123) + frontend (vite, :5173)
-#   make up       docker compose up (backend, frontend, neo4j)
+#   make up       docker compose up (backend, frontend)
 #   make down     docker compose down
 #   make ingest   scripts/ingest.py --all (raw .dbn.zst → data/market Parquet tiers)
 #   make catalog  scripts/build_catalog.py (NautilusTrader ParquetDataCatalog)
@@ -62,9 +62,6 @@ test-frontend:
 
 lint:
 	cd $(ROOT)/frontend && npm run lint
-
-research:
-	cd $(ROOT)/backend && $(PY) scripts/research.py --topics $(or $(TOPICS),1)
 
 warm:
 	cd $(ROOT)/backend && $(PY) scripts/warm_replay.py $(ROOT_SYMBOL) $(DATE)

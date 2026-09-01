@@ -357,3 +357,64 @@ decisions". Newest at the bottom.
     review page's old bar-by-bar replay (`ReplayControls`), DOM snapshot
     panel (`DomPanel`, `fetchDom`) and the separate Flow/DOM toggles are
     gone; layer preferences are shared (`chartLayers`).
+
+## Agent removal (2026-08-31)
+
+- **Everything agentic is gone.** The owner asked for the platform without an
+  LLM in the loop. Removed: agent runs (`backend/agent/`, `routers/agent.py`,
+  `/ws/agent`), the chat analyst (`routers/chat.py`, `agent_llm.py`, the
+  Stratos dock and "AI insights"), the tool bridge (`agent_tools.py`) and the
+  Hermes plugin, the research worker / self-study scheduler / owner sources /
+  trusted domains (`routers/research.py`, `agent/research.py`,
+  `config/research_seed.yaml`, `scripts/research.py`), the knowledge store and
+  graph (`backend/knowledge/`, Neo4j + Graphiti, `/knowledge`,
+  `scripts/kg_bootstrap.py`), the LLM budget / usage / price settings, and
+  the `anthropic`, `neo4j`, `graphiti-core`, `networkx` and `d3-force`
+  dependencies. Alembic `a1c3e5f7b9d2` drops `agent_runs`, `findings`,
+  `llm_usage`, `research_*`, `primitive_requests`, `knowledge_facts`,
+  `teaching_questions` and `backtests.agent_run_id`.
+- **Teaching mode keeps its deterministic half.** The replay, the simulated
+  fills, snapshots, marks and annotations stay exactly as they were. The
+  hypothesis engine, setup tagging, questions (and the replay pausing for
+  them) and the model-written compile are gone. In their place
+  `POST /api/teaching/sessions/:id/evaluate {strategyId}` runs any saved spec
+  over the replayed window and stores the similarity report
+  (`teaching/evaluate.py`, background thread; several strategies can be
+  evaluated and one picked). The acceptance test evaluates a hand-written
+  spec and keeps the recall ≥ 5/6, precision ≥ 0.6 bar.
+- **Spec v2 lost the agent-only fields.** `origin.type` is `teaching | manual`
+  and `risk.proposedBy` is `user | default`; `risk.agentProposal` is gone.
+  Existing strategies with `prompt` / `agent` values fail validation on
+  their next save and need the field edited by hand — none exist in the
+  committed schema fixtures.
+- **`compare_backtests` moved to `engine/compare.py`** — the strategy page's
+  "Compare two nodes" was the only non-agent caller.
+- **PLATFORM-SPEC.md is left as the historical design** (its §4.8, §4.9, §5
+  Phase 4, §7 and the agent halves of Phase 6 no longer describe the code);
+  `docs/04-agent.md` is deleted and `docs/06-teaching.md` / `docs/07-desk.md`
+  describe the reduced surface.
+
+## Teaching removal (2026-08-31)
+
+- **Teaching mode is gone entirely** (the owner asked for it right after the
+  agent). Removed: `backend/teaching/` (store, snapshots, similarity,
+  evaluate), `replay/teaching_hooks.py`, `replay/sim.py` (the in-replay order
+  simulator — `order` / `flatten` / `modify` / `mark` / `annotate` commands
+  and the `fill` / `position` / `marked` messages of `/ws/replay`),
+  `routers/teaching.py`, `chart_time.py`, `validation.run_teaching_window`
+  and the `teaching` window kind, the `/teaching`, `/teach/:id` and
+  `/chart/:symbol` pages, `TeachingPanel`, `teachingDefaults`, and the
+  teaching tile on the desk. Alembic `b7d9f1a3c5e0` drops `teaching_sessions`,
+  `teaching_trades`, `teaching_events` (the live store had none).
+- **The review chart is the only chart** (rule 71 tightened): `/review/:id`
+  is the single route that renders `useOrderFlowChart`; there is no free
+  chart and no other way onto a chart. `ChartPage.jsx` is deleted rather
+  than kept as a hidden route.
+- **Spec v2 `origin.type` is now only `manual`**; `origin.sourceId` stays
+  (nullable, unused) so stored documents keep validating.
+- **New strategy is one flow**: the dialog creates a draft from the
+  opening-range-breakout template and opens the spec editor; the
+  "how do you want to start" option grid is gone with its last alternative.
+- `data/teaching/` snapshots (none existed) are no longer written; the
+  `FeatureContext.snapshot()` feature vector stays because the backtester and
+  the primitive tests use it.

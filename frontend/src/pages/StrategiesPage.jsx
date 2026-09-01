@@ -5,7 +5,6 @@ import { createBacktest, createValidation, deleteStrategy, fetchBacktests, fetch
 import { HeaderSlotContext } from '../headerSlot';
 import { describeExpr } from '../spec/describe';
 import NewStrategyModal from '../components/NewStrategyModal';
-import { AgentRunList } from '../components/AgentRuns';
 import { Card, EmptyState, PageHeader, StatusChip } from '../components/ui';
 import { fmtWhen } from '../format';
 
@@ -60,7 +59,7 @@ export default function StrategiesPage() {
     setError('');
     try {
       const job = await createBacktest(id, { windowKind: 'full' });
-      navigate(`/review/${job.id}`, { state: { openChat: true } });
+      navigate(`/review/${job.id}`);
     } catch (e) {
       setError(e.message);
       setBusy('');
@@ -91,7 +90,7 @@ export default function StrategiesPage() {
       <div className="page-scroll"><div className="page-inner">
         <PageHeader
           title="Strategies"
-          subtitle="Every strategy is a Spec v2 document: instrument, entry trigger, filters, stop, target, sizing. Create one by describing it, teaching it on the chart, or writing the spec."
+          subtitle="Every strategy is a Spec v2 document: instrument, entry trigger, filters, stop, target, sizing. Create one from the template and edit the spec."
           actions={(
             <>
               <Link className="btn" to="/backtests">All backtests</Link>
@@ -112,7 +111,7 @@ export default function StrategiesPage() {
           </div>
           {loading ? <div className="review-card-empty">Loading…</div> : rows.length === 0 ? (
             <EmptyState title={strategies.length ? 'Nothing matches' : 'No strategies yet'}
-              text={strategies.length ? 'Try another filter.' : 'Start with the agent: describe the idea and it comes back with tested variants.'}
+              text={strategies.length ? 'Try another filter.' : 'Create one from the template and edit the spec.'}
               action={!strategies.length && <button className="btn btn-primary" onClick={() => openNew(true)}>+ New strategy</button>} />
           ) : (
             <div className="table-wrap">
@@ -123,7 +122,7 @@ export default function StrategiesPage() {
                 <tbody>
                   {rows.map(({ s, runs, latestIs, running, last }) => (
                     <tr key={s.id}>
-                      <td><Link className="row-link" to={`/strategies/${s.id}`}>{s.name || 'Untitled'}</Link><div className="inline-note">{s.origin?.type === 'prompt' ? 'from the agent' : s.origin?.type === 'teaching' ? 'from teaching' : 'manual'}{s.lineage?.parentId ? ' · variant' : ''}</div></td>
+                      <td><Link className="row-link" to={`/strategies/${s.id}`}>{s.name || 'Untitled'}</Link><div className="inline-note">{s.lineage?.parentId ? 'variant' : 'root'}</div></td>
                       <td>{s.instrument?.symbol} · {s.timeframes?.primary} · <span className={`review-dir ${s.direction}`}>{s.direction}</span></td>
                       <td><StatusChip status={s.status} /></td>
                       <td className="inline-note" title={describeExpr(s.entry?.trigger)}>{describeExpr(s.entry?.trigger)?.slice(0, 48)}</td>
@@ -144,12 +143,8 @@ export default function StrategiesPage() {
             </div>
           )}
         </Card>
-
-        <Card title="Agent runs" sub="Runs started from “Describe it”. Open one to follow the events or answer its question.">
-          <AgentRunList emptyText="No agent runs yet — press New strategy → Describe it." />
-        </Card>
       </div></div>
-      <NewStrategyModal open={modalOpen} onClose={() => openNew(false)} onStarted={() => { setToast('Agent run started — follow it below.'); refresh(); }} />
+      <NewStrategyModal open={modalOpen} onClose={() => openNew(false)} />
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

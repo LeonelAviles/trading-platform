@@ -1,7 +1,7 @@
 """Trade ledger — turns fills/positions into the v2 trade record (PLATFORM-SPEC.md §4.3).
 
 Record (times in unix seconds for the chart; legacy aliases kept so the
-review page and the agent tools keep working):
+review page keeps working):
 
   {id, direction, contracts, entryTime, entryPrice, exitTime, exitPrice, stopPrice, targetPrice,
    exitReason, pnlPoints, pnlTicks, pnlUsd (after commission), grossPnlUsd, commissionUsd,

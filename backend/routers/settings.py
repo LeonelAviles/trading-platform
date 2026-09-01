@@ -1,7 +1,7 @@
 """Platform settings — a key/value table in SQLite (PLATFORM-SPEC.md §4.7).
 
-GET returns every key; PUT merges the given keys. Later phases keep the LLM
-price table, budget, model names and replay defaults here.
+GET returns every key; PUT merges the given keys (replay defaults and the
+like live here).
 """
 
 from fastapi import APIRouter, Body, Depends

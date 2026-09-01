@@ -1,7 +1,7 @@
 """FeatureContext — one implementation of every market feature, three
 consumers (PLATFORM-SPEC.md §5 Phase 3 task 3): the Nautilus strategy, the
-agent's trade-enrichment tools and the teaching-mode snapshot builder all
-run this object over the same bars/trades and read identical numbers.
+backtest analytics and the tests all run this object over the same
+bars/trades and read identical numbers.
 
 Inputs
   on_bar(bar)      a closed *primary* bar (open, high, low, close, volume,
@@ -315,7 +315,7 @@ class FeatureContext:
         return bars[-n:] if n else bars
 
     def snapshot(self, names: list[str] | None = None) -> dict:
-        """Every registered primitive with default params (teaching-mode feature vector)."""
+        """Every registered primitive with default params (the full feature vector)."""
         from engine.primitives.base import all_primitives
 
         out = {}

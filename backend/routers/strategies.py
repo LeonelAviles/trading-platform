@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response
 
-import agent_llm
 import strategy_package
 import strategy_store
 from engine import spec as spec_mod
@@ -39,20 +38,6 @@ def validate_strategy(strategy: dict = Body(...)):
     spec = strategy_store.coerce(strategy)
     return {"valid": not errors, "errors": errors,
             "requiredMode": spec_mod.required_mode(spec) if not errors else None}
-
-
-@router.post("/generate")
-def generate_strategy(body: dict = Body(...)):
-    """Idea -> strategies, as a resumable background AgentRun (Phase 4).
-    Returns the run; watch it at /api/agent/runs/:id or /ws/agent/:id.
-    Only `prompt` is required — name, symbol, direction and interval may be
-    left to the agent (direction is often one of the ambiguities)."""
-    from agent import runs
-
-    if not (body.get("prompt") or "").strip():
-        raise HTTPException(400, "'prompt' is required")
-    input_ = {k: body.get(k) for k in ("prompt", "symbol", "direction", "name", "interval", "risk") if body.get(k) is not None}
-    return runs.start_run("generate", input_)
 
 
 @router.post("/import")
@@ -140,8 +125,8 @@ def forward_test(strategy_id: str):
 @router.get("/{strategy_id}/compare/{other_id}")
 def compare(strategy_id: str, other_id: str, window: str = "is", mode: str | None = None):
     """Two lineage nodes side by side: the latest finished backtest of the
-    given window kind for each, through the agent's compare_backtests tool."""
-    import agent_tools
+    given window kind for each (engine.compare)."""
+    from engine import compare as cmp
 
     load_strategy(strategy_id)
     load_strategy(other_id)
@@ -150,8 +135,8 @@ def compare(strategy_id: str, other_id: str, window: str = "is", mode: str | Non
         missing = [sid for sid, j in ((strategy_id, a), (other_id, b)) if not j]
         raise HTTPException(404, f"no finished '{window}' backtest for {', '.join(missing)}")
     try:
-        out = agent_tools.compare_backtests(a["id"], b["id"])
-    except agent_tools.ToolError as e:
+        out = cmp.compare_backtests(a["id"], b["id"])
+    except cmp.CompareError as e:
         raise HTTPException(400, str(e))
     return {"a": {"strategyId": strategy_id, "backtestId": a["id"], "name": a.get("strategyName")},
             "b": {"strategyId": other_id, "backtestId": b["id"], "name": b.get("strategyName")},
@@ -169,7 +154,7 @@ def _latest_job(strategy_id: str, window: str, mode: str | None) -> dict | None:
 
 @router.get("/schema/spec")
 def get_spec_schema():
-    """JSON Schema + primitive docs (same payload the agent's get_spec_schema tool returns)."""
+    """JSON Schema + primitive docs for the spec editor."""
     from engine import expr as X
 
     return {"schema": spec_mod.json_schema(), "primitives": spec_mod.primitive_docs(), "operators": sorted(X.OPS),

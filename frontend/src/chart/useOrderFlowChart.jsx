@@ -38,22 +38,18 @@ const GEAR = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 );
 
-// The one chart both pages share (PLATFORM-SPEC.md Phase 5): the continuous
-// series end to end, tick replay over /ws/replay from any clicked candle, the
-// order-flow layers (DOM ladder, T&S, heatmap, footprint, bubbles, profile,
-// CVD), drawings, settings and the keyboard. The review page (/review/:id)
-// adds the backtest's trades and docks on top of it; the teaching page
-// (/chart/:symbol) adds the teaching session. Neither page owns any chart
-// loading or replay plumbing of its own — everything that differs between
-// them is passed in through the options or the render helpers.
+// The chart (PLATFORM-SPEC.md Phase 5): the continuous series end to end,
+// tick replay over /ws/replay from any clicked candle, the order-flow layers
+// (DOM ladder, T&S, heatmap, footprint, bubbles, profile, CVD), drawings,
+// settings and the keyboard. The review page (/review/:id) adds the
+// backtest's trades and docks on top of it through the render helpers; it
+// owns no chart loading or replay plumbing of its own.
 //
 // options:
 //   symbol, interval, setInterval — the series; the page owns `interval`
 //     because the review page sets it from the backtest job.
 //   root — instrument root for the "decoding…" message.
-//   beforeStart(unixSeconds, dateStr) — optional; may return extra `start`
-//     params (teaching session id…) or `false` to abort the replay.
-export function useOrderFlowChart({ symbol, interval, setInterval, root, beforeStart }) {
+export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
   const [status, setStatus] = useState('');
   const [settings, setSettings] = useChartSettings();
   const [layerSettings, setLayerSettings] = useLayerSettings();
@@ -257,14 +253,8 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root, beforeS
     setDate(d);
     setSelecting(false);
     setStatus('');
-    let extra = {};
-    if (beforeStart) {
-      extra = await beforeStart(unixSeconds, d);
-      if (extra === false) return;
-    }
     start({
       symbol, fromTs: Math.round(unixSeconds) * 1e9, speed: 1, layers: { book: bookLayer, trades: true, bars: SESSION_TFS }, autoplay: false,
-      ...(extra || {}),
     });
   };
 
@@ -365,10 +355,9 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root, beforeS
 
   // The chart column: ChartView with the replay overlays, plus the CVD pane.
   //   trades/revealTime — overlay for the page's trades (review page).
-  //   replayExtra — buttons appended to the replay bar (teaching page).
   //   dock — extra chips for the bottom-right dock.
   //   children — anything else drawn over the chart.
-  const renderChart = ({ trades = [], revealTime = null, replayExtra = null, dock = null, children = null } = {}) => (
+  const renderChart = ({ trades = [], revealTime = null, dock = null, children = null } = {}) => (
     <div className="chart-column">
       <ChartView
         symbol={symbol} interval={interval} bars={bars} settings={settings} onReady={onReady} onView={setView}
@@ -401,7 +390,6 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root, beforeS
             onStep={(unit) => send({ type: 'step', unit, n: 1 })}
             onSeek={(unixS) => send({ type: 'seek', ts: Math.round(unixS) * 1e9 })}
             onExit={exitReplay}
-            extra={replayExtra}
           />
         )}
         {replaying && replay.status === 'ready' && replay.error && <div className="replay-toast">{replay.error}</div>}
