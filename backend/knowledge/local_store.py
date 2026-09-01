@@ -69,9 +69,11 @@ def invalidate(fact_id: str) -> bool:
         return True
 
 
-def count(kind: str | None = None) -> int:
+def count(kind: str | None = None, live_only: bool = True) -> int:
     with database.session_scope() as db:
         q = db.query(KnowledgeFact)
+        if live_only:
+            q = q.filter(KnowledgeFact.invalid_at.is_(None))
         if kind:
             q = q.filter(KnowledgeFact.kind == kind)
         return q.count()

@@ -32,11 +32,6 @@ export async function fetchCVD(symbol, interval) {
   return json(await fetch(`${BASE}/cvd?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`));
 }
 
-export async function fetchDom(symbol, asOf) {
-  const asOfParam = asOf != null ? `&as_of=${Math.round(asOf)}` : '';
-  return json(await fetch(`${BASE}/dom?symbol=${encodeURIComponent(symbol)}${asOfParam}`));
-}
-
 // Time-bucketed resting-book depth in [start, end] unix seconds — the
 // order-flow heatmap overlay's data source.
 export async function fetchDomHeatmap(symbol, start, end, {

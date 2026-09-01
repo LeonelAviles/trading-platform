@@ -103,6 +103,9 @@ class SpecRules(RuleSource):
     def on_trade(self, ts: int, price: float, size: int, side: str) -> None:
         self.ctx.on_trade(Trade(int(ts), float(price), int(size), side))
 
+    def set_book(self, bids: list[tuple[float, float]], asks: list[tuple[float, float]], ts: int | None = None) -> None:
+        self.ctx.set_book(bids, asks, ts)
+
     def on_bar(self, bar: Bar) -> None:
         from engine.features import BarRec
 

@@ -113,7 +113,7 @@ export default function SettingsModal({ open, settings, onApply, onClose, layerS
             {tab === 'Layers' && layerDraft && (
               <>
                 <div className="settings-section-label">FOOTPRINT</div>
-                <NumRow label="Imbalance ratio" value={layerDraft.footprintRatio} step={0.5} min={1} onChange={(v) => setLayer({ footprintRatio: v })} hint="diagonal bid × ask" />
+                <NumRow label="Imbalance ratio" value={layerDraft.footprintRatio} step={0.5} min={1} onChange={(v) => setLayer({ footprintRatio: v })} hint="bid vs ask, same level" />
                 <NumRow label="Min contracts" value={layerDraft.footprintMinVolume} onChange={(v) => setLayer({ footprintMinVolume: v })} />
                 <NumRow label="Stacked levels" value={layerDraft.stackedMin} min={2} onChange={(v) => setLayer({ stackedMin: v })} />
                 <div className="settings-section-label">DELTA BUBBLES</div>

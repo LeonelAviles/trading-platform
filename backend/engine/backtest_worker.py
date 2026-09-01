@@ -20,8 +20,13 @@ Modes
          bar) ± 1 tick, stops on the first print at/through the trigger,
          targets are resting limits (filled one tick worse by the same
          FillModel, which approximates the conservative trade-through rule).
-  l3     falls back to `ticks` until Phase 5 writes OrderBookDelta for
-         replay-cached days (recorded in meta.note).
+  l3     `ticks` plus a resting-liquidity book view: at every primary-bar
+         close the book primitives see the MBO-derived one-second level
+         sizes (engine/book_feed.py, levels ≥ 50 contracts). The same view
+         is attached in `ticks`/`bars` mode whenever the spec references a
+         book primitive; a spec that does so with no liquidity data for the
+         window is refused rather than run with the condition stuck at None.
+         Tick-exact OrderBookDelta replay remains Phase 5 (recorded in meta.note).
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.instruments import load_instruments  # noqa: E402
+from engine import book_feed as book_feed_mod  # noqa: E402
 from engine import instruments as ins_mod  # noqa: E402
 from engine import pnl as P  # noqa: E402
 from engine.ledger import Ledger, OpenTrade, daily_returns  # noqa: E402
@@ -145,6 +151,7 @@ def _make_strategy_class():
             self.tick_low = None
             self.last_price = None
             self.bar_type = None
+            self.book_feed = None                   # engine.book_feed.LiquidityBookFeed for the current day, if the spec reads the book
             self.stats = {"signals": 0, "blocked": 0}
 
         # -- lifecycle ------------------------------------------------------
@@ -293,6 +300,10 @@ def _make_strategy_class():
             b = Bar(float(bar.open), float(bar.high), float(bar.low), float(bar.close), vol, delta, buy, sell,
                     ts, ts - self.primary_min * 60 * NS, self.bar_index)
             self.tick_high = self.tick_low = None
+            if self.book_feed is not None and hasattr(self.rules, "set_book"):
+                self.book_feed.advance(ts)
+                bids, asks = self.book_feed.view(b.close)
+                self.rules.set_book(bids, asks, ts)
             self.rules.on_bar(b)
 
             if self.open is not None:
@@ -629,13 +640,25 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
     ins = load_instruments()
     root = ins_mod.root_spec(params["symbol"])
     cspec = P.ContractSpec.from_root(root)
+    book_prims = book_feed_mod.book_primitives_in(spec)
     note = None
     if mode == "l3":
-        note = "l3 mode falls back to ticks until OrderBookDelta data exists (Phase 5)"
         mode = "ticks"
+        note = ("l3: ticks + one-second resting-liquidity book from MBO (levels ≥ 50 contracts); tick-exact book replay is Phase 5"
+                if book_prims else "l3 falls back to ticks (the spec references no book primitives)")
+    elif book_prims:
+        note = "book primitives read the one-second resting-liquidity view from MBO (levels ≥ 50 contracts)"
     slippage = ins.costs.slippage_ticks_market if params["slippage_ticks"] is None else int(params["slippage_ticks"])
     ranges = ins_mod.resolve_ranges(params["symbol"], date_from, date_to)
     session_dates = [d.isoformat() for r in ranges for d in r.dates]
+    if book_prims:
+        missing = [(r.symbol, d) for r in ranges for d in r.dates if d not in book_feed_mod.covered_days(r.symbol, r.dates)]
+        if missing:
+            sym, d0 = missing[0]
+            raise RuntimeError(
+                f"strategy uses order-book primitives ({', '.join(book_prims)}) but no resting-liquidity data is materialised "
+                f"for {len(missing)} of {len(session_dates)} session days (first missing: {sym} {d0.isoformat()}). "
+                "Ingest MBO for those days or drop the book conditions — running would leave the condition permanently false.")
     ledger = Ledger(cspec, _regime_tags(root.root))
     catalog = cat.open_catalog()
     rules = build_rules(spec)
@@ -651,7 +674,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
         fill_model=FillModel(prob_fill_on_limit=1.0, prob_slippage=1.0 if slippage >= 1 else 0.0, random_seed=1),
         fee_model=PerContractFeeModel(commission=Money(root.commission_per_side, USD)),
     )
-    bars_total = ticks_total = 0
+    bars_total = ticks_total = book_days = 0
     try:
         for rng in ranges:
             inst = catalog.instruments(instrument_ids=[cat.instrument_id(rng.symbol)])
@@ -666,6 +689,9 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
             for d in rng.dates:
                 start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
                 end = start.replace(hour=23, minute=59, second=59)
+                if book_prims:
+                    strat.book_feed = book_feed_mod.LiquidityBookFeed.load(rng.symbol, d)
+                    book_days += 1
                 if mode == "bars":
                     strat.flow.update(_flow_sidecar(root.root, d, rng.symbol))
                     data = catalog.bars(bar_types=[cat.bar_type_str(rng.symbol)], start=start, end=end)
@@ -705,6 +731,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
             "sessions": len(session_dates), "contracts": [r.symbol for r in ranges], "bars": bars_total, "ticks": ticks_total,
             "slippageTicks": slippage, "commissionPerSide": root.commission_per_side, "accountSize": params["account_size"],
             "seconds": round(time.time() - t0, 1), "note": note, "signals": None,
+            "book": {"primitives": book_prims, "source": "liquidity_1s", "days": book_days} if book_prims else None,
         },
     }
 

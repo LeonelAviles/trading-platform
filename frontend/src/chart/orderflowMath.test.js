@@ -32,16 +32,17 @@ describe('delta bubbles', () => {
 
 describe('footprint', () => {
   const levels = [
-    { price: 5300.00, bid: 20, ask: 2 },
-    { price: 5300.25, bid: 3, ask: 30 },   // ask 30 vs bid below 20 -> not 3x
-    { price: 5300.50, bid: 1, ask: 12 },   // ask 12 vs bid below 3 -> buy imbalance
-    { price: 5300.75, bid: 0, ask: 9 },    // ask 9 vs bid below 1 -> buy imbalance
-    { price: 5301.00, bid: 0, ask: 6 },    // ask 6 vs bid below 0 -> buy imbalance (min 5)
+    { price: 5300.00, bid: 20, ask: 2 },   // bid 20 >= 3x ask 2 -> sell imbalance
+    { price: 5300.25, bid: 11, ask: 30 },  // ask 30 vs bid 11 -> not 3x
+    { price: 5300.50, bid: 1, ask: 12 },   // ask 12 >= 3x bid 1 -> buy imbalance
+    { price: 5300.75, bid: 0, ask: 9 },    // ask 9 vs bid 0 -> buy imbalance
+    { price: 5301.00, bid: 0, ask: 6 },    // ask 6 vs bid 0 -> buy imbalance (min 5)
   ];
-  it('marks diagonal imbalances', () => {
+  it('marks same-level imbalances', () => {
     const { buy, sell } = footprintImbalances(levels, { ratio: 3, minVolume: 5 });
     expect([...buy].sort()).toEqual([5300.5, 5300.75, 5301]);
-    expect(sell.has(5300)).toBe(false);    // bid 20 vs ask above 30: 20 < 90
+    expect([...sell]).toEqual([5300]);
+    expect(buy.has(5300.25)).toBe(false);  // 30 < 3 x 11
   });
   it('finds stacked runs of ≥3', () => {
     const { buy, sorted } = footprintImbalances(levels, { ratio: 3, minVolume: 5 });

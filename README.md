@@ -33,9 +33,8 @@ A persistent sidebar (collapses to an icon rail on chart pages):
 | Desk | `/` | Stat tiles + candidates, what is testing, teaching sessions, research budget, data coverage, lineage trees |
 | Strategies | `/strategies` | The list with validation status and last run; **+ New strategy** → *Describe it* (agent), *Teach it on the chart*, or *Write the spec* (template + editor); agent runs below |
 | Strategy | `/strategies/:id` | Overview (rules, risk, validation), Spec editor, Lineage (compare two nodes), Runs; toolbar: status, Package, Validate, Run backtest |
-| Backtests | `/backtests` | Every run in one table, run a new one, open any on its review chart (`/review/:id`) |
-| Chart & replay | `/chart/:symbol` | Tick replay with order-flow layers; `?teaching=1` starts with Teaching on |
-| Teaching | `/teaching` | Sessions so far, the three steps, **Start a teaching session**; a session opens at `/teach/:id` |
+| Backtests | `/backtests` | Every run in one table, run a new one, open any on its review chart (`/review/:id`) — the same chart as teaching (tick replay, order-flow layers) with the engine's trades drawn on it, revealed as the replay clock passes them, plus the analysis dock and Stratos |
+| Teaching | `/teaching` | Sessions so far, the three steps, **Start a teaching session** → the teaching chart (`/chart/:symbol`, tick replay with order-flow layers, Teaching always on); a session's review opens at `/teach/:id` |
 | Research | `/research` | Queue, Sources (hand it a link / PDF / text), Knowledge search, primitive requests |
 | Knowledge graph | `/knowledge` | Interactive concept graph with clusters, central concepts and content gaps |
 | Settings | `/settings` | Budget & prices, self-study schedule, trusted domains, data on disk, instruments |
@@ -51,7 +50,7 @@ A persistent sidebar (collapses to an icon rail on chart pages):
   evidence, `nautilus_config.json`) that `POST /api/strategies/import`
   re-creates; the strategy page compares any two lineage nodes
   ([docs/07-desk.md](docs/07-desk.md)).
-- **Teaching mode** on the free chart: trade the replay with hotkeys or
+- **Teaching mode** on the teaching chart: trade the replay with hotkeys or
   buttons, the agent snapshots every fill (bars, levels, profile, CVD,
   footprints, book, the full primitive feature vector), keeps a hypothesis
   of your rules, asks questions (pausing the replay), detects skipped setups

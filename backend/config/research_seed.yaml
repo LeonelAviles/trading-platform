@@ -13,3 +13,12 @@ topics:
   - deflated Sharpe ratio and backtest overfitting (Bailey, López de Prado)
   - market regime detection for intraday futures strategies
   - execution costs, slippage and commissions on E-mini index futures
+  # Quantitative finance / quantitative trading / statistical analysis (owner request 2026-08-31)
+  - "quantitative trading: alpha research, signal construction and factor models"
+  - momentum and mean-reversion strategies in futures and equities, evidence and implementation
+  - "statistical analysis for trading: hypothesis testing, stationarity, autocorrelation and multiple-testing bias"
+  - "time-series models for financial data: ARIMA, GARCH volatility and regime-switching models"
+  - "pairs trading and statistical arbitrage: cointegration and spread modelling"
+  - "machine learning for quantitative trading: feature engineering, labelling and data leakage (Lopez de Prado)"
+  - "quantitative finance foundations: return distributions, fat tails and volatility estimation"
+  - "performance statistics: Sharpe and Sortino ratios, drawdown distributions and Monte Carlo analysis of trading strategies"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useChart, formatVol } from './useChart';
 import { intervalToSeconds } from '../drawing/geometry';
 import DrawingOverlay from '../drawing/DrawingOverlay';
@@ -24,9 +24,28 @@ export default function ChartView({
   const innerRef = useRef(null);
   const heatmapOn = !!layers.heatmap;
   const { api, tick, hoverTime } = useChart(areaRef, innerRef, settings, { transparent: heatmapOn });
-  const [footprintNarrow, setFootprintNarrow] = useState(false);
 
   useEffect(() => { if (api) onReady?.(api); }, [api, onReady]);
+
+  // Footprint replaces the candles: blank the candle series (its data still
+  // drives the price scale) and let FootprintLayer paint every bar. Runs
+  // after useChart's settings effect, so it wins while the layer is on.
+  useEffect(() => {
+    if (!api) return;
+    if (layers.footprint) {
+      api.candleSeries.applyOptions({
+        upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)',
+        borderVisible: false, wickVisible: false,
+      });
+    } else {
+      api.candleSeries.applyOptions({
+        upColor: settings.upColor, downColor: settings.downColor,
+        borderVisible: settings.borderVisible, borderUpColor: settings.borderUpColor, borderDownColor: settings.borderDownColor,
+        wickVisible: settings.wickVisible, wickUpColor: settings.wickUpColor, wickDownColor: settings.wickDownColor,
+      });
+    }
+    api.forceUpdate();
+  }, [api, layers.footprint, settings]);
 
   const chart = api?.chart || null;
   const series = api?.candleSeries || null;
@@ -72,10 +91,9 @@ export default function ChartView({
       {layers.footprint && (
         <FootprintLayer
           chart={chart} series={series} bars={bars} footprints={footprints} liveFootprint={liveFootprint}
-          tickSize={tickSize} settings={layerSettings} onTooNarrow={setFootprintNarrow}
+          tickSize={tickSize} settings={layerSettings} chartSettings={settings}
         />
       )}
-      {layers.footprint && footprintNarrow && <div className="order-flow-hint subtle">Zoom in for footprint</div>}
       {layers.bubbles && (
         <DeltaBubblesLayer
           chart={chart} series={series} bars={bars} intervalSeconds={intervalSeconds} trades={bubbleTrades}

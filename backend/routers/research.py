@@ -81,6 +81,12 @@ def put_research_settings(body: dict = Body(...)):
     return research.update_settings(body)
 
 
+@router.post("/research/prune")
+def prune_low_tier(body: dict = Body(default={})):
+    """Invalidate facts from sources below the accepted tier (Settings → Trusted domains)."""
+    return research.prune_below_tier(body.get("minTier"))
+
+
 @router.get("/research/autorun")
 def get_autorun():
     return research.autorun_status()

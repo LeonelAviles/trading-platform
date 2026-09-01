@@ -41,7 +41,11 @@ DEFAULT_TRUSTED = {
               "papers.nips.cc", "nautilustrader.io"],
     "blocked": [],
 }
-DEFAULT_SETTINGS = {"autoRun": False, "intervalHours": 6, "topicsPerRun": 2, "trustedDomains": DEFAULT_TRUSTED}
+# minTier: only sources at this tier or better feed the knowledge base
+# (1 = papers/exchanges/regulators only, 2 = + established practitioners).
+# Hard-capped at 2 — tier 3 (blogs/forums) and tier 4 (marketing) never
+# feed the graph. Owner decision 2026-08-31: tier 1-2 only.
+DEFAULT_SETTINGS = {"autoRun": False, "intervalHours": 6, "topicsPerRun": 2, "minTier": 2, "trustedDomains": DEFAULT_TRUSTED}
 MAX_URLS_PER_TOPIC = 6
 MAX_TEXT_CHARS = 20_000
 USER_AGENT = "trading-platform-research/1.0 (+local research bot; respects robots.txt)"
@@ -112,6 +116,8 @@ def settings() -> dict:
     td = {**DEFAULT_TRUSTED, **(stored.get("trustedDomains") or {})}
     out["trustedDomains"] = {k: _domains(td.get(k)) for k in ("tier1", "tier2", "blocked")}
     out["intervalHours"] = max(1, float(out.get("intervalHours") or 6))
+    mt = out.get("minTier")
+    out["minTier"] = min(2, max(1, 2 if mt in (None, "") else int(mt)))
     out["topicsPerRun"] = max(1, min(10, int(out.get("topicsPerRun") or 2)))
     out["autoRun"] = bool(out.get("autoRun"))
     return out
@@ -119,7 +125,7 @@ def settings() -> dict:
 
 def update_settings(changes: dict) -> dict:
     cur = {**DEFAULT_SETTINGS, **_setting(SETTINGS_KEY, {})}
-    for k in ("autoRun", "intervalHours", "topicsPerRun"):
+    for k in ("autoRun", "intervalHours", "topicsPerRun", "minTier"):
         if k in changes:
             cur[k] = changes[k]
     if "trustedDomains" in changes and isinstance(changes["trustedDomains"], dict):
@@ -180,13 +186,19 @@ def apply_domain_rules(url: str, scored: dict, trusted: dict | None = None) -> d
 # ----------------------------------------------------------------------------
 
 def seed_queue() -> int:
+    """Queue every seed topic not already in the queue (a top-up, not a
+    once-only seed, so topics added to research_seed.yaml reach existing
+    installations). Returns how many were added."""
+    topics = yaml.safe_load(SEED.read_text()).get("topics", []) if SEED.exists() else []
     with database.session_scope() as db:
-        if db.query(ResearchQueueItem).count():
-            return 0
-        topics = yaml.safe_load(SEED.read_text()).get("topics", []) if SEED.exists() else []
+        existing = {t for (t,) in db.query(ResearchQueueItem.topic)}
+        added = 0
         for i, t in enumerate(topics):
+            if t in existing:
+                continue
             db.add(ResearchQueueItem(id=new_id(), topic=t, priority=len(topics) - i, status="queued", requested_by="seed", created_at=utc_now()))
-        return len(topics)
+            added += 1
+        return added
 
 
 def enqueue(topic: str, requested_by: str = "user", priority: int = 10) -> dict:
@@ -218,7 +230,7 @@ def web_search(topic: str, llm: llm_client.LLM, max_uses: int = 5) -> list[dict]
     """Anthropic server-side web search; returns [{url, title}]."""
     response = llm.create(
         purpose="research.search", tier="fast", max_tokens=1024,
-        system="You are a research assistant. Search the web for authoritative sources on the topic and list the best 6 URLs with titles. Prefer papers, exchange documentation, textbooks and established practitioner sources; avoid marketing pages.",
+        system="You are a research assistant for a quantitative trading knowledge base. Search the web for authoritative sources on the topic and list the best 6 URLs with titles. Only peer-reviewed papers and preprints (arXiv q-fin, SSRN, journals), exchange and regulator documentation, textbooks, and established practitioner sources with a track record — blogs, forums, marketing and course-sales pages are rejected downstream, so do not list them.",
         messages=[{"role": "user", "content": f"Topic: {topic}"}],
         tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}], cache=False,
     )
@@ -354,10 +366,12 @@ def ingest_document(url: str, title: str, text: str, topic: str, llm: llm_client
         src.credibility = scored["credibility"]
         src.scored_json = scored
         src.title = title or src.title
-    if scored["tier"] == 4:
+    min_tier = settings()["minTier"]
+    if scored["tier"] == 4 or scored["tier"] > min_tier:
         with database.session_scope() as db:
             db.add(ResearchDoc(id=new_id(), source_id=source_id, topic=topic, summary=scored.get("summary"), chunk_count=0, ingested_to_graph=0, created_at=utc_now()))
-        return {"sourceId": source_id, "tier": 4, "blocked": True}
+        reason = "marketing/promotion (tier 4)" if scored["tier"] == 4 else f"tier {scored['tier']} — below the accepted tier ({min_tier})"
+        return {"sourceId": source_id, "tier": scored["tier"], "blocked": True, "reason": reason}
     summary = summarize(url, title, text, llm)
     claims = summary.get("claims") or []
     n = 0
@@ -413,7 +427,11 @@ def run_topic(topic_id: str, llm: llm_client.LLM | None = None, fetch=fetch_text
         status = "queued"
         errors.append({"error": str(e)})
     except Exception as e:  # noqa: BLE001
-        status = "error"
+        msg = str(e)
+        if any(t in msg.lower() for t in ("credit balance", "authentication", "api key", "invalid x-api-key")):
+            status = "queued"     # account problem, not a topic problem — retry when credits exist
+        else:
+            status = "error"
         errors.append({"error": f"{type(e).__name__}: {e}"})
     with database.session_scope() as db:
         row = db.get(ResearchQueueItem, topic_id)
@@ -628,3 +646,18 @@ def start_scheduler(poll_seconds: float = 60.0) -> None:
 
 def stop_scheduler() -> None:
     _scheduler_stop.set()
+
+
+def prune_below_tier(min_tier: int | None = None) -> dict:
+    """Invalidate stored facts whose source is worse than `min_tier` (default:
+    the configured one). Reversible — rows are stamped invalid, not deleted."""
+    from models import KnowledgeFact
+
+    min_tier = int(min_tier or settings()["minTier"])
+    with database.session_scope() as db:
+        rows = (db.query(KnowledgeFact).join(ResearchSource, KnowledgeFact.source_id == ResearchSource.id)
+                .filter(KnowledgeFact.invalid_at.is_(None), ResearchSource.tier > min_tier).all())
+        for r in rows:
+            r.invalid_at = utc_now()
+        n = len(rows)
+    return {"minTier": min_tier, "invalidated": n}

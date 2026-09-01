@@ -181,9 +181,9 @@ export default function DeskPage() {
               <AgentRunList activeOnly emptyText="Nothing running. Start one from Strategies → New strategy → Describe it." />
             </Tile>
 
-            <Tile title="Teaching sessions" sub={`${desk.teaching.length} session(s)`} extra={<Link className="btn btn-sm" to="/chart/ES1!">New on the chart →</Link>}>
+            <Tile title="Teaching sessions" sub={`${desk.teaching.length} session(s)`} extra={<Link className="btn btn-sm" to="/chart/ES1!?teaching=1">Start a teaching session →</Link>}>
               {desk.teaching.length === 0 ? (
-                <div className="review-card-empty">No teaching sessions yet — switch Teaching on above the free chart and trade a replay.</div>
+                <div className="review-card-empty">No teaching sessions yet — start one and trade a replay; the agent learns your rules.</div>
               ) : (
                 <ul className="desk-list">
                   {desk.teaching.map((s) => (

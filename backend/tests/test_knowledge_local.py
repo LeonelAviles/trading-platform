@@ -36,7 +36,7 @@ def test_store_search_credibility_and_format(db):
     block = local_store.format_facts(hits)
     assert "credibility 0.80" in block and "Tharp" in block
     assert local_store.invalidate(f1["id"]) and not any(h["id"] == f1["id"] for h in graph.search("position sizing", k=5))
-    assert graph.status()["backend"] == "local" and graph.status()["facts"] == 3
+    assert graph.status()["backend"] == "local" and graph.status()["facts"] == 2   # live facts only — the invalidated one no longer counts
 
 
 def test_experiment_and_finding_records(db):

@@ -54,7 +54,7 @@ export default function App() {
               <Route path="/review" element={<Navigate to="/backtests" replace />} />
               <Route path="/review/:backtestId" element={<CandlestickPage />} />
               <Route path="/chart/:symbol" element={<ChartPage />} />
-              <Route path="/chart" element={<Navigate to="/chart/ES1!" replace />} />
+              <Route path="/chart" element={<Navigate to="/teaching" replace />} />
               <Route path="/teaching" element={<TeachingPage />} />
               <Route path="/teach/:sessionId" element={<TeachPage />} />
               <Route path="/research" element={<ResearchPage />} />

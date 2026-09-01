@@ -103,8 +103,14 @@ decisions". Newest at the bottom.
 24. **Stop/target are re-anchored to the entry fill** for distance-based
     types so an N-tick stop is exactly N ticks of risk; structure levels
     from rules are absolute.
-25. **`l3` mode falls back to `ticks`** with a note until Phase 5 produces
-    `OrderBookDelta` data.
+25. **`l3` mode is `ticks` plus a one-second resting-liquidity book** from
+    the MBO-derived `liquidity_1s.duckdb` (levels ≥ 50 contracts), set at
+    every primary-bar close (`engine/book_feed.py`). Any mode attaches the
+    same view when the spec references a book primitive, and a spec that
+    does so with no liquidity data for the window is refused instead of run
+    (2026-08-31: an agent-written `large_resting_size_near` filter had been
+    evaluating to None on every bar, silently producing zero trades).
+    Tick-exact `OrderBookDelta` replay remains Phase 5.
 26. **Legacy v1 strategies run on the new engine through `V1Rules`** (no
     conversion needed yet; the v1→v2 converter is Phase 3). Their UTC
     sessions are converted to ET on the run's first date and clamped to RTH;
@@ -324,7 +330,7 @@ decisions". Newest at the bottom.
 70. **One persistent sidebar and one page pattern.** The Phase 5–7 pages had
     been added as stacked cards with text links and no navigation; the owner
     called it out. Every non-chart page now uses the same scaffold —
-    sidebar (Desk / Strategies / Backtests / Chart & replay / Teaching /
+    sidebar (Desk / Strategies / Backtests / Teaching /
     Research / Knowledge graph / Settings), a page header with the page's
     actions as buttons, tabs instead of long scrolls, tables for lists — and
     strategy creation is one dialog with three explicit paths (describe /
@@ -332,3 +338,22 @@ decisions". Newest at the bottom.
     chart keeps its width. `/review` (the old front door) redirects to
     `/backtests`; `/review/:id` is unchanged. Budget, prices, self-study and
     trusted domains moved from the Research page to Settings.
+71. **No chart buttons; a chart is only reached through a backtest or a
+    teaching session.** The owner restated the original rule (see 49):
+    charts exist to review trades or to teach. The "Chart & replay" sidebar
+    item, the bare `/chart` redirect and the Desk "New on the chart" link
+    are gone; `/chart/:symbol` is the teaching chart (Teaching is always on,
+    no toggle) and is only linked from Teaching / "Start a teaching
+    session". `/review/:backtestId` stays the review chart. Both still
+    render `chart/ChartView.jsx`.
+72. **The review chart and the teaching chart are one chart.** Owner:
+    "make the backtesting charts the same as the teaching one." Everything
+    the chart does — two-phase load, tick replay over `/ws/replay` from any
+    clicked candle, the layer buttons (DOM, T&S, Heat, Footprint, Bubbles,
+    Profile, CVD), RightDock, CvdPane, drawings, settings, keyboard — lives
+    in `chart/useOrderFlowChart.jsx`; the pages only add what differs
+    (`/review/:id`: the job's trades revealed by the replay clock, the
+    analysis dock, Stratos; `/chart/:symbol`: the teaching session). The
+    review page's old bar-by-bar replay (`ReplayControls`), DOM snapshot
+    panel (`DomPanel`, `fetchDom`) and the separate Flow/DOM toggles are
+    gone; layer preferences are shared (`chartLayers`).

@@ -50,23 +50,16 @@ export function bubbleWindowForBarSeconds(barSeconds) {
   return Math.max(BUBBLE_WINDOW_NS, Math.round((barSeconds / perBar) * 1e9));
 }
 
-// Footprint imbalance: diagonal comparison — ask volume at level i vs bid
-// volume at level i−1 (one tick below) for buy imbalances, and bid volume at
-// level i vs ask volume at level i+1 for sell imbalances.
+// Footprint imbalance: horizontal comparison — bid vs ask traded at the
+// *same* price level. Ask ≥ ratio × bid marks a buy imbalance, bid ≥ ratio ×
+// ask a sell imbalance, each gated by minVolume so tiny prints don't qualify.
 export function footprintImbalances(levels, { ratio = 3.0, minVolume = 5 } = {}) {
   const sorted = [...levels].sort((a, b) => a.price - b.price);
   const buy = new Set();
   const sell = new Set();
-  for (let i = 0; i < sorted.length; i++) {
-    const cur = sorted[i];
-    const below = sorted[i - 1];
-    const above = sorted[i + 1];
-    if (below && cur.ask >= minVolume && cur.ask >= ratio * below.bid) {
-      buy.add(cur.price);
-    }
-    if (above && cur.bid >= minVolume && cur.bid >= ratio * above.ask) {
-      sell.add(cur.price);
-    }
+  for (const l of sorted) {
+    if (l.ask >= minVolume && l.ask >= ratio * l.bid) buy.add(l.price);
+    if (l.bid >= minVolume && l.bid >= ratio * l.ask) sell.add(l.price);
   }
   return { buy, sell, sorted };
 }

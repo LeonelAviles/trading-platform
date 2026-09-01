@@ -731,7 +731,7 @@ select.chevron {
 .review-links { margin: 10px 0; font-size: 13px; }
 
 /* ============================================================
-   Phase 5: free chart, tick replay, order-flow layers
+   Phase 5: teaching chart, tick replay, order-flow layers
    ============================================================ */
 .chart-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chart-column .chart-area { flex: 1; min-height: 0; }

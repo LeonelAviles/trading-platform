@@ -91,7 +91,7 @@ export default function NewStrategyModal({ open, onClose, onStarted }) {
         <div className="modal-foot">
           {mode && <button className="btn" onClick={() => setMode(null)}>← Back</button>}
           <div className="toolbar-spacer" />
-          {mode === 'teach' && <button className="btn btn-primary" onClick={() => { close(); navigate(`/chart/${encodeURIComponent(symbol)}?teaching=1`); }}>Open the chart with Teaching on →</button>}
+          {mode === 'teach' && <button className="btn btn-primary" onClick={() => { close(); navigate(`/chart/${encodeURIComponent(symbol)}?teaching=1`); }}>Start a teaching session →</button>}
           {mode === 'manual' && <button className="btn btn-primary" disabled={busy} onClick={createManual}>{busy ? 'Creating…' : 'Create and open the editor'}</button>}
           {!mode && <button className="btn" onClick={close}>Cancel</button>}
         </div>

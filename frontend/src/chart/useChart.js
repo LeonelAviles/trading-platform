@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 
 // Owns one lightweight-charts instance (candles + volume histogram) inside
 // `innerRef`, sized to `areaRef`. Extracted from CandlestickPage so the
-// review page and the free chart page share exactly one chart setup.
+// review page and the teaching chart page share exactly one chart setup.
 //
 // Returns { api, tick, hoverTime }: `api` is null until the chart exists, then
 // { chart, candleSeries, volumeSeries, forceUpdate }. `tick` increments on
@@ -27,7 +27,11 @@ export function useChart(areaRef, innerRef, settings, { transparent = false } = 
       },
       timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2c2a33', rightOffset: 35 },
       rightPriceScale: { borderColor: '#2c2a33' },
-      crosshair: { mode: CrosshairMode.Normal },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33' },
+        horzLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33' },
+      },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: s.upColor, downColor: s.downColor,

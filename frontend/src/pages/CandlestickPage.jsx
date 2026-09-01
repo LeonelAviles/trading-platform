@@ -1,32 +1,20 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CrosshairMode, LineStyle } from 'lightweight-charts';
-import { fetchOHLCV, fetchRange, fetchBacktest, deleteBacktest, fetchCVD } from '../api';
+import { fetchBacktest, deleteBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import DrawToolbar from '../components/DrawToolbar';
-import SettingsModal from '../components/SettingsModal';
-import ReplayControls from '../components/ReplayControls';
-import DomPanel from '../components/DomPanel';
 import AnalysisPanel from '../components/AnalysisPanel';
 import ChatPanel from '../components/ChatPanel';
-import { intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
-import { useDrawings } from '../hooks/useDrawings';
-import { useChartSettings } from '../hooks/useChartSettings';
-import ChartView from '../chart/ChartView';
-import { candlePoint, volumePoint } from '../chart/useChart';
-import { useLayerSettings } from '../chart/layerSettings';
-
-// Bars requested for the first paint. Aggregating every tick in the store
-// takes ~16s regardless of how few bars come back, while a window this size
-// returns in well under a second — so the chart draws immediately and the
-// full history is swapped in behind it (see the loader below).
-const FIRST_PAINT_BARS = 1500;
+import { useOrderFlowChart } from '../chart/useOrderFlowChart';
+import { intervalToSeconds } from '../drawing/geometry';
 
 // A chart is never standalone: this page *is* the review of one backtest,
 // named by the route. The strategy and the symbol both come from that job, so
 // there is nothing to pick here and no way to end up staring at bars that
-// aren't attached to a strategy.
+// aren't attached to a strategy. The chart itself — tick replay, order-flow
+// layers, docks — is `useOrderFlowChart`, the same chart the teaching page
+// uses; this file adds the backtest on top: its trades drawn on the bars (and
+// revealed as the replay clock passes them), the analysis dock and Stratos.
 export default function CandlestickPage() {
   const { leading: leadingSlot, main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const { backtestId } = useParams();
@@ -38,142 +26,30 @@ export default function CandlestickPage() {
   // symbol picker to wander away with.
   const [selectedJob, setSelectedJob] = useState(null);
   const symbol = selectedJob?.symbol || '';
-
   const [interval, setInterval_] = useState('1min');
-  const [status, setStatus] = useState('');
-  const [activeTool, setActiveTool] = useState('cursor');
-  const [selectedId, setSelectedId] = useState(null);
-  const [shapes, setShapes] = useDrawings(symbol);
-  const [settings, setSettings] = useChartSettings();
-  const [layerSettings, setLayerSettings] = useLayerSettings();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  // Replay: null | {phase:'select'} | {phase:'active', idx, playing, speed}
-  const [replay, setReplay] = useState(null);
-  const prevReplayIdxRef = useRef(null);
-
   const [backtestTrades, setBacktestTrades] = useState([]);
   const [cvdData, setCvdData] = useState([]);
 
-  // Right DOM dock, bottom analysis dock, right assistant dock — all persist
-  // their open/closed state. The assistant additionally opens itself when
-  // arriving straight off "Run backtest" (see ReviewPicker), so there's
-  // somewhere to talk about the run the moment it lands.
-  const [domOpen, setDomOpen] = useState(() => localStorage.getItem('domOpen') === 'true');
+  // Bottom analysis dock and right assistant dock both persist their
+  // open/closed state. The assistant additionally opens itself when arriving
+  // straight off "Run backtest", so there's somewhere to talk about the run
+  // the moment it lands.
   const [analysisPanelOpen, setAnalysisPanelOpen] = useState(
     () => localStorage.getItem('analysisPanelOpen') !== 'false',
   );
   const [chatOpen, setChatOpen] = useState(
     () => Boolean(location.state?.openChat) || localStorage.getItem('chatOpen') === 'true',
   );
-  const [orderFlowOn, setOrderFlowOn] = useState(() => localStorage.getItem('orderFlowOn') === 'true');
-  useEffect(() => { localStorage.setItem('domOpen', String(domOpen)); }, [domOpen]);
   useEffect(() => { localStorage.setItem('analysisPanelOpen', String(analysisPanelOpen)); }, [analysisPanelOpen]);
   useEffect(() => { localStorage.setItem('chatOpen', String(chatOpen)); }, [chatOpen]);
-  useEffect(() => { localStorage.setItem('orderFlowOn', String(orderFlowOn)); }, [orderFlowOn]);
 
-  // The chart itself lives in ChartView; it hands its api back once created.
-  const [chartApi, setChartApi] = useState(null);
-  const chartRef = useRef(null);
-  const candleSeriesRef = useRef(null);
-  const volumeSeriesRef = useRef(null);
-  const onChartReady = useCallback((api) => {
-    chartRef.current = api.chart;
-    candleSeriesRef.current = api.candleSeries;
-    volumeSeriesRef.current = api.volumeSeries;
-    setChartApi(api);
-  }, []);
-  // Tracks the bars/interval a symbol's shapes are currently anchored to, so
-  // that switching timeframe can re-anchor them through real time instead of
-  // leaving their logical-index fields pointing at unrelated bars.
-  const barsRef = useRef([]);
-  // What the current shapes' logical-index fields are anchored to. Tracked
-  // separately from barsRef because the loader below paints a partial window
-  // first: barsRef is "what the chart is showing right now", while this is
-  // "the dataset the shapes were last remapped against", which only advances
-  // once a full load completes.
-  const anchorRef = useRef({ bars: [], interval, symbol });
+  const chart = useOrderFlowChart({ symbol, interval, setInterval: setInterval_ });
+  const { bars, clockTime, shapes } = chart;
 
-  const [, setTick] = useState(0);
-  const forceUpdate = useCallback(() => setTick((n) => n + 1), []);
-
-  // Two-phase load: a recent window first so the chart is usable straight
-  // away, then the full history swapped in underneath the same view. Asking
-  // for everything up front meant staring at an empty chart for ~30s.
+  // CVD for the analysis panel's CVD tab — fetched independently so a failure
+  // here (e.g. a symbol with no MBO side data) never affects the candles.
   useEffect(() => {
-    if (!symbol || !chartApi) return;
-    let cancelled = false;
-    // Read the shape anchors once, before either phase moves them.
-    const anchor = anchorRef.current;
-    setStatus('Loading…');
-
-    const paint = (bars) => {
-      candleSeriesRef.current.setData(bars.map(candlePoint));
-      volumeSeriesRef.current.setData(bars.map(volumePoint));
-      barsRef.current = bars;
-    };
-
-    // Re-anchor drawings through real time when the timeframe changed. Runs
-    // only against the complete dataset — remapping onto a partial window
-    // would strand every shape that falls outside it.
-    const reanchor = (bars) => {
-      if (anchor.symbol === symbol && anchor.interval !== interval && anchor.bars.length && bars.length) {
-        const oldSeconds = intervalToSeconds(anchor.interval);
-        const newSeconds = intervalToSeconds(interval);
-        setShapes((prev) => prev.map((s) => remapShapeToInterval(s, anchor.bars, oldSeconds, bars, newSeconds)));
-      }
-      anchorRef.current = { bars, interval, symbol };
-    };
-
-    (async () => {
-      try {
-        const { start, end } = await fetchRange(symbol);
-        if (cancelled) return;
-
-        // Phase 1 — the tail of the series, if that's meaningfully less than
-        // all of it.
-        const windowStart = end - FIRST_PAINT_BARS * intervalToSeconds(interval);
-        const windowed = windowStart > start;
-        if (windowed) {
-          const head = await fetchOHLCV(symbol, interval, windowStart);
-          if (cancelled) return;
-          if (head.length) {
-            paint(head);
-            chartRef.current.timeScale().fitContent();
-            setStatus('Loading history…');
-            forceUpdate();
-          }
-        }
-
-        // Phase 2 — everything. Restoring the visible *time* range keeps the
-        // viewport where the user left it; phase 1's bars are a suffix of
-        // these and carry identical timestamps, so the same range still
-        // frames the same candles.
-        const bars = await fetchOHLCV(symbol, interval);
-        if (cancelled) return;
-        const view = windowed ? chartRef.current.timeScale().getVisibleRange() : null;
-        paint(bars);
-        if (view) chartRef.current.timeScale().setVisibleRange(view);
-        else chartRef.current.timeScale().fitContent();
-        reanchor(bars);
-        setStatus('');
-        forceUpdate();
-      } catch {
-        if (cancelled) return;
-        candleSeriesRef.current.setData([]);
-        volumeSeriesRef.current.setData([]);
-        setStatus('No data for this interval');
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [symbol, interval, forceUpdate, setShapes, chartApi]);
-
-  // CVD (cumulative volume delta) for the analysis panel's CVD tab — fetched
-  // independently so a failure here (e.g. a symbol with no MBO side data)
-  // never affects the candles.
-  useEffect(() => {
-    if (!symbol) return;
+    if (!symbol) return undefined;
     let cancelled = false;
     fetchCVD(symbol, interval)
       .then((points) => { if (!cancelled) setCvdData(points); })
@@ -181,97 +57,17 @@ export default function CandlestickPage() {
     return () => { cancelled = true; };
   }, [symbol, interval]);
 
-  // Any data reload (new symbol/interval) invalidates an in-progress replay.
-  useEffect(() => {
-    setReplay(null);
-    prevReplayIdxRef.current = null;
-  }, [symbol, interval]);
-
-  // Feed the chart during replay: full slice when (re)entering or jumping,
-  // a single update() per bar while advancing.
-  useEffect(() => {
-    const bars = barsRef.current;
-    if (!candleSeriesRef.current || !bars.length) return;
-    if (replay?.phase === 'active') {
-      const idx = replay.idx;
-      if (prevReplayIdxRef.current != null && idx === prevReplayIdxRef.current + 1) {
-        const b = bars[idx];
-        candleSeriesRef.current.update({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
-        volumeSeriesRef.current.update(volumePoint(b));
-      } else {
-        const slice = bars.slice(0, idx + 1);
-        candleSeriesRef.current.setData(slice.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-        volumeSeriesRef.current.setData(slice.map(volumePoint));
-      }
-      prevReplayIdxRef.current = idx;
-      forceUpdate();
-    } else if (prevReplayIdxRef.current != null) {
-      // Just exited replay — restore the full dataset.
-      prevReplayIdxRef.current = null;
-      candleSeriesRef.current.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-      volumeSeriesRef.current.setData(bars.map(volumePoint));
-      forceUpdate();
-    }
-  }, [replay, forceUpdate]);
-
-  // Playback timer.
-  useEffect(() => {
-    if (replay?.phase !== 'active' || !replay.playing) return;
-    const timer = setInterval(() => {
-      setReplay((r) => {
-        if (!r || r.phase !== 'active') return r;
-        if (r.idx >= barsRef.current.length - 1) return { ...r, playing: false };
-        return { ...r, idx: r.idx + 1 };
-      });
-    }, replay.speed);
-    return () => clearInterval(timer);
-  }, [replay?.phase, replay?.playing, replay?.speed]);
-
-  // While selecting a replay start point, the next chart click picks the bar,
-  // and the crosshair becomes a bold blue bar-snapping "select" line (like
-  // TradingView), with the horizontal line hidden and a blue time-axis label.
-  useEffect(() => {
-    if (replay?.phase !== 'select' || !chartRef.current) return;
-    const chart = chartRef.current;
-    chart.applyOptions({
-      crosshair: {
-        mode: CrosshairMode.Magnet,
-        vertLine: { color: 'rgba(0, 0, 0, 0.65)', width: 1, style: LineStyle.Solid, labelBackgroundColor: 'rgba(0, 0, 0, 0.65)' },
-        horzLine: { visible: false, labelVisible: false },
-      },
-    });
-    const handler = (param) => {
-      if (!param.point) return;
-      const logical = chart.timeScale().coordinateToLogical(param.point.x);
-      if (logical == null) return;
-      const idx = Math.max(1, Math.min(barsRef.current.length - 1, Math.round(logical)));
-      setReplay({ phase: 'active', idx, playing: false, speed: 1000 });
-    };
-    chart.subscribeClick(handler);
-    return () => {
-      chart.unsubscribeClick(handler);
-      // Restore the normal (neutral, dashed) crosshair on leaving select mode.
-      chart.applyOptions({
-        crosshair: {
-          mode: CrosshairMode.Normal,
-          vertLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33', visible: true, labelVisible: true },
-          horzLine: { color: '#605f68', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#2c2a33', visible: true, labelVisible: true },
-        },
-      });
-    };
-  }, [replay?.phase]);
-
   // Deleting the run under review deletes the reason for this chart to exist,
-  // so it goes back to the chooser rather than leaving empty bars behind.
+  // so it goes back to the list rather than leaving empty bars behind.
   const handleDeleteBacktest = useCallback(async () => {
     await deleteBacktest(backtestId).catch(() => {});
-    navigate('/review', { replace: true });
+    navigate('/backtests', { replace: true });
   }, [backtestId, navigate]);
 
   // The reviewed job's trades and live status. Arriving straight off a Run
   // backtest means the job is still running, so poll until it settles and draw
   // its trades the moment they exist. A job id that doesn't resolve is not a
-  // chart we're allowed to show — bounce to the chooser.
+  // chart we're allowed to show — bounce to the list.
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -289,20 +85,18 @@ export default function CandlestickPage() {
           timer = setTimeout(load, 2000);
         }
       } catch {
-        if (!cancelled) navigate('/review', { replace: true });
+        if (!cancelled) navigate('/backtests', { replace: true });
       }
     }
     load();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [backtestId, navigate]);
 
-  const bars = barsRef.current;
+  // During replay the engine's trades are revealed as the clock passes their
+  // entries, so you see the setup before you see what the engine did with it.
   const intervalSeconds = intervalToSeconds(interval);
-  const revealTime = replay?.phase === 'active' ? (bars[replay.idx]?.time ?? null) : null;
-  const visibleTrades = revealTime == null
-    ? backtestTrades
-    : backtestTrades.filter((t) => t.entryTime <= revealTime);
-  const visibleCvd = revealTime == null ? cvdData : cvdData.filter((p) => p.time <= revealTime);
+  const visibleTrades = clockTime == null ? backtestTrades : backtestTrades.filter((t) => t.entryTime <= clockTime);
+  const visibleCvd = clockTime == null ? cvdData : cvdData.filter((p) => p.time <= clockTime);
   const pendingJob = selectedJob && selectedJob.status !== 'done' ? selectedJob : null;
 
   // "Does the engine trade like me": my manual position shapes vs the visible
@@ -334,139 +128,47 @@ export default function CandlestickPage() {
           </div>
         </div>
       ), leadingSlot)}
-      {headerSlot && createPortal((
-        <div className="chart-tools">
-        <div className="toolbar-sep-v" />
-        <div className="interval-group">
-          {[
-            ['1min', '1m'], ['5min', '5m'], ['15min', '15m'], ['30min', '30m'], ['1h', '1h'], ['4h', '4h'], ['1D', 'D'],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              className={`interval-btn ${interval === value ? 'active' : ''}`}
-              onClick={() => setInterval_(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="toolbar-sep-v" />
-        <button
-          className={`replay-toggle ${replay ? 'active' : ''}`}
-          title="Bar replay"
-          onClick={() => setReplay(replay ? null : { phase: 'select' })}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-            <path d="M11 19a7 7 0 1 0-6.7-9" />
-            <path d="M4 4v6h6" />
-            <path d="M11 8.5v4l3 2" />
-          </svg>
-          Replay
-        </button>
-        <div className="toolbar-sep-v" />
-        <button
-          className={`replay-toggle ${domOpen ? 'active' : ''}`}
-          title="Depth of Market"
-          onClick={() => setDomOpen((o) => !o)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-            <path d="M4 6h16M4 12h16M4 18h10" />
-          </svg>
-          DOM
-        </button>
-        <button
-          className={`replay-toggle ${orderFlowOn ? 'active' : ''}`}
-          title="Persistent resting-liquidity heatmap"
-          onClick={() => setOrderFlowOn((o) => !o)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-            <path d="M3 17l5-6 4 3 8-9" />
-            <circle cx="3" cy="17" r="1.6" fill="currentColor" stroke="none" />
-            <circle cx="8" cy="11" r="1.6" fill="currentColor" stroke="none" />
-            <circle cx="12" cy="14" r="1.6" fill="currentColor" stroke="none" />
-            <circle cx="20" cy="5" r="1.6" fill="currentColor" stroke="none" />
-          </svg>
-          Flow
-        </button>
-        <span className="status">{status}</span>
-        <div className="toolbar-spacer" />
-        <button
-          className={`chat-toggle ${chatOpen ? 'active' : ''}`}
-          title="Stratos" onClick={() => setChatOpen((o) => !o)}
-        >
+      {headerSlot && createPortal(chart.renderToolbar(
+        <button className={`chat-toggle ${chatOpen ? 'active' : ''}`} title="Stratos" onClick={() => setChatOpen((o) => !o)}>
           <svg className="chat-toggle-spark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M9 2.5l1.4 3.7 3.7 1.4-3.7 1.4L9 12.7 7.6 9 3.9 7.6l3.7-1.4z" />
             <path d="M17.5 12l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" />
           </svg>
           Ask Stratos
         </button>
-        </div>
       ), headerSlot)}
-      {trailingSlot && createPortal((
-        <button className="icon-btn" title="Chart settings" onClick={() => setSettingsOpen(true)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
-      ), trailingSlot)}
-      <SettingsModal
-        open={settingsOpen}
-        settings={settings}
-        onApply={setSettings}
-        onClose={() => setSettingsOpen(false)}
-        layerSettings={layerSettings}
-        onApplyLayers={setLayerSettings}
-      />
+      {trailingSlot && createPortal(chart.settingsButton, trailingSlot)}
+      {chart.settingsModal}
       <div className="page-body">
-        <DrawToolbar
-          activeTool={activeTool}
-          setActiveTool={setActiveTool}
-          onClear={() => { setShapes([]); setSelectedId(null); }}
-        />
-        <ChartView
-          symbol={symbol} interval={interval} bars={bars} settings={settings} onReady={onChartReady}
-          layers={{ heatmap: orderFlowOn }} layerSettings={layerSettings} clockTime={revealTime}
-          drawing={{ shapes, setShapes, activeTool, setActiveTool, selectedId, setSelectedId }}
-          trades={backtestTrades} revealTime={revealTime}
-        >
-          {replay && (
-            <ReplayControls
-              replay={replay}
-              total={bars.length}
-              onPlayPause={() => setReplay((r) => ({ ...r, playing: !r.playing }))}
-              onStep={() => setReplay((r) => (r.idx < bars.length - 1 ? { ...r, idx: r.idx + 1 } : r))}
-              onSpeed={(speed) => setReplay((r) => ({ ...r, speed }))}
-              onExit={() => setReplay(null)}
-            />
-          )}
-
-          {/* Floating status for the run under review, bottom-right of the
-              chart. There's no backtest picker any more — switching runs means
-              going back to the chooser, so the URL always names what's on
-              screen. */}
-          <div className="backtest-dock">
-            {pendingJob && (
-              <span className={`compare-chip ${pendingJob.status === 'error' ? 'chip-error' : 'chip-live'}`}>
-                {pendingJob.status === 'error'
-                  ? `Backtest failed${pendingJob.message ? ` · ${pendingJob.message}` : ''}`
-                  : `Running the engine on ${pendingJob.strategyName}…`}
-              </span>
-            )}
-            {backtestTrades.length > 0 && (
-              <span className="compare-chip">
-                Engine {visibleTrades.length}{revealTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
-              </span>
-            )}
-            <Link className="btn btn-ghost" to="/backtests">All backtests</Link>
-            <button className="icon-btn" title="Delete this run" onClick={handleDeleteBacktest}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-            </button>
-          </div>
-        </ChartView>
-        {domOpen && (
-          <DomPanel symbol={symbol} asOf={revealTime} onClose={() => setDomOpen(false)} />
-        )}
+        {chart.drawToolbar}
+        {chart.renderChart({
+          trades: backtestTrades,
+          revealTime: clockTime,
+          // Floating status for the run under review, bottom-right of the
+          // chart. There's no backtest picker — switching runs means going
+          // back to the list, so the URL always names what's on screen.
+          dock: (
+            <>
+              {pendingJob && (
+                <span className={`compare-chip ${pendingJob.status === 'error' ? 'chip-error' : 'chip-live'}`}>
+                  {pendingJob.status === 'error'
+                    ? `Backtest failed${pendingJob.message ? ` · ${pendingJob.message}` : ''}`
+                    : `Running the engine on ${pendingJob.strategyName}…`}
+                </span>
+              )}
+              {backtestTrades.length > 0 && (
+                <span className="compare-chip">
+                  Engine {visibleTrades.length}{clockTime != null ? `/${backtestTrades.length}` : ''} · You {myTrades.length} · Matched {matched}
+                </span>
+              )}
+              <Link className="btn btn-ghost" to="/backtests">All backtests</Link>
+              <button className="icon-btn" title="Delete this run" onClick={handleDeleteBacktest}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+              </button>
+            </>
+          ),
+        })}
+        {chart.rightDock}
         {chatOpen && (
           <ChatPanel
             symbol={symbol}

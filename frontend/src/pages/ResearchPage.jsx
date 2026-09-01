@@ -158,10 +158,10 @@ export default function ResearchPage() {
                 <table className="data-table"><thead><tr><th>Source</th><th>Topic</th><th>Status</th><th>Result</th></tr></thead>
                   <tbody>{jobs.map((j) => (
                     <tr key={j.id}><td>{j.title || j.url}</td><td className="inline-note">{j.topic}</td><td><StatusChip status={j.status} /></td>
-                      <td className="inline-note">{j.error || (j.result ? (j.result.blocked ? 'blocked (tier 4)' : j.result.skipped || `tier ${j.result.tier} · ${j.result.facts} fact(s)`) : '')}</td></tr>))}</tbody></table>
+                      <td className="inline-note">{j.error || (j.result ? (j.result.blocked ? `blocked — ${j.result.reason || `tier ${j.result.tier}`}` : j.result.skipped || `tier ${j.result.tier} · ${j.result.facts} fact(s)`) : '')}</td></tr>))}</tbody></table>
               )}
             </Card>
-            <Card title="Sources" sub="Tier 1 papers / exchanges / regulators · 2 established practitioners · 3 blogs and forums · 4 marketing (blocked). Pin tiers by domain in Settings.">
+            <Card title="Sources" sub="Tier 1 papers / exchanges / regulators · 2 established practitioners · 3 blogs and forums · 4 marketing. Only tiers 1-2 feed the knowledge base. Pin tiers by domain in Settings.">
               {sources.length === 0 ? <div className="review-card-empty">No sources yet — read a topic or hand it one.</div> : (
                 <div className="table-wrap"><table className="data-table"><thead><tr><th>Title</th><th>Domain</th><th>By</th><th className="num">Tier</th><th className="num">Credibility</th><th>Why</th></tr></thead>
                   <tbody>{sources.map((s) => (

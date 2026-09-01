@@ -69,7 +69,8 @@ def test_tier4_blocked_and_corroboration(db):
 
 
 def test_run_topic_with_fake_search_and_fetch(db):
-    script = [[("text", _scored(1))], [("text", _summary(1))], [("text", _scored(3))], [("text", _summary(1))]]
+    # a tier-1 paper ingests; a tier-3 blog is scored but blocked (tier 1-2 only)
+    script = [[("text", _scored(1))], [("text", _summary(1))], [("text", _scored(3))]]
     llm = C.LLM(C.FakeAnthropic(script=script))
     research.seed_queue()
     q = research.queue()
@@ -78,7 +79,8 @@ def test_run_topic_with_fake_search_and_fetch(db):
     pages = {"https://a.example/p": ("Paper", "p " * 500), "https://b.example/blog": ("Blog", "b " * 500), "https://c.example/empty": ("", "")}
     out = research.run_topic(tid, llm, fetch=lambda u: pages[u], search=lambda topic, llm_: [{"url": u, "title": t[0]} for u, t in pages.items()])
     assert out["status"] == "done" and len(out["sources"]) == 2 and any(e["error"] == "no text" for e in out["errors"])
-    assert [s["credibility"] for s in out["sources"]] == [1.0, 0.5]
+    assert out["sources"][0]["credibility"] == 1.0 and out["sources"][0].get("facts") == 2
+    assert out["sources"][1]["blocked"] and out["sources"][1]["tier"] == 3
     assert research.queue()[-1]["status"] == "done" or any(x["status"] == "done" for x in research.queue())
 
 

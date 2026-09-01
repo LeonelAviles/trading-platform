@@ -2,13 +2,28 @@ import { useMemo, useRef } from 'react';
 import { useCanvasLayer } from './useCanvasLayer';
 import { footprintImbalances, stackedRuns, footprintPoc } from '../orderflowMath';
 
-const MIN_BAR_PX = 56;
+// Above this bar spacing the footprint renders bid × ask cells with numbers;
+// below it, compact per-level heat cells so the *whole* chart stays a
+// footprint chart at any zoom. The gap between bars keeps adjacent clusters
+// visually separate (and absorbs slight number overflow), which is what lets
+// the text threshold sit this low.
+const TEXT_BAR_PX = 34;
+// Target pixel height for one rendered row. When a single tick is thinner
+// than this, adjacent ticks are merged into one row (ATAS-style scale
+// grouping) so the numbers stay readable at any vertical scale instead of
+// requiring a handful of bars zoomed to full width.
+const TEXT_ROW_PX = 9;
+const HEAT_ROW_PX = 2;
 
-// Bid × ask cells per bar per price level, drawn over the candles
-// (PLATFORM-SPEC.md Phase 5): diagonal imbalance highlight, stacked
-// imbalance outline, POC band, delta/volume under each bar.
+// Footprint chart (PLATFORM-SPEC.md Phase 5). This layer *replaces* the
+// candles (ChartView blanks the candle series while it's on): bid × ask cells
+// per bar per price row with same-level imbalance highlight, stacked imbalance
+// outline, POC band and delta/volume under each bar when zoomed in; compact
+// delta-heat cells when zoomed out. Bars with no footprint data (not fetched
+// yet, or none recorded) fall back to a hand-drawn candle so the chart never
+// goes blank.
 export default function FootprintLayer({
-  chart, series, bars, footprints, liveFootprint, tickSize, settings, onTooNarrow,
+  chart, series, bars, footprints, liveFootprint, tickSize, settings, chartSettings,
 }) {
   const canvasRef = useRef(null);
   const ratio = settings.footprintRatio;
@@ -22,29 +37,16 @@ export default function FootprintLayer({
     return m;
   }, [footprints, liveFootprint]);
 
-  const analysed = useMemo(() => {
-    const out = {};
-    for (const [t, levels] of Object.entries(byTime)) {
-      if (!levels?.length) continue;
-      const { buy, sell, sorted } = footprintImbalances(levels, { ratio, minVolume: minVol });
-      const prices = sorted.map((l) => l.price);
-      out[t] = {
-        levels: sorted, buy, sell,
-        stackedBuy: stackedRuns(prices, buy, stackedMin), stackedSell: stackedRuns(prices, sell, stackedMin),
-        poc: footprintPoc(sorted),
-        volume: sorted.reduce((s, l) => s + l.bid + l.ask, 0),
-        delta: sorted.reduce((s, l) => s + l.ask - l.bid, 0),
-      };
-    }
-    return out;
-  }, [byTime, ratio, minVol, stackedMin]);
+  // Per-bar analysis is grouped by the current row size, which depends on
+  // zoom — so it's computed lazily per visible bar and cached until the data,
+  // grouping, or thresholds change (a zoom gesture only re-analyses the ~30
+  // bars on screen, not the whole history).
+  const cacheRef = useRef({ byTime: null, rowTicks: 0, ratio: 0, minVol: 0, stackedMin: 0, map: new Map() });
 
   const draw = (ctx, width, height) => {
     if (!bars.length) return;
     const timeScale = chart.timeScale();
     const spacing = timeScale.options().barSpacing;
-    if (spacing < MIN_BAR_PX) { onTooNarrow?.(true); return; }
-    onTooNarrow?.(false);
     const range = timeScale.getVisibleLogicalRange();
     if (!range) return;
     const from = Math.max(0, Math.floor(range.from));
@@ -52,26 +54,111 @@ export default function FootprintLayer({
     const yTick = (p) => series.priceToCoordinate(p);
     const sampleY = yTick(bars[to].close);
     const nextY = yTick(bars[to].close + tickSize);
-    const rowH = sampleY != null && nextY != null ? Math.abs(sampleY - nextY) : 0;
-    if (rowH < 3) return;
-    const fontPx = Math.max(8, Math.min(12, rowH - 2));
+    const tickH = sampleY != null && nextY != null ? Math.abs(sampleY - nextY) : 0;
+    if (!(tickH > 0)) return;
+
+    const textMode = spacing >= TEXT_BAR_PX;
+    const rowTicks = Math.max(1, Math.ceil((textMode ? TEXT_ROW_PX : HEAT_ROW_PX) / tickH));
+    const rowH = tickH * rowTicks;
+    const fontPx = Math.max(7, Math.min(12, rowH - 2, spacing / 5));
     ctx.font = `${fontPx}px "SF Mono", ui-monospace, Menlo, monospace`;
     ctx.textBaseline = 'middle';
-    const half = spacing / 2 - 1;
+    // Breathing room between bars: ~18% of the slot in text mode (clamped),
+    // a hairline in heat mode.
+    const gap = textMode
+      ? Math.min(14, Math.max(2, spacing * 0.18))
+      : Math.min(6, Math.max(1, spacing * 0.12));
+    const bodyW = Math.max(1, spacing - gap);
+    const half = bodyW / 2;
+
+    let cache = cacheRef.current;
+    if (cache.byTime !== byTime || cache.rowTicks !== rowTicks
+      || cache.ratio !== ratio || cache.minVol !== minVol || cache.stackedMin !== stackedMin) {
+      cache = cacheRef.current = { byTime, rowTicks, ratio, minVol, stackedMin, map: new Map() };
+    }
+    const analyse = (time) => {
+      let fp = cache.map.get(time);
+      if (fp !== undefined) return fp;
+      const raw = byTime[time];
+      if (!raw?.length) { cache.map.set(time, null); return null; }
+      let rows = raw;
+      if (rowTicks > 1) {
+        const m = new Map();
+        for (const l of raw) {
+          const bucket = Math.floor(Math.round(l.price / tickSize) / rowTicks);
+          const cur = m.get(bucket);
+          if (cur) { cur.bid += l.bid; cur.ask += l.ask; }
+          else m.set(bucket, { price: (bucket * rowTicks + (rowTicks - 1) / 2) * tickSize, bid: l.bid, ask: l.ask });
+        }
+        rows = [...m.values()];
+      }
+      const { buy, sell, sorted } = footprintImbalances(rows, { ratio, minVolume: minVol });
+      const prices = sorted.map((l) => l.price);
+      fp = {
+        levels: sorted, buy, sell,
+        stackedBuy: stackedRuns(prices, buy, stackedMin), stackedSell: stackedRuns(prices, sell, stackedMin),
+        poc: footprintPoc(sorted),
+        volume: sorted.reduce((s, l) => s + l.bid + l.ask, 0),
+        delta: sorted.reduce((s, l) => s + l.ask - l.bid, 0),
+        maxLevelVol: sorted.reduce((s, l) => Math.max(s, l.bid + l.ask), 0),
+      };
+      cache.map.set(time, fp);
+      return fp;
+    };
+
+    // Candle fallback for bars without footprint data.
+    const upColor = chartSettings?.upColor || '#3ecf6e';
+    const downColor = chartSettings?.downColor || '#ef4444';
+    const drawCandle = (bar, x) => {
+      const yO = yTick(bar.open); const yC = yTick(bar.close);
+      const yH = yTick(bar.high); const yL = yTick(bar.low);
+      if (yO == null || yC == null || yH == null || yL == null) return;
+      const color = bar.close >= bar.open ? upColor : downColor;
+      ctx.strokeStyle = color;
+      ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillRect(x - bodyW / 2, Math.min(yO, yC), bodyW, Math.max(1, Math.abs(yC - yO)));
+    };
+
     for (let i = from; i <= to; i++) {
       const bar = bars[i];
-      const fp = analysed[bar.time];
-      if (!fp) continue;
       const x = timeScale.timeToCoordinate(bar.time);
       if (x == null) continue;
+      const fp = analyse(bar.time);
+      if (!fp) { drawCandle(bar, x); continue; }
       const left = x - half;
       const cellW = half;
+      const cellH = Math.max(1, rowH);
+
+      if (!textMode) {
+        // Compact mode: one heat cell per row — hue from the row's delta,
+        // intensity from its share of the bar's busiest row.
+        for (const l of fp.levels) {
+          const y = yTick(l.price);
+          if (y == null || y < -cellH || y > height + cellH) continue;
+          const vol = l.bid + l.ask;
+          const frac = fp.maxLevelVol ? vol / fp.maxLevelVol : 0;
+          const d = l.ask - l.bid;
+          const a = 0.16 + 0.64 * frac;
+          ctx.fillStyle = d > 0 ? `rgba(52,211,153,${a})` : d < 0 ? `rgba(244,87,111,${a})` : `rgba(185,185,198,${a * 0.7})`;
+          ctx.fillRect(left, y - cellH / 2, bodyW, cellH);
+        }
+        if (fp.poc != null) {
+          const y = yTick(fp.poc);
+          if (y != null) {
+            ctx.fillStyle = 'rgba(240,180,41,0.55)';
+            ctx.fillRect(left, y - Math.max(1, cellH * 0.25) / 2, bodyW, Math.max(1, cellH * 0.25));
+          }
+        }
+        continue;
+      }
+
       // POC band
       if (fp.poc != null) {
         const y = yTick(fp.poc);
         if (y != null) {
           ctx.fillStyle = 'rgba(240,180,41,0.18)';
-          ctx.fillRect(left, y - rowH / 2, spacing - 2, rowH);
+          ctx.fillRect(left, y - rowH / 2, bodyW, rowH);
         }
       }
       for (const l of fp.levels) {
@@ -81,17 +168,15 @@ export default function FootprintLayer({
         const isBuy = fp.buy.has(l.price);
         const isSell = fp.sell.has(l.price);
         ctx.fillStyle = 'rgba(10,10,12,0.55)';
-        ctx.fillRect(left, top, spacing - 2, rowH);
+        ctx.fillRect(left, top, bodyW, rowH);
         if (isSell) { ctx.fillStyle = 'rgba(244,87,111,0.35)'; ctx.fillRect(left, top, cellW, rowH); }
         if (isBuy) { ctx.fillStyle = 'rgba(52,211,153,0.35)'; ctx.fillRect(left + cellW, top, cellW, rowH); }
-        if (rowH >= 9) {
-          ctx.textAlign = 'right';
-          ctx.fillStyle = isSell ? '#ff9db0' : '#b9b9c6';
-          ctx.fillText(String(l.bid), x - 3, y);
-          ctx.textAlign = 'left';
-          ctx.fillStyle = isBuy ? '#8ff0c6' : '#b9b9c6';
-          ctx.fillText(String(l.ask), x + 3, y);
-        }
+        ctx.textAlign = 'right';
+        ctx.fillStyle = isSell ? '#ff9db0' : '#b9b9c6';
+        ctx.fillText(String(l.bid), x - 3, y);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = isBuy ? '#8ff0c6' : '#b9b9c6';
+        ctx.fillText(String(l.ask), x + 3, y);
         ctx.strokeStyle = 'rgba(255,255,255,0.08)';
         ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + rowH); ctx.stroke();
       }
@@ -119,6 +204,6 @@ export default function FootprintLayer({
     }
   };
 
-  useCanvasLayer(canvasRef, chart, series, draw, [bars, analysed, tickSize, chart, series]);
+  useCanvasLayer(canvasRef, chart, series, draw, [bars, byTime, tickSize, chart, series, chartSettings, ratio, minVol, stackedMin]);
   return <canvas ref={canvasRef} className="layer-canvas" />;
 }

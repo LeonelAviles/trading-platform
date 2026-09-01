@@ -136,3 +136,53 @@ def test_routes(client):
     assert set(s) == {"sources", "jobs"}
     st = client.get("/api/research/status").json()
     assert "autorun" in st and st["autorun"]["enabled"]
+
+
+def test_min_tier_gate_blocks_tier3(db):
+    # default: tiers 1-2 acceptable; a tier-3 blog is scored but yields no facts
+    fake = C.FakeAnthropic(script=[[("text", _scored(3))]])
+    out = research.ingest_document("https://blog.example/post", "Blog", "x" * 800, "topic", C.LLM(fake))
+    assert out["blocked"] and out["tier"] == 3 and "below the accepted tier" in out["reason"]
+    assert local_store.count() == 0
+    src = research.sources()[0]
+    assert src["tier"] == 3 and src["credibility"] is not None   # scored, kept for the sources table
+    # tier 2 passes
+    fake = C.FakeAnthropic(script=[[("text", _scored(2))], [("text", _summary(1))]])
+    out = research.ingest_document("https://quantblog.example/x", "Quant", "x" * 800, "topic", C.LLM(fake))
+    assert out.get("facts") == 2
+    # tier 3 cannot be accepted: the setting is hard-capped at 2 (owner decision)
+    assert research.update_settings({"minTier": 3})["minTier"] == 2
+    fake = C.FakeAnthropic(script=[[("text", _scored(3))]])
+    out = research.ingest_document("https://blog.example/post2", "Blog2", "x" * 800, "topic", C.LLM(fake))
+    assert out["blocked"] and out["tier"] == 3
+    assert research.update_settings({"minTier": 9})["minTier"] == 2
+    assert research.update_settings({"minTier": 0})["minTier"] == 1
+
+
+def test_prune_below_tier(db):
+    fake = C.FakeAnthropic(script=[[("text", _scored(2))], [("text", _summary(2))], [("text", _scored(1))], [("text", _summary(1))]])
+    llm = C.LLM(fake)
+    research.ingest_document("https://quantblog.example/a", "Blog", "x" * 800, "t", llm)
+    research.ingest_document("https://arxiv.org/abs/9", "Paper", "x" * 800, "t", llm)
+    assert local_store.count() == 5
+    out = research.prune_below_tier(1)
+    assert out["invalidated"] == 3
+    assert local_store.count() == 2   # only the tier-1 paper's facts remain live
+
+
+def test_credit_failure_leaves_topic_queued(db):
+    research.seed_queue()
+    tid = research.queue()[0]["id"]
+
+    def broken_search(topic, llm, max_uses=5):
+        raise RuntimeError("Your credit balance is too low to access the Anthropic API")
+
+    r = research.run_topic(tid, C.LLM(C.FakeAnthropic(script=[])), search=broken_search)
+    assert r["status"] == "queued" and "credit balance" in r["errors"][0]["error"]
+    assert next(t for t in research.queue() if t["id"] == tid)["status"] == "queued"
+
+    def broken_other(topic, llm, max_uses=5):
+        raise RuntimeError("boom")
+
+    r = research.run_topic(tid, C.LLM(C.FakeAnthropic(script=[])), search=broken_other)
+    assert r["status"] == "error"

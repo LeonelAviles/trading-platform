@@ -81,7 +81,7 @@ export default function TeachPage() {
     <div className="page teach-page">
       {leadingSlot && createPortal((
         <div className="review-crumb">
-          <Link className="icon-btn" to={`/chart/${encodeURIComponent(detail.symbol)}`} title="Back to the chart">
+          <Link className="icon-btn" to="/teaching" title="Teaching sessions">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </Link>
           <div className="hdr-symbol">
