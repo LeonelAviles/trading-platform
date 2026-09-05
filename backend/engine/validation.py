@@ -2,12 +2,14 @@
 
 Windows come from `data/market/splits.json` (frozen at ingest):
 
-  is    the in-sample sessions (first 70%)
+  is    the in-sample sessions (all of them while IS_FRACTION is 1.0 — with
+        ~4 months of data there is no holdout yet)
   wf1–3 anchored walk-forward folds inside IS: IS is cut into 4 equal blocks;
         fold k tests block k+1 (blocks ≤ k are its "training" history — the
         spec has no fitted parameters, so each fold is a consistency check)
-  oos   the frozen last 30% — run once, by finalize only
-  full  everything (human review on the chart)
+  oos   the frozen holdout — empty today; the window only exists once the
+        split is re-frozen with a fraction below 1.0
+  full  everything (human review on the chart) — equal to `is` today
 
 `report(strategy_id, mode)` assembles the latest IS / WF / OOS rows for a
 strategy into the structure `engine.verdict.evaluate` consumes, adding Monte

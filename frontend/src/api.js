@@ -97,34 +97,8 @@ export async function fetchStrategy(id) {
   return json(await fetch(`${BASE}/strategies/${id}`));
 }
 
-// Create (no id) or update (with id) a Strategy Spec v2; v1 documents are converted.
-export async function saveStrategy(spec) {
-  return json(await fetch(`${BASE}/strategies`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(spec),
-  }));
-}
-
-// -> { valid, errors[], requiredMode }
-export async function validateStrategy(spec) {
-  return json(await fetch(`${BASE}/strategies/validate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(spec),
-  }));
-}
-
 export async function fetchStrategyLineage(id) {
   return json(await fetch(`${BASE}/strategies/${id}/lineage`));
-}
-
-export async function patchStrategyRisk(id, risk) {
-  return json(await fetch(`${BASE}/strategies/${id}/risk`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(risk),
-  }));
-}
-
-export async function setStrategyStatus(id, status) {
-  return json(await fetch(`${BASE}/strategies/${id}/status`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
-  }));
 }
 
 export async function fetchSpecSchema() {
@@ -139,10 +113,6 @@ export async function fetchBacktests() {
 
 export async function fetchBacktest(id) {
   return json(await fetch(`${BASE}/backtests/${id}`));
-}
-
-export async function deleteBacktest(id) {
-  return json(await fetch(`${BASE}/backtests/${id}`, { method: 'DELETE' }));
 }
 
 // Kicks off an engine run for a strategy and returns the (initially
@@ -196,18 +166,7 @@ export function replaySocketUrl() {
 // --- Phase 7: desk, packages, compare ---------------------------------------
 export async function fetchDesk() { return json(await fetch(`${BASE}/desk`)); }
 export function strategyPackageUrl(id) { return `${BASE}/strategies/${id}/package`; }
-export async function importStrategyPackage(file, { keepId = true } = {}) {
-  return json(await fetch(`${BASE}/strategies/import?keepId=${keepId}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file,
-  }));
-}
-export async function forwardTestStrategy(id) {
-  return json(await fetch(`${BASE}/strategies/${id}/forward-test`, { method: 'POST' }));
-}
 export async function compareStrategies(a, b, window = 'is') {
   return json(await fetch(`${BASE}/strategies/${a}/compare/${b}?window=${window}`));
 }
 
-export async function deleteStrategy(id) {
-  return json(await fetch(`${BASE}/strategies/${id}`, { method: 'DELETE' }));
-}

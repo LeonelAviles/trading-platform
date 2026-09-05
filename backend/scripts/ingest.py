@@ -10,7 +10,7 @@ Options:
     --no-book                      skip the L3 pass (no liquidity heatmap / book checkpoints)
     --rebuild                      re-ingest even if the manifest says the file is up to date
     --rebuild-liquidity            re-run the book pass for days already in liquidity_1s.duckdb
-    --recompute-splits             re-freeze the 70/30 IS/OOS split (see market.ingest.recompute_splits)
+    --recompute-splits             re-freeze the IS/OOS split at market.ingest.IS_FRACTION (see market.ingest.recompute_splits)
     --limit N                      stop after N files (useful for a first smoke run)
     --dry-run                      list what would happen
 

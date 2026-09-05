@@ -34,11 +34,10 @@ export default function SettingsPage() {
           <Card title="Data on disk" sub={coverage?.sizes ? `${mb(Object.values(coverage.sizes).reduce((a, b) => a + (b || 0), 0))} across the tiers` : ''}>
             {Object.keys(roots).length === 0 ? <div className="review-card-empty">No ingested data — drop Databento files under market-data/ and run <code>make ingest</code>.</div> : (
               <table className="data-table">
-                <thead><tr><th>Root</th><th className="num">Sessions</th><th>Range</th><th>In-sample</th><th>Out-of-sample</th><th className="num">Raw files</th><th className="num">Archived</th></tr></thead>
+                <thead><tr><th>Root</th><th className="num">Sessions</th><th>Range</th><th>In-sample</th><th className="num">Raw files</th><th className="num">Archived</th></tr></thead>
                 <tbody>{Object.entries(roots).map(([root, r]) => (
                   <tr key={root}><td><b>{root}</b></td><td className="num">{r.sessions}</td><td>{r.first} → {r.last}</td>
                     <td>{r.inSample ? `${r.inSample[0]} → ${r.inSample[1]} (${r.inSampleSessions})` : '—'}</td>
-                    <td>{r.outOfSample ? `${r.outOfSample[0]} → ${r.outOfSample[1]} (${r.outOfSampleSessions})` : '—'}</td>
                     <td className="num">{r.rawFiles}</td><td className="num">{r.archived}</td></tr>))}</tbody>
               </table>
             )}

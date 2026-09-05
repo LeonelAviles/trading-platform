@@ -28,13 +28,8 @@ const TABS = [
 const fmtNum = (v, d = 2) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(d));
 const fmtPct = (v, d = 1) => (v == null ? '—' : `${Number(v).toFixed(d)}%`);
 
-// Metrics table for one validation window (IS / WF / OOS).
-function MetricsRow({ label, m, hidden }) {
-  if (hidden) {
-    return (
-      <tr><td>{label}</td><td colSpan={6} className="muted">hidden until finalize</td></tr>
-    );
-  }
+// Metrics table for one validation window (IS / WF, and OOS once a holdout exists).
+function MetricsRow({ label, m }) {
   if (!m) return <tr><td>{label}</td><td colSpan={6} className="muted">not run</td></tr>;
   return (
     <tr>
@@ -70,7 +65,7 @@ function ValidationTab({ report, loading }) {
           {(report.walkForward || []).map((w) => (
             <MetricsRow key={w.window} label={`${w.window.toUpperCase()}`} m={w} />
           ))}
-          <MetricsRow label="Out-of-sample" m={report.outOfSample} hidden={report.oosHidden} />
+          {report.oosAvailable && <MetricsRow label="Out-of-sample" m={report.outOfSample} />}
         </tbody>
       </table>
       {report.deflatedSharpe && (

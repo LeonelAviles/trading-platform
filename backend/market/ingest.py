@@ -50,7 +50,10 @@ PRICE_SCALE = 1e-9
 INT64_NULL_PRICE = 9_223_372_036_854_775_807
 NS_PER_MIN = 60_000_000_000
 SUPPORTED_SCHEMAS = ("mbo", "trades", "ohlcv-1m")
-IS_FRACTION = 0.7
+# Everything is in-sample for now: ~4 months of ES is too little to hold out a
+# 30% OOS set and still validate on the rest. Restore 0.7 (and run
+# `scripts/ingest.py --recompute-splits`) once more history is on disk.
+IS_FRACTION = 1.0
 
 TRADE_COLUMNS = ["ts_event", "ts_recv", "symbol", "price", "size", "side", "sequence"]
 BAR_COLUMNS = ["symbol", "ts", "open", "high", "low", "close", "volume", "delta", "buy_vol", "sell_vol", "trades"]
@@ -489,10 +492,11 @@ def recompute_front_month(paths: Paths | None = None) -> pd.DataFrame:
 
 
 def recompute_splits(front: pd.DataFrame, paths: Paths | None = None, *, force: bool = False) -> dict:
-    """70/30 IS/OOS by session count per root. An existing split is kept
-    (new sessions go to OOS so the in-sample set never silently grows);
-    `force=True` re-freezes at 70/30 — the DSR trial counts of strategies
-    validated before that no longer describe the new split."""
+    """IS/OOS by session count per root at `IS_FRACTION` (1.0 today: no
+    holdout). An existing split is kept (new sessions go to OOS so the
+    in-sample set never silently grows); `force=True` re-freezes at the
+    current fraction — the DSR trial counts of strategies validated before
+    that no longer describe the new split."""
     paths = paths or get_paths()
     existing = json.loads(paths.splits.read_text()) if paths.splits.exists() and not force else {"roots": {}}
     out = {"version": 1, "ratio": IS_FRACTION, "computedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "roots": {}}

@@ -43,11 +43,12 @@ def store(tmp_path_factory, monkeypatch_module=None):
 
 def test_windows_from_splits(store):
     w = validation.windows("ES")
-    # 5 sessions -> 4 IS (round(3.5)=4), 1 OOS; IS cut into 4 blocks of one day.
-    assert w["is"] == ("2026-06-15", "2026-06-18")
-    assert w["wf1"] == ("2026-06-16", "2026-06-16") and w["wf3"] == ("2026-06-18", "2026-06-18")
-    assert w["oos"] == ("2026-06-19", "2026-06-19")
-    assert w["full"] == ("2026-06-15", "2026-06-19")
+    # IS_FRACTION is 1.0: all 5 sessions are in-sample, no OOS window, full == is.
+    # IS cut into 4 blocks -> edges [0, 1, 2, 4, 5]: wf1 = day 2, wf2 = days 3-4, wf3 = day 5.
+    assert w["is"] == ("2026-06-15", "2026-06-19")
+    assert w["wf1"] == ("2026-06-16", "2026-06-16") and w["wf2"] == ("2026-06-17", "2026-06-18") and w["wf3"] == ("2026-06-19", "2026-06-19")
+    assert "oos" not in w
+    assert w["full"] == w["is"]
     assert validation.windows("NQ") == {}
     with pytest.raises(ValueError):
         validation.window_for("ES", "bogus")
@@ -68,15 +69,15 @@ def test_job_lifecycle_and_analytics(store):
     job = jobs.run_sync(STRATEGY, window_kind="is", timeout_s=300)
     assert job["status"] == "done", job["message"]
     assert job["windowKind"] == "is" and job["mode"] == "bars" and job["dateFrom"] == "2026-06-15"
-    assert job["summary"]["trades"] == 4 and job["strategyName"] == "open-close test"
+    assert job["summary"]["trades"] == 5 and job["strategyName"] == "open-close test"
     assert job["strategyId"] == "abc123abc123"       # legacy id kept even without a strategies row
-    assert len(job["trades"]) == 4 and all("pnlUsd" in t for t in job["trades"])
+    assert len(job["trades"]) == 5 and all("pnlUsd" in t for t in job["trades"])
     assert (jobs.JOBS_DIR / job["id"] / "trades.json").exists()
     assert (jobs.JOBS_DIR / job["id"] / "worker.log").exists()
     stats = jobs.strategy_analytics(job)
-    assert stats["trades"] == 4 and stats["sessions"] == 4 and stats["sessionsTraded"] == 4
+    assert stats["trades"] == 5 and stats["sessions"] == 5 and stats["sessionsTraded"] == 5
     assert set(stats["byRegime"]) and stats["byHour"][0]["hourEt"] == 9
-    assert job["metrics"]["trades"] == 4 and "sharpe" in job["metrics"]
+    assert job["metrics"]["trades"] == 5 and "sharpe" in job["metrics"]
     listed = jobs.list_jobs()
     assert listed[0]["id"] == job["id"] and "trades" not in listed[0]
     assert jobs.get_job("nope") is None
@@ -93,13 +94,23 @@ def test_validation_runs_is_and_wf_only(store):
         time.sleep(0.5)
     assert states == {"done"}
     rep = validation.report("abc123abc123", mode="bars")
-    assert rep["inSample"]["trades"] == 4
+    assert rep["inSample"]["trades"] == 5
     assert [w["window"] for w in rep["walkForward"]] == ["wf1", "wf2", "wf3"]
     assert rep["outOfSample"] is None and rep["oosHidden"] is True and rep["oosAvailable"] is False
-    assert rep["monteCarlo"]["bootstrap"]["runs"] == 1000 and rep["deflatedSharpe"]["observations"] == 4
-    assert rep["verdict"]["untestable"] is True       # 4 trades << 100
+    assert rep["monteCarlo"]["bootstrap"]["runs"] == 1000 and rep["deflatedSharpe"]["observations"] == 5
+    assert rep["verdict"]["untestable"] is True       # 5 trades << 100
     assert rep["risk"]["passCriteria"]["minTradesInSample"] == 100
-    # OOS appears only once an oos row exists.
+    # OOS appears only once a holdout exists *and* an oos row exists. There is
+    # no holdout at IS_FRACTION 1.0, so carve one by hand: freeze the first
+    # four sessions as IS and let recompute_splits put the fifth in OOS.
+    with pytest.raises(ValueError):
+        validation.window_for("ES", "oos")
+    sp_path = store["paths"].splits
+    sp = json.loads(sp_path.read_text())
+    sp["roots"]["ES"]["inSample"] = sp["roots"]["ES"]["inSample"][:4]
+    sp_path.write_text(json.dumps(sp))
+    ing.recompute_splits(ing.recompute_front_month(store["paths"]), store["paths"])
+    assert validation.windows("ES")["oos"] == ("2026-06-19", "2026-06-19")
     oos = jobs.run_sync(STRATEGY, window_kind="oos", timeout_s=300)
     assert oos["status"] == "done"
     rep2 = validation.report("abc123abc123", mode="bars")

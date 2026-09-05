@@ -1,7 +1,7 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
-import { fetchDesk, forwardTestStrategy, importStrategyPackage, strategyPackageUrl } from '../api';
+import { Link } from 'react-router-dom';
+import { fetchDesk, strategyPackageUrl } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import LineageTree from '../components/LineageTree';
 import { PageHeader, StatTile } from '../components/ui';
@@ -26,7 +26,7 @@ function Tile({ title, sub, children, extra, className = '' }) {
   );
 }
 
-function CandidateCard({ c, onForward, busy }) {
+function CandidateCard({ c }) {
   const v = c.verdict;
   return (
     <li className="desk-candidate">
@@ -37,18 +37,12 @@ function CandidateCard({ c, onForward, busy }) {
       </div>
       <div className="desk-candidate-stats">
         <span>IS {c.inSample?.trades ?? '—'} trades · PF {num(c.inSample?.profitFactor)} · {c.inSample?.expectancyR != null ? `${Number(c.inSample.expectancyR).toFixed(2)} R` : '—'}</span>
-        <span>OOS PF {c.oosAvailable ? num(c.oosProfitFactor) : 'not looked'}{c.oosTrades ? ` (${c.oosTrades} trades)` : ''}</span>
         <span>MC DD95 {pct(c.monteCarloDd95Pct)}</span>
         <span>WF {c.walkForwardPositive}/{c.walkForwardWindows} positive</span>
       </div>
       {c.regimeNotes?.length > 0 && <div className="desk-candidate-regimes muted">{c.regimeNotes.join(' · ')}</div>}
       <div className="desk-candidate-actions">
         <a className="btn btn-sm" href={strategyPackageUrl(c.id)} download>Package</a>
-        {c.status === 'candidate' && (
-          <button className="btn btn-sm btn-primary" disabled={busy === c.id} onClick={() => onForward(c.id)}>
-            {busy === c.id ? '…' : 'Forward test →'}
-          </button>
-        )}
       </div>
     </li>
   );
@@ -58,12 +52,8 @@ function CandidateCard({ c, onForward, busy }) {
 // being tested, and what data is on disk. One read of /api/desk; refreshes every 20 s while open.
 export default function DeskPage() {
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
-  const navigate = useNavigate();
   const [desk, setDesk] = useState(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState('');
-  const [importMsg, setImportMsg] = useState('');
-  const fileRef = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -79,33 +69,6 @@ export default function DeskPage() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  async function forward(id) {
-    setBusy(id);
-    try {
-      await forwardTestStrategy(id);
-      await refresh();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function onImport(ev) {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
-    setImportMsg('Importing…');
-    try {
-      const res = await importStrategyPackage(file);
-      setImportMsg(`Imported ${res.strategy.name}${res.renamedId ? ` as ${res.id} (id was taken)` : ''}${res.parentKept ? '' : ' — parent not present, lineage detached'}`);
-      await refresh();
-      navigate(`/strategies/${res.id}`);
-    } catch (e) {
-      setImportMsg(`Import failed: ${e.message}`);
-    }
-  }
-
   const cov = desk?.coverage || {};
   const roots = cov.roots || {};
   const testing = desk?.testing || {};
@@ -117,13 +80,6 @@ export default function DeskPage() {
         <PageHeader
           title="Desk"
           subtitle="What is worth attention today: candidates, what is testing and the data on disk."
-          actions={(
-            <>
-              <button className="btn" onClick={() => fileRef.current?.click()}>Import package…</button>
-              <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
-              <Link className="btn btn-primary" to="/strategies?new=1">+ New strategy</Link>
-            </>
-          )}
         />
         {desk && (
           <div className="stat-row">
@@ -133,7 +89,6 @@ export default function DeskPage() {
             <StatTile label="Sessions on disk" value={Object.values(roots).reduce((a, r) => a + (r.sessions || 0), 0)} sub={Object.entries(roots).map(([k, r]) => `${k} ${r.first?.slice(5)} → ${r.last?.slice(5)}`).join(' · ') || 'no data'} to="/settings" />
           </div>
         )}
-        {importMsg && <div className="muted desk-import-msg">{importMsg}</div>}
         {error && <div className="review-error">{error}</div>}
         {!desk && !error && <div className="review-empty">Loading…</div>}
 
@@ -148,7 +103,7 @@ export default function DeskPage() {
                 <div className="review-card-empty">Nothing at candidate status yet. A strategy becomes a candidate when its validation passes — or when you set it so on its page.</div>
               ) : (
                 <ul className="desk-candidates">
-                  {desk.candidates.map((c) => <CandidateCard key={c.id} c={c} onForward={forward} busy={busy} />)}
+                  {desk.candidates.map((c) => <CandidateCard key={c.id} c={c} />)}
                 </ul>
               )}
             </Tile>
@@ -177,7 +132,7 @@ export default function DeskPage() {
                 <div className="review-card-empty">No ingested data — drop Databento files under market-data/ and run <code>make ingest</code>.</div>
               ) : (
                 <table className="desk-table">
-                  <thead><tr><th>Root</th><th>Sessions</th><th>Range</th><th>In-sample</th><th>Out-of-sample</th><th>Raw files</th><th>Archived</th></tr></thead>
+                  <thead><tr><th>Root</th><th>Sessions</th><th>Range</th><th>In-sample</th><th>Raw files</th><th>Archived</th></tr></thead>
                   <tbody>
                     {Object.entries(roots).map(([root, r]) => (
                       <tr key={root}>
@@ -185,7 +140,6 @@ export default function DeskPage() {
                         <td>{r.sessions}</td>
                         <td>{r.first} → {r.last}</td>
                         <td>{r.inSample ? `${r.inSample[0]} → ${r.inSample[1]} (${r.inSampleSessions})` : '—'}</td>
-                        <td>{r.outOfSample ? `${r.outOfSample[0]} → ${r.outOfSample[1]} (${r.outOfSampleSessions})` : '—'}</td>
                         <td>{r.rawFiles}</td>
                         <td>{r.archived}/{r.rawFiles}</td>
                       </tr>

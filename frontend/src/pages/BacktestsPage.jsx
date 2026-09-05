@@ -1,27 +1,20 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
-import { createBacktest, deleteBacktest, fetchBacktests, fetchStrategies } from '../api';
+import { Link } from 'react-router-dom';
+import { fetchBacktests, fetchStrategies } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import { Card, EmptyState, PageHeader, StatusChip } from '../components/ui';
 import { fmtWhen, signed } from '../format';
 
-const WINDOWS = [['full', 'Full range'], ['is', 'In-sample'], ['wf1', 'Walk-forward 1'], ['wf2', 'Walk-forward 2'], ['wf3', 'Walk-forward 3']];
-
-// /backtests — every run in one table; each opens on its review chart.
+// /backtests — a read-only list of every run; each opens on its review chart.
+// Backtests are started from a strategy page, never from here.
 export default function BacktestsPage() {
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
-  const navigate = useNavigate();
   const [strategies, setStrategies] = useState([]);
   const [backtests, setBacktests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStrategy, setFilterStrategy] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  const [pick, setPick] = useState('');
-  const [mode, setMode] = useState('');
-  const [windowKind, setWindowKind] = useState('full');
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
     const [s, b] = await Promise.all([fetchStrategies().catch(() => []), fetchBacktests().catch(() => [])]);
@@ -37,23 +30,6 @@ export default function BacktestsPage() {
     .filter((b) => !filterStatus || (filterStatus === 'running' ? ['queued', 'running'].includes(b.status) : b.status === filterStatus));
   const running = backtests.filter((b) => ['queued', 'running'].includes(b.status)).length;
 
-  async function start() {
-    if (!pick) return;
-    setStarting(true);
-    setError('');
-    try {
-      const job = await createBacktest(pick, { windowKind, ...(mode ? { mode } : {}) });
-      navigate(`/review/${job.id}`);
-    } catch (e) {
-      setError(e.message);
-      setStarting(false);
-    }
-  }
-  async function remove(id) {
-    await deleteBacktest(id).catch(() => {});
-    refresh();
-  }
-
   return (
     <div className="page">
       {leadingSlot && createPortal(<div className="hdr-title">Backtests</div>, leadingSlot)}
@@ -63,22 +39,6 @@ export default function BacktestsPage() {
           subtitle={`${backtests.length} run${backtests.length === 1 ? '' : 's'}${running ? ` · ${running} running` : ''}. A review opens the run on its chart with the trades, validation, Monte Carlo and regimes.`}
           actions={<Link className="btn" to="/strategies">Strategies</Link>}
         />
-        {error && <div className="review-error">{error}</div>}
-
-        <Card title="Run a backtest" sub="Pick a strategy and a window. Validate (IS + WF1–3) lives on the strategy page.">
-          <div className="toolbar-row">
-            <select value={pick} onChange={(e) => setPick(e.target.value)}>
-              <option value="">Choose a strategy…</option>
-              {strategies.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.instrument?.symbol}</option>)}
-            </select>
-            <select value={windowKind} onChange={(e) => setWindowKind(e.target.value)}>{WINDOWS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-            <select value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="">Mode: cheapest that fits</option><option value="bars">bars</option><option value="ticks">ticks</option>
-            </select>
-            <button className="btn btn-primary" disabled={!pick || starting} onClick={start}>{starting ? 'Starting…' : 'Run and open the review'}</button>
-            <span className="inline-note">No strategy yet? <Link to="/strategies?new=1">Create one</Link>.</span>
-          </div>
-        </Card>
 
         <Card>
           <div className="toolbar-row">
@@ -92,7 +52,7 @@ export default function BacktestsPage() {
             <span className="inline-note">{rows.length} shown</span>
           </div>
           {loading ? <div className="review-card-empty">Loading…</div> : rows.length === 0 ? (
-            <EmptyState title="No backtests" text="Run one above, or open a strategy and press Run backtest." />
+            <EmptyState title="No backtests" text="Runs started from a strategy page will appear here." />
           ) : (
             <div className="table-wrap">
               <table className="data-table">
@@ -109,12 +69,7 @@ export default function BacktestsPage() {
                       <td className="num">{b.summary?.winRate != null ? `${b.summary.winRate}%` : '—'}</td>
                       <td className={`num ${b.summary?.totalPnl >= 0 ? 'pos' : 'neg'}`}>{b.summary ? signed(b.summary.totalPnl) : '—'}</td>
                       <td className="num">{b.metrics?.profitFactor ?? '—'}</td>
-                      <td className="actions">
-                        <Link className="btn btn-sm" to={`/review/${b.id}`}>Review</Link>
-                        <button className="icon-btn" title="Delete this run" onClick={() => remove(b.id)}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-                        </button>
-                      </td>
+                      <td className="actions"><Link className="btn btn-sm" to={`/review/${b.id}`}>Review</Link></td>
                     </tr>
                   ))}
                 </tbody>

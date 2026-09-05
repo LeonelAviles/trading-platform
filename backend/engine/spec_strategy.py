@@ -84,6 +84,7 @@ class SpecRules(RuleSource):
         self.states = {x: _DirectionState(spec, self.ctx, x) for x in self.directions}
         self.warmup_bars = self._warmup()
         self._atr_cache = {}
+        self.or_minutes = self._or_minutes()
 
     def _warmup(self) -> int:
         from engine.expr import referenced_primitives
@@ -98,6 +99,20 @@ class SpecRules(RuleSource):
                 except Exception:
                     pass
         return need
+
+    def _or_minutes(self) -> int:
+        """Length of the opening range the `or_high` / `or_low` structure stop and level
+        target refer to: the `minutes` of the first `opening_range_*` primitive the spec
+        references (trigger, sequence, filters), else the primitive default (15)."""
+        from engine.expr import referenced_primitives
+        from engine.primitives.base import get_class
+
+        exprs = [self.spec["entry"]["trigger"]] + [s["when"] for s in self.spec["entry"].get("sequence") or []] + list(self.spec.get("filters") or [])
+        for e in exprs:
+            for name, params, _tf in referenced_primitives(e):
+                if name in ("opening_range_high", "opening_range_low"):
+                    return int(params.get("minutes", get_class(name).params["minutes"].default))
+        return 15
 
     # -- feeds ----------------------------------------------------------------
     def on_trade(self, ts: int, price: float, size: int, side: str) -> None:
@@ -131,8 +146,8 @@ class SpecRules(RuleSource):
         sess = ctx.session
         b = ctx.bar
         mapping = {
-            "or_low": lambda: ctx.value("opening_range_low", {"minutes": 15}),
-            "or_high": lambda: ctx.value("opening_range_high", {"minutes": 15}),
+            "or_low": lambda: ctx.value("opening_range_low", {"minutes": self.or_minutes}),
+            "or_high": lambda: ctx.value("opening_range_high", {"minutes": self.or_minutes}),
             "session_low": lambda: sess.low if sess else None,
             "session_high": lambda: sess.high if sess else None,
             "bar_low": lambda: b.low if b else None,

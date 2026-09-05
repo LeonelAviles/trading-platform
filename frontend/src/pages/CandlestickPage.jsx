@@ -1,7 +1,7 @@
-import { useCallback, useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { fetchBacktest, deleteBacktest, fetchCVD } from '../api';
+import { fetchBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import AnalysisPanel from '../components/AnalysisPanel';
 import { useOrderFlowChart } from '../chart/useOrderFlowChart';
@@ -46,13 +46,6 @@ export default function CandlestickPage() {
       .catch(() => { if (!cancelled) setCvdData([]); });
     return () => { cancelled = true; };
   }, [symbol, interval]);
-
-  // Deleting the run under review deletes the reason for this chart to exist,
-  // so it goes back to the list rather than leaving empty bars behind.
-  const handleDeleteBacktest = useCallback(async () => {
-    await deleteBacktest(backtestId).catch(() => {});
-    navigate('/backtests', { replace: true });
-  }, [backtestId, navigate]);
 
   // The reviewed job's trades and live status. Arriving straight off a Run
   // backtest means the job is still running, so poll until it settles and draw
@@ -144,9 +137,6 @@ export default function CandlestickPage() {
                 </span>
               )}
               <Link className="btn btn-ghost" to="/backtests">All backtests</Link>
-              <button className="icon-btn" title="Delete this run" onClick={handleDeleteBacktest}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-              </button>
             </>
           ),
         })}

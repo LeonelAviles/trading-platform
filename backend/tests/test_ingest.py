@@ -116,7 +116,7 @@ def test_liquidity_rows_written(data_paths, synth_cfg, synth_mbo):
 
 
 def test_finalize_front_month_splits_regimes(data_paths, synth_cfg, synth_mbo):
-    # Ten sessions, so the 70/30 split and the regime history are exercised.
+    # Ten sessions; IS_FRACTION is 1.0, so every session is in-sample and OOS is empty.
     days = [date(2026, 6, 1 + i) for i in range(10)]
     for i, d in enumerate(days):
         cfg = synth.SynthConfig(session_date=d, rth_end="10:00", seed=100 + i)
@@ -131,17 +131,17 @@ def test_finalize_front_month_splits_regimes(data_paths, synth_cfg, synth_mbo):
 
     splits = json.loads(data_paths.splits.read_text())
     es = splits["roots"]["ES"]
-    assert es["sessions"] == 10 and len(es["inSample"]) == 7 and len(es["outOfSample"]) == 3
-    assert es["inSample"][-1] < es["outOfSample"][0]
+    assert es["sessions"] == 10 and len(es["inSample"]) == 10 and es["outOfSample"] == []
+    assert es["inSampleRange"] == [es["inSample"][0], es["inSample"][-1]] and es["outOfSampleRange"] is None
 
     # Adding a session keeps the frozen IS set and grows OOS.
     cfg = synth.SynthConfig(session_date=date(2026, 6, 12), rth_end="10:00", seed=999)
     _run(data_paths, cfg, synth.generate_mbo(cfg), min_daily_volume=1, book=False)
     splits2 = ing.recompute_splits(ing.recompute_front_month(data_paths), data_paths)
     assert splits2["roots"]["ES"]["inSample"] == es["inSample"]
-    assert len(splits2["roots"]["ES"]["outOfSample"]) == 4
+    assert len(splits2["roots"]["ES"]["outOfSample"]) == 1
     forced = ing.recompute_splits(ing.recompute_front_month(data_paths), data_paths, force=True)
-    assert len(forced["roots"]["ES"]["inSample"]) == 8
+    assert len(forced["roots"]["ES"]["inSample"]) == 11 and forced["roots"]["ES"]["outOfSample"] == []
 
     rg = duckdb.connect().execute(f"SELECT * FROM read_parquet('{data_paths.regimes}')").df()
     assert set(rg["trend"]) <= {"trend", "range"}

@@ -418,3 +418,46 @@ decisions". Newest at the bottom.
 - `data/teaching/` snapshots (none existed) are no longer written; the
   `FeatureContext.snapshot()` feature vector stays because the backtester and
   the primitive tests use it.
+
+## Everything in-sample (2026-08-31)
+
+- **No out-of-sample holdout for now.** `market.ingest.IS_FRACTION` is `1.0`
+  and `splits.json` was re-frozen (`recompute_splits(force=True)`): ES = 105
+  sessions, all in-sample (2026-04-01 → 2026-07-31), `outOfSample` empty.
+  Four months is too little to give 30% away and still validate on the rest;
+  the owner will add more history later, then restore `0.7` and run
+  `scripts/ingest.py --recompute-splits` (rule 16 still holds: new sessions
+  land in OOS until that re-freeze).
+- **Consequences.** `validation.windows()` has no `oos` key, so `full == is`;
+  walk-forward folds are now May / June / July. The verdict's OOS criteria
+  stay in the code but are skipped while no `oos` row exists (they already
+  were "hidden until finalize"). The Desk candidate card, the Desk and
+  Settings coverage tables and the review's Validation tab no longer show an
+  out-of-sample column/row; the Validation tab shows it again automatically
+  once an OOS run exists (`report.oosAvailable`).
+- `tests/test_jobs.py` carves a holdout by hand (freezes 4 of 5 synthetic
+  sessions as IS) to keep the OOS report path covered.
+
+## Strategy research session (2026-08-31, evening)
+
+- **`or_high` / `or_low` structure stops and level targets follow the spec's
+  opening-range length.** `SpecRules._level` had the 15-minute range hard-coded,
+  so a spec triggering on `opening_range_high(minutes=5)` with
+  `target.level = or_low` would have targeted the *15-minute* low. The rules
+  object now takes `minutes` from the first `opening_range_*` primitive the
+  spec references (trigger, sequence, filters) and falls back to 15
+  (`tests/test_spec_or_minutes.py`). No schema change; existing specs that used
+  the 15-minute range in both places are unaffected.
+- **`within_ticks(a, b, n)` accepts a value for `b`.** The expression checker
+  treated both `b` and `n` as count arguments (numbers only), while the
+  evaluator computes `|a − b| ≤ n ticks` — so a filter such as "opening range
+  wider than 10 points" (`not within_ticks(or_high, or_low, 39)`) was rejected
+  as invalid. Only the third argument must be a number now.
+- **Bars mode with a multi-minute primary timeframe produced zero trades.**
+  The execution strategy subscribed to
+  `…-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL` and compared every incoming
+  bar's type against that composite type; Nautilus delivers the aggregated
+  bars stamped with the standard type (`…-5-MINUTE-LAST-INTERNAL`), so
+  `on_bar` returned early on every bar and the run finished silently with no
+  trades (found with a 5-minute variant of the IB breakout). It now matches on
+  `BarType.standard()` for composite subscriptions.

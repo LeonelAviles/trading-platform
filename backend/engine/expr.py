@@ -116,7 +116,7 @@ def check(e, timeframes: list[str], path: str = "expr") -> list[str]:
         sub = f"{path}.{op}[{i}]"
         # Count-like arguments must be plain numbers.
         if (op in ("rising", "falling", "held_above", "held_below") and i == 1) or \
-           (op in ("within_ticks", "touched", "retest") and i >= 1):
+           (op == "within_ticks" and i == 2) or (op in ("touched", "retest") and i >= 1):
             if not isinstance(a, (int, float)) or isinstance(a, bool):
                 errs.append(f"{sub}: must be a number")
             continue

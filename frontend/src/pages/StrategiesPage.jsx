@@ -1,20 +1,18 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { createBacktest, createValidation, deleteStrategy, fetchBacktests, fetchStrategies } from '../api';
+import { Link, useNavigate } from 'react-router-dom';
+import { createBacktest, createValidation, fetchBacktests, fetchStrategies } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import { describeExpr } from '../spec/describe';
-import NewStrategyModal from '../components/NewStrategyModal';
 import { Card, EmptyState, PageHeader, StatusChip } from '../components/ui';
 import { fmtWhen } from '../format';
 
 const STATUSES = ['draft', 'testing', 'candidate', 'forward_test', 'live', 'rejected', 'retired'];
 
-// /strategies — the list, with one obvious way to make a new one.
+// /strategies — a read-only list. Strategies are authored on disk (VS Code), not here.
 export default function StrategiesPage() {
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
   const [strategies, setStrategies] = useState([]);
   const [backtests, setBacktests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +21,6 @@ export default function StrategiesPage() {
   const [busy, setBusy] = useState('');
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
-  const modalOpen = params.get('new') === '1';
 
   const refresh = useCallback(async () => {
     const [s, b] = await Promise.all([fetchStrategies().catch(() => []), fetchBacktests().catch(() => [])]);
@@ -77,12 +74,6 @@ export default function StrategiesPage() {
       setBusy('');
     }
   }
-  async function remove(s) {
-    if (!window.confirm(`Delete "${s.name}"? Its backtests stay reviewable.`)) return;
-    await deleteStrategy(s.id).catch((e) => setError(e.message));
-    refresh();
-  }
-  function openNew(v) { const p = new URLSearchParams(params); if (v) p.set('new', '1'); else p.delete('new'); setParams(p, { replace: true }); }
 
   return (
     <div className="page">
@@ -90,13 +81,8 @@ export default function StrategiesPage() {
       <div className="page-scroll"><div className="page-inner">
         <PageHeader
           title="Strategies"
-          subtitle="Every strategy is a Spec v2 document: instrument, entry trigger, filters, stop, target, sizing. Create one from the template and edit the spec."
-          actions={(
-            <>
-              <Link className="btn" to="/backtests">All backtests</Link>
-              <button className="btn btn-primary" onClick={() => openNew(true)}>+ New strategy</button>
-            </>
-          )}
+          subtitle="Every strategy is a Spec v2 document: instrument, entry trigger, filters, stop, target, sizing. Strategies are written on disk; this page only reads them."
+          actions={<Link className="btn" to="/backtests">All backtests</Link>}
         />
         {error && <div className="review-error">{error}</div>}
 
@@ -111,8 +97,7 @@ export default function StrategiesPage() {
           </div>
           {loading ? <div className="review-card-empty">Loading…</div> : rows.length === 0 ? (
             <EmptyState title={strategies.length ? 'Nothing matches' : 'No strategies yet'}
-              text={strategies.length ? 'Try another filter.' : 'Create one from the template and edit the spec.'}
-              action={!strategies.length && <button className="btn btn-primary" onClick={() => openNew(true)}>+ New strategy</button>} />
+              text={strategies.length ? 'Try another filter.' : 'Add a spec on disk and it will show up here.'} />
           ) : (
             <div className="table-wrap">
               <table className="data-table">
@@ -132,9 +117,6 @@ export default function StrategiesPage() {
                       <td className="actions">
                         <button className="btn btn-sm" disabled={busy === s.id} onClick={() => validate(s.id)}>Validate</button>
                         <button className="btn btn-sm btn-primary" disabled={busy === s.id} onClick={() => run(s.id)}>{busy === s.id ? '…' : 'Run backtest'}</button>
-                        <button className="icon-btn" title="Delete" onClick={() => remove(s)}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-                        </button>
                       </td>
                     </tr>
                   ))}
@@ -144,7 +126,6 @@ export default function StrategiesPage() {
           )}
         </Card>
       </div></div>
-      <NewStrategyModal open={modalOpen} onClose={() => openNew(false)} />
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

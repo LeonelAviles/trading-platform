@@ -138,3 +138,12 @@ def test_v1_rules_run_on_new_engine(store):
         from engine.session import ns_to_et
         et = ns_to_et(t["entryTime"] * synth.NS)
         assert (9, 31) <= (et.hour, et.minute) <= (10, 20)
+
+
+def test_bars_mode_multi_minute_primary_receives_bars(store):
+    """A 5-minute primary in bars mode subscribes to a composite bar type
+    (…5-MINUTE…INTERNAL@1-MINUTE-EXTERNAL) but the aggregated bars arrive
+    stamped with the standard type; the strategy must still see them."""
+    res = run_backtest(_spec(timeframes={"primary": "5min"}), DAYS[0], DAYS[-1], "bars")
+    assert len(res["trades"]) == 3
+    assert all(t["exitReason"] == "flatten" for t in res["trades"])

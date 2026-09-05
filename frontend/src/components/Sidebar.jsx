@@ -11,7 +11,7 @@ const I = {
 
 const NAV = [
   { to: '/', label: 'Desk', icon: 'desk', end: true, hint: 'Candidates, what is testing, data' },
-  { to: '/strategies', label: 'Strategies', icon: 'strategies', hint: 'Create, edit, validate, package' },
+  { to: '/strategies', label: 'Strategies', icon: 'strategies', hint: 'Browse, validate, package' },
   { to: '/backtests', label: 'Backtests', icon: 'backtests', hint: 'Every run, reviewed on its chart' },
 ];
 

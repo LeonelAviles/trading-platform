@@ -151,6 +151,7 @@ def _make_strategy_class():
             self.tick_low = None
             self.last_price = None
             self.bar_type = None
+            self.bar_type_match = None
             self.book_feed = None                   # engine.book_feed.LiquidityBookFeed for the current day, if the spec reads the book
             self.stats = {"signals": 0, "blocked": 0}
 
@@ -164,6 +165,9 @@ def _make_strategy_class():
                 bt = f"{iid}-{self.primary_min}-MINUTE-LAST-INTERNAL"
                 self.subscribe_trade_ticks(self.inst.id)
             self.bar_type = BarType.from_str(bt)
+            # Bars built from a composite subscription (5-MINUTE...INTERNAL@1-MINUTE-EXTERNAL)
+            # arrive stamped with the standard bar type, so match on that.
+            self.bar_type_match = self.bar_type.standard() if self.bar_type.is_composite() else self.bar_type
             self.subscribe_bars(self.bar_type)
 
         # -- helpers --------------------------------------------------------
@@ -289,7 +293,7 @@ def _make_strategy_class():
 
         # -- bars -----------------------------------------------------------
         def on_bar(self, bar):
-            if bar.bar_type != self.bar_type:
+            if bar.bar_type != self.bar_type_match:
                 return
             self.bar_index += 1
             ts = int(bar.ts_event)
