@@ -113,7 +113,8 @@ export function fillWindow(trade, interval) {
   return { start, end };
 }
 export function tradeMarkers(trade, bars, intervalSeconds = 60) {
-  if (!trade || !bars.length) return [];
+  if (!trade || !bars.length || !["long", "short"].includes(trade.direction))
+    return [];
   const marker = (time, entry) => {
     if (
       finite(time) === null ||

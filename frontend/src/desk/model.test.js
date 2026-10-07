@@ -151,10 +151,48 @@ describe("recorded fill preview", () => {
     expect(markers.map((m) => m.text)).toEqual(["Entry 10.25", "Exit 11.50"]);
     expect(markers[0].position).toBe("belowBar");
   });
+  it.each([
+    ["null", { direction: null }],
+    ["missing", {}],
+    ["unknown", { direction: "unknown" }],
+  ])("omits directional markers for %s direction", (_label, fields) => {
+    expect(
+      tradeMarkers(
+        {
+          entryTime: 132,
+          exitTime: 191,
+          entryPrice: 10.25,
+          exitPrice: 11.5,
+          ...fields,
+        },
+        bars,
+      ),
+    ).toEqual([]);
+  });
+  it("uses short arrows only for an explicit short direction", () => {
+    const markers = tradeMarkers(
+      {
+        direction: "short",
+        entryTime: 132,
+        exitTime: 191,
+        entryPrice: 11.5,
+        exitPrice: 10.25,
+      },
+      bars,
+    );
+    expect(markers.map((m) => m.shape)).toEqual(["arrowDown", "arrowUp"]);
+    expect(markers.map((m) => m.position)).toEqual(["aboveBar", "belowBar"]);
+  });
   it("does not attach fills in missing bars or beyond the loaded window to unrelated candles", () => {
     expect(
       tradeMarkers(
-        { entryTime: 250, exitTime: 400, entryPrice: 10, exitPrice: 11 },
+        {
+          direction: "long",
+          entryTime: 250,
+          exitTime: 400,
+          entryPrice: 10,
+          exitPrice: 11,
+        },
         bars,
       ),
     ).toEqual([]);

@@ -105,8 +105,10 @@ function FillChart({ job, trade }) {
   return (
     <>
       <div className="terminal-chart-label">
-        {job.symbol} · {job.interval || "1min"} · UTC · markers aligned to
-        containing candle
+        {job.symbol} · {job.interval || "1min"} · UTC ·{" "}
+        {["long", "short"].includes(trade.direction)
+          ? "markers aligned to containing candle"
+          : "Direction unavailable; directional markers omitted"}
       </div>
       <div
         className="terminal-fill-chart"

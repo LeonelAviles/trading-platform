@@ -26,6 +26,9 @@ links the desk, run review and research chat.
   distinct from a verified empty artifact; legacy null fees, slippage and size
   remain unknown. Artifact SHA-256 and hindsight regime provenance are visible.
   Other symbols/windows keep the existing full execution-review link.
+- Directional fill arrows require an explicit `long` or `short`. Null, missing
+  or unknown legacy directions omit arrows and show an unavailable-direction
+  notice; the UI never infers a short trade from missing evidence.
 - Preview candles come from a bounded, interval-aligned OHLCV request around the selected saved
   trade. Markers show its actual recorded fill prices, aligned to containing
   candles. Gaps are not filled with synthetic candles. The full execution chart

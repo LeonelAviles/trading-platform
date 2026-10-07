@@ -211,6 +211,9 @@ const bars = Array.from({ length: 60 }, (_, i) => ({
                   }
                 : t,
             );
+        if (options.missingDirection) {
+          for (let i = 0; i < raw.length; i++) raw[i] = { ...raw[i], direction: null };
+        }
         data = {
           job: selectedRun,
           artifactSha256: "b".repeat(64),
@@ -445,6 +448,7 @@ const bars = Array.from({ length: 60 }, (_, i) => ({
         "No trades were recorded in this verified artifact.",
       ],
       [{ noCandles: true }, "No historical candles are available"],
+      [{ missingDirection: true }, "Direction unavailable; directional markers omitted"],
       [
         { missingArtifact: true },
         "An unavailable artifact is not evidence of zero trades",
