@@ -34,10 +34,13 @@ primitive or a limit/stop entry is referenced, else `bars`).
 ## Expression tree (`engine/expr.py`)
 
 Leaves: numbers, `{"ind": name, "params": {...}, "tf"?}`, `{"field": open|high|low|close|volume|delta, "tf"?}`.
-Operators: `and or not gt gte lt lte eq between cross_above cross_below rising falling within_ticks
-touched held_above held_below bars_since retest`. Stateful operators keep per-node history advanced
-once per primary bar close; `retest(level, tolTicks, withinBars)` = broke the level in the trade
-direction → came back within tolerance → closed back on the breakout side, within the window.
+Operators: `and or not gt gte lt lte eq between cross_above cross_below first_above first_below
+rising falling within_ticks touched held_above held_below bars_since retest`. Stateful operators keep
+per-node history advanced once per primary bar close; `retest(level, tolTicks, withinBars)` = broke
+the level in the trade direction → came back within tolerance → closed back on the breakout side,
+within the window. `first_above(x, level)` / `first_below(x, level)` fire only on the session's FIRST
+RTH bar where `x` is beyond the level, then latch off until the next session — pair with filters to
+express "the day's first breach qualifies or the day is disqualified" (re-breaks never re-arm it).
 
 `direction: both` compiles the mirrored tree for the short side (`expr.mirror`): comparisons flip
 only when an operand is directional — price/level primitives (`opening_range_high` ↔ `_low`,
@@ -46,14 +49,14 @@ only when an operand is directional — price/level primitives (`opening_range_h
 quantities (`rel_volume`, `atr`, `volume`) and bool primitives stay, with `side`/`color`
 parameters swapped. Tested on symmetric series (`test_expr.py`, `test_spec_strategy_golden.py`).
 
-## Primitive registry (`engine/primitives/`, 55 primitives)
+## Primitive registry (`engine/primitives/`, 61 primitives)
 
 | Family | Primitives |
 |---|---|
 | price | open high low close volume delta sma ema vwap rsi atr adx bollinger_upper/lower highest lowest |
-| structure | swing_high/low opening_range_high/low initial_balance_high/low session_high/low prior_day_high/low/close gap_points consecutive candle_pattern |
-| profile | poc vah val volume_at_price profile_shape |
-| order flow | bar_delta cvd_session cvd_window cvd_slope rel_delta rel_volume delta_divergence footprint_imbalance stacked_imbalances absorption exhaustion poc_migration large_print |
+| structure | swing_high/low leg_retracement opening_range_high/low initial_balance_high/low session_high/low prior_day_high/low/close prior_session_direction gap_points consecutive candle_pattern |
+| profile | poc vah val prior_day_poc/vah/val volume_at_price profile_shape |
+| order flow | bar_delta cvd_session cvd_window cvd_slope rel_delta rel_volume aggressor_share delta_divergence footprint_imbalance stacked_imbalances absorption exhaustion poc_migration large_print |
 | book | large_resting_size_near resting_size_at book_imbalance |
 | time | time_of_day day_of_week minutes_to_close bars_since_open |
 
@@ -65,11 +68,17 @@ aggregated from primary bars, so a context primitive only ever sees closed bars)
 (OR/IB/session/prior-day levels, VWAP, CVD, profile), the forming bar's footprint from prints, the
 recent-trades window and an optional book view. `snapshot()` is the full feature vector.
 
+`prior_session_direction` is the signed close-to-close direction of the last
+completed RTH session (`+1`, `-1`, or `0`) relative to the session before it.
+With `direction: both`, `prior_session_direction > 0` expresses continuation:
+the mirrored short tree becomes `< 0`. Changing that one comparison to `< 0`
+expresses reversal without changing entry timing or risk rules.
+
 ## SpecRules and the execution layer
 
 `engine/spec_strategy.py` plugs the DSL into the Phase 2 execution layer: sequence → trigger →
 filters per direction, structure stops (`or_low`, `swing_low`, `bar_low`, `session_low`, mirrored for
-shorts) and level targets (`vwap`, `poc`, `vah/val`, prior-day, session). The execution layer
+shorts) and level targets (`vwap`, `poc`, `vah/val`, prior-day, session, `swing_high/low` since 2026-09-07). The execution layer
 gained limit/stop entries with `timeoutBars`, trailing stops (ticks/ATR, after `activateAtR`),
 breakeven, scale-outs (booked as their own `scale_out` records), and `direction: both` in one run.
 Legacy v1 documents convert through `engine/v1_to_v2.py` (UTC sessions → ET, `breaks_high` →
@@ -114,3 +123,12 @@ limit entries with timeout, breakeven/trailing/scale-out inside the Nautilus wor
 - `request_primitive` / `PrimitiveRequest` rows and the agent's vocabulary-growth loop: Phase 4.
 - Book primitives read a book view only in replay/teaching (Phase 5/6); in backtests they evaluate to None.
 - `maxConcurrentPositions` > 1 is validated but the execution layer is single-position.
+
+## Additions 2026-09-07 (Creamer pullback study)
+
+- `leg_retracement(n)` — signed fraction of the last confirmed swing leg retraced (up-leg positive, down-leg
+  negative), so a "discount" zone `between(leg_retracement, 0.705, 0.886)` mirrors for shorts. The expression tree
+  has no arithmetic, which is why this is a primitive rather than a formula over `swing_high` / `swing_low`.
+- `prior_day_poc` / `prior_day_vah` / `prior_day_val` — the previous RTH session's value area (`vah` ↔ `val` mirror).
+- `swing_high` / `swing_low` are now valid `exit.target.level` values (same `n = 3` swing the structure stop uses).
+

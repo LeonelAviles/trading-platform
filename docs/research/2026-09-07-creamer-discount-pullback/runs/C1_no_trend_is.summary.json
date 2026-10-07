@@ -1,0 +1,33 @@
+{
+ "trades": 3,
+ "net": 1924.0,
+ "pf": null,
+ "win%": 100.0,
+ "expR": 1.842,
+ "avg$": 641.3,
+ "maxDD$": 0.0,
+ "exits": {
+  "target": 3
+ },
+ "months": {
+  "2026-05": 208.0,
+  "2026-06": 1716.0
+ },
+ "byDir": {
+  "short": [
+   2,
+   1266.0
+  ],
+  "long": [
+   1,
+   658.0
+  ]
+ },
+ "medStopTicks": 28.0,
+ "avgBarsHeld": 2.3,
+ "sessions": 105,
+ "seconds": 12.4,
+ "variant": "C1_no_trend",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "bars"
+}

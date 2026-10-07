@@ -58,6 +58,20 @@ def test_required_mode_detects_orderflow_and_order_types():
     assert S.required_mode(_bad(**{"entry.orderType": "limit"})) == "ticks"
 
 
+def test_prior_session_continuation_and_reversal_specs_are_executable():
+    continuation = _bad(**{"filters": [
+        {"op": "gt", "args": [{"ind": "prior_session_direction"}, 0]},
+        {"op": "gt", "args": [{"ind": "cvd_slope", "params": {"n": 5}}, 0]},
+    ]})
+    assert S.validate_spec(continuation) == []
+    assert S.required_mode(continuation) == "bars"  # CVD is already materialised on the 1m bars
+    reversal = _bad(**{"filters": [
+        {"op": "lt", "args": [{"ind": "prior_session_direction"}, 0]},
+        {"op": "gt", "args": [{"ind": "cvd_slope", "params": {"n": 5}}, 0]},
+    ]})
+    assert S.validate_spec(reversal) == []
+
+
 def test_schema_export_and_primitive_docs():
     schema = S.json_schema()
     assert schema["title"] == "StrategySpec v2" and "gt" in schema["x-operators"]

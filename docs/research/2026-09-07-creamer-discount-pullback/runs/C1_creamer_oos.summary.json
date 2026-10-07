@@ -1,0 +1,28 @@
+{
+ "trades": 1,
+ "net": 383.0,
+ "pf": null,
+ "win%": 100.0,
+ "expR": 1.824,
+ "avg$": 383.0,
+ "maxDD$": 0.0,
+ "exits": {
+  "target": 1
+ },
+ "months": {
+  "2025-12": 383.0
+ },
+ "byDir": {
+  "long": [
+   1,
+   383.0
+  ]
+ },
+ "medStopTicks": 17.0,
+ "avgBarsHeld": 1.0,
+ "sessions": 104,
+ "seconds": 8.7,
+ "variant": "C1_creamer",
+ "window": "2025-12-01..2026-03-31",
+ "mode": "bars"
+}

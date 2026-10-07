@@ -1,0 +1,146 @@
+{
+ "schemaVersion": 2,
+ "name": "Rosato A3 \u2014 balance-low touch with buy delta + 1h ADX < 20",
+ "description": "Touch-and-reclaim of the 2-day range low with the touch bar's delta toward the bounce (\u2265 +300). The confirmation the key-levels study found works at session extremes, applied to the multi-day range. Context filter: 1-hour ADX(14) below 20 (no trend = balanced tape).",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "1min",
+  "context": [
+   "1h",
+   "1D"
+  ]
+ },
+ "direction": "both",
+ "session": {
+  "entryWindow": {
+   "start": "09:31",
+   "end": "15:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "and",
+     "args": [
+      {
+       "op": "touched",
+       "args": [
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        },
+        4,
+        0
+       ]
+      },
+      {
+       "op": "gt",
+       "args": [
+        {
+         "field": "close"
+        },
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "op": "gte",
+     "args": [
+      {
+       "ind": "bar_delta"
+      },
+      300
+     ]
+    }
+   ]
+  },
+  "sequence": [],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [
+  {
+   "op": "lt",
+   "args": [
+    {
+     "ind": "adx",
+     "params": {
+      "period": 14
+     },
+     "tf": "1h"
+    },
+    20
+   ]
+  }
+ ],
+ "exit": {
+  "stop": {
+   "type": "structure",
+   "structure": "session_low",
+   "bufferTicks": 8,
+   "value": null,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 3.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 10,
+  "stopAfterConsecutiveLosses": 0,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "bars",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "rosato-balance-fade-2026-09-07",
+  "variant": "A3_adx"
+ }
+}

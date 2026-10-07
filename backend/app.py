@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 import database  # noqa: E402
 from routers import (  # noqa: E402
+    agent,
     backtests,
     desk,
     market,
@@ -37,6 +38,10 @@ async def _lifespan(_app: FastAPI):
     # engine set PLATFORM_SKIP_DB_INIT=1.
     if os.environ.get("PLATFORM_SKIP_DB_INIT") != "1":
         database.init_db()
+        from engine import jobs
+        jobs.recover_pending_jobs()
+        from research_agent import workflow
+        workflow.recover_pending_runs()
     yield
 
 
@@ -50,6 +55,7 @@ def create_app() -> FastAPI:
     )
 
     for router in (
+        agent.router,
         market.router,
         strategies.router,
         backtests.router,

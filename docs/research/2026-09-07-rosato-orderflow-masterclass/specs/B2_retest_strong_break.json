@@ -1,0 +1,144 @@
+{
+ "schemaVersion": 2,
+ "name": "Rosato B2 \u2014 strong-delta breakout, then pullback",
+ "description": "Sequence: a close above the 2-day range high with delta \u2265 +500 (the initiative buyers), then the retest fires within 30 bars with delta > 0.",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "1min",
+  "context": [
+   "1D"
+  ]
+ },
+ "direction": "long",
+ "session": {
+  "entryWindow": {
+   "start": "09:31",
+   "end": "15:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "retest",
+     "args": [
+      {
+       "ind": "highest",
+       "params": {
+        "n": 2,
+        "exclude_current": false
+       },
+       "tf": "1D"
+      },
+      4,
+      30
+     ]
+    },
+    {
+     "op": "gt",
+     "args": [
+      {
+       "ind": "bar_delta"
+      },
+      0
+     ]
+    }
+   ]
+  },
+  "sequence": [
+   {
+    "when": {
+     "op": "and",
+     "args": [
+      {
+       "op": "gt",
+       "args": [
+        {
+         "field": "close"
+        },
+        {
+         "ind": "highest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        }
+       ]
+      },
+      {
+       "op": "gte",
+       "args": [
+        {
+         "ind": "bar_delta"
+        },
+        500
+       ]
+      }
+     ]
+    },
+    "withinBars": 30
+   }
+  ],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [],
+ "exit": {
+  "stop": {
+   "type": "ticks",
+   "value": 20,
+   "structure": null,
+   "bufferTicks": 0,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 2.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 10,
+  "stopAfterConsecutiveLosses": 0,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "bars",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "rosato-balance-fade-2026-09-07",
+  "variant": "B2_retest_strong_break"
+ }
+}

@@ -74,24 +74,24 @@ export default function StrategyPage() {
   const running = runs.filter((b) => ['queued', 'running'].includes(b.status));
 
   const renderRuns = (list) => (
-    <div className="table-wrap"><table className="data-table">
+    <div className="table-wrap"><table className="data-table mobile-cards">
       <thead><tr><th>When</th><th>Window</th><th>Mode</th><th>Status</th><th className="num">Trades</th><th className="num">Net PnL</th><th className="num">PF</th><th /></tr></thead>
       <tbody>{list.map((b) => (
         <tr key={b.id}>
-          <td className="inline-note">{fmtWhen(b.createdAt)}</td>
-          <td>{(b.windowKind || 'full').toUpperCase()}{b.dateFrom ? <div className="inline-note">{b.dateFrom} → {b.dateTo}</div> : null}</td>
-          <td>{b.mode}</td>
-          <td>{b.metrics?.verdict ? <StatusChip status={b.metrics.verdict.status} kind="verdict" /> : <StatusChip status={b.status} />}</td>
-          <td className="num">{b.summary?.trades ?? '—'}</td>
-          <td className={`num ${b.summary?.totalPnl >= 0 ? 'pos' : 'neg'}`}>{b.summary ? signed(b.summary.totalPnl) : '—'}</td>
-          <td className="num">{b.metrics?.profitFactor ?? '—'}</td>
-          <td className="actions"><Link className="btn btn-sm" to={`/review/${b.id}`}>Review</Link></td>
+          <td data-label="When" className="inline-note">{fmtWhen(b.createdAt)}</td>
+          <td data-label="Window">{(b.windowKind || 'full').toUpperCase()}{b.dateFrom ? <div className="inline-note">{b.dateFrom} → {b.dateTo}</div> : null}</td>
+          <td data-label="Mode">{b.mode}</td>
+          <td data-label="Status">{b.metrics?.verdict ? <StatusChip status={b.metrics.verdict.status} kind="verdict" /> : <StatusChip status={b.status} />}</td>
+          <td data-label="Trades" className="num">{b.summary?.trades ?? '—'}</td>
+          <td data-label="Net PnL" className={`num ${b.summary?.totalPnl >= 0 ? 'pos' : 'neg'}`}>{b.summary ? signed(b.summary.totalPnl) : '—'}</td>
+          <td data-label="Profit factor" className="num">{b.metrics?.profitFactor ?? '—'}</td>
+          <td className="actions" data-label="Actions"><Link className="btn btn-sm" to={`/review/${b.id}`}>Review</Link></td>
         </tr>))}</tbody>
     </table></div>
   );
 
   return (
-    <div className="page strategy-page">
+    <div className="page workspace-page strategy-page">
       {leadingSlot && createPortal(
         <div className="hdr-title"><Link to="/strategies" className="muted">Strategies</Link> / {spec.name}</div>,
         leadingSlot,
@@ -99,9 +99,10 @@ export default function StrategyPage() {
 
       <div className="page-scroll"><div className="page-inner">
         <PageHeader
+          eyebrow="Strategy dossier"
           crumbs={[{ label: 'Strategies', to: '/strategies' }, { label: spec.name }]}
           title={spec.name}
-          subtitle={<>{spec.instrument?.symbol} · {spec.timeframes?.primary} · <span className={`review-dir ${spec.direction}`}>{spec.direction}</span> · <StatusChip status={spec.status} />{spec.lineage?.parentId ? <> · variant of <Link to={`/strategies/${spec.lineage.parentId}`}>{spec.lineage.changedVariable || 'parent'}</Link></> : ''}</>}
+          subtitle="Rules, risk controls, validation evidence, and research lineage in one review surface."
           actions={(
             <>
               <a className="btn" href={strategyPackageUrl(strategyId)} download title="Zip: spec, risk, validation report, lineage, evidence, nautilus_config">Package</a>
@@ -109,7 +110,15 @@ export default function StrategyPage() {
               <button className="btn btn-primary" disabled={!!busy} onClick={() => run('full')}>{busy === 'full' ? 'Starting…' : 'Run backtest'}</button>
             </>
           )}
-        />
+        >
+          <div className="strategy-meta">
+            <span className="strategy-market">{spec.instrument?.symbol}</span>
+            <span>{spec.timeframes?.primary}</span>
+            <span className={`review-dir ${spec.direction}`}>{spec.direction}</span>
+            <StatusChip status={spec.status} />
+            {spec.lineage?.parentId && <span>Variant · <Link to={`/strategies/${spec.lineage.parentId}`}>{spec.lineage.changedVariable || 'parent'}</Link></span>}
+          </div>
+        </PageHeader>
         {error && <div className="review-error">{error}</div>}
         <Tabs value={tab} onChange={setTab} tabs={[
           { id: 'overview', label: 'Overview' }, { id: 'spec', label: 'Spec' }, { id: 'lineage', label: 'Lineage' }, { id: 'runs', label: 'Runs', count: runs.length },
@@ -119,13 +128,25 @@ export default function StrategyPage() {
           <div className="card-grid">
             <Card title="Rules" sub="The spec in plain English.">
               {spec.description && <p className="strategy-description muted">{spec.description}</p>}
-              <ul className="strategy-sentences">{sentences.map((l, i) => <li key={i}>{l}</li>)}</ul>
+              <div className="strategy-sentences">{sentences.map((l, i) => <div className="strategy-rule" key={i}><span>{String(i + 1).padStart(2, '0')}</span><p>{l}</p></div>)}</div>
             </Card>
             <Card title="Risk profile" sub={`Proposed by ${spec.risk?.proposedBy || 'defaults'}`}>
-              <div className="stat-row" style={{ marginBottom: 0 }}>
-                <div className="stat-tile"><div className="stat-label">Risk / trade</div><div className="stat-value">{spec.risk?.riskPerTradePct}%</div><div className="stat-sub">account ${spec.risk?.accountSize?.toLocaleString()}</div></div>
-                <div className="stat-tile"><div className="stat-label">Daily loss limit</div><div className="stat-value">{spec.risk?.dailyLossLimitPct}%</div><div className="stat-sub">weekly {spec.risk?.weeklyLossLimitPct}%</div></div>
-                <div className="stat-tile"><div className="stat-label">Max contracts</div><div className="stat-value">{spec.risk?.maxContracts}</div><div className="stat-sub">{spec.risk?.maxTradesPerDay} trades/day</div></div>
+              <div className="risk-metrics">
+                <div><span>Risk / trade</span><strong>{spec.risk?.riskPerTradePct}%</strong><small>${spec.risk?.accountSize?.toLocaleString()} account</small></div>
+                <div><span>Daily loss limit</span><strong>{spec.risk?.dailyLossLimitPct}%</strong><small>Weekly {spec.risk?.weeklyLossLimitPct}%</small></div>
+                <div><span>Max contracts</span><strong>{spec.risk?.maxContracts}</strong><small>{spec.risk?.maxTradesPerDay} trades per day</small></div>
+                <div><span>Loss circuit breaker</span><strong>{spec.risk?.stopAfterConsecutiveLosses}</strong><small>Consecutive losses</small></div>
+              </div>
+              <div className="risk-gates">
+                <div className="risk-gates-title"><span />Promotion gates</div>
+                <dl>
+                  <div><dt>Minimum IS trades</dt><dd>{spec.risk?.passCriteria?.minTradesInSample ?? '—'}</dd></div>
+                  <div><dt>Minimum profit factor</dt><dd>{spec.risk?.passCriteria?.minProfitFactor ?? '—'}</dd></div>
+                  <div><dt>Minimum expectancy</dt><dd>{spec.risk?.passCriteria?.minExpectancyR != null ? `${spec.risk.passCriteria.minExpectancyR} R` : '—'}</dd></div>
+                  <div><dt>Maximum drawdown</dt><dd>{spec.risk?.passCriteria?.maxDrawdownPct != null ? `${spec.risk.passCriteria.maxDrawdownPct}%` : '—'}</dd></div>
+                  <div><dt>Positive WF windows</dt><dd>{spec.risk?.passCriteria?.minWalkForwardWindowsPositive ?? '—'}</dd></div>
+                  <div><dt>Maximum MC DD95</dt><dd>{spec.risk?.passCriteria?.maxMonteCarloDrawdown95Pct != null ? `${spec.risk.passCriteria.maxMonteCarloDrawdown95Pct}%` : '—'}</dd></div>
+                </dl>
               </div>
             </Card>
             <Card className="span-2" title="Validation" sub={validation ? `Latest in-sample run ${fmtWhen(latestIs.createdAt)} · ${wf.length} walk-forward window(s)` : 'Not validated yet.'}

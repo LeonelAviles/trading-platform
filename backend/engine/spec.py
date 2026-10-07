@@ -23,7 +23,7 @@ SCHEMA_VERSION = 2
 TIMEFRAMES = ("1min", "5min", "15min", "30min", "1h", "4h", "1D")
 STATUSES = ("draft", "testing", "candidate", "forward_test", "live", "rejected", "retired")
 STRUCTURES = ("swing_low", "swing_high", "or_low", "or_high", "session_low", "session_high", "bar_low", "bar_high")
-LEVELS = ("session_high", "session_low", "vah", "val", "poc", "prior_day_high", "prior_day_low", "or_high", "or_low", "vwap")
+LEVELS = ("session_high", "session_low", "vah", "val", "poc", "prior_day_high", "prior_day_low", "or_high", "or_low", "vwap", "swing_high", "swing_low")
 
 Expr = Any   # validated structurally by expr.check()
 
@@ -33,7 +33,7 @@ class _M(BaseModel):
 
 
 class Origin(_M):
-    type: Literal["manual"] = "manual"
+    type: Literal["manual", "agent"] = "manual"
     sourceId: str | None = None
 
 

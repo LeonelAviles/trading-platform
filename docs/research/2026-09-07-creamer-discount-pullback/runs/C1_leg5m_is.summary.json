@@ -1,0 +1,28 @@
+{
+ "trades": 1,
+ "net": -667.0,
+ "pf": 0.0,
+ "win%": 0.0,
+ "expR": -1.019,
+ "avg$": -667.0,
+ "maxDD$": 667.0,
+ "exits": {
+  "stop": 1
+ },
+ "months": {
+  "2026-05": -667.0
+ },
+ "byDir": {
+  "long": [
+   1,
+   -667.0
+  ]
+ },
+ "medStopTicks": 52.0,
+ "avgBarsHeld": 4.0,
+ "sessions": 105,
+ "seconds": 13.0,
+ "variant": "C1_leg5m",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "bars"
+}

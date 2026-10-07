@@ -1,0 +1,185 @@
+{
+ "schemaVersion": 2,
+ "name": "Creamer C2 \u2014 zone touch, then absorption, then second failure higher",
+ "description": "Value-up on the hourly (close > EMA20). Step 1: a 5-min bar's low probes the 70.5\u201388.6 % retracement of the last 15-min swing leg (discount). Step 2, within 6 bars: a bar with net aggressive selling that closes bullish (sellers absorbed). Trigger, within 3 bars: a bullish bar with a higher low (sellers fail higher) \u2192 long at its close, stop 1 pt under that bar, target 2R. 09:30\u201311:00, \u2265 10k contracts/5-min, max 2 trades/day, stop after 2 losses. Mirrored for shorts.",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "5min",
+  "context": [
+   "15min",
+   "1h"
+  ]
+ },
+ "direction": "both",
+ "session": {
+  "entryWindow": {
+   "start": "09:30",
+   "end": "11:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "gt",
+     "args": [
+      {
+       "field": "low"
+      },
+      {
+       "ind": "lowest",
+       "params": {
+        "n": 1
+       }
+      }
+     ]
+    },
+    {
+     "op": "gt",
+     "args": [
+      {
+       "field": "close"
+      },
+      {
+       "field": "open"
+      }
+     ]
+    }
+   ]
+  },
+  "sequence": [
+   {
+    "when": {
+     "op": "between",
+     "args": [
+      {
+       "ind": "leg_retracement",
+       "params": {
+        "n": 3,
+        "price": "extreme"
+       },
+       "tf": "15min"
+      },
+      0.705,
+      0.886
+     ]
+    },
+    "withinBars": 6
+   },
+   {
+    "when": {
+     "op": "and",
+     "args": [
+      {
+       "op": "lt",
+       "args": [
+        {
+         "ind": "bar_delta"
+        },
+        0
+       ]
+      },
+      {
+       "op": "gt",
+       "args": [
+        {
+         "field": "close"
+        },
+        {
+         "field": "open"
+        }
+       ]
+      }
+     ]
+    },
+    "withinBars": 3
+   }
+  ],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [
+  {
+   "op": "gte",
+   "args": [
+    {
+     "field": "volume"
+    },
+    10000
+   ]
+  },
+  {
+   "op": "gt",
+   "args": [
+    {
+     "field": "close",
+     "tf": "1h"
+    },
+    {
+     "ind": "ema",
+     "params": {
+      "period": 20
+     },
+     "tf": "1h"
+    }
+   ]
+  }
+ ],
+ "exit": {
+  "stop": {
+   "type": "structure",
+   "structure": "bar_low",
+   "bufferTicks": 4,
+   "value": null,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 2.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 0,
+  "stopAfterConsecutiveLosses": 2,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "bars",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "creamer-discount-pullback-2026-09-07",
+  "variant": "C2_creamer"
+ }
+}

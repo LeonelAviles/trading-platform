@@ -2,9 +2,13 @@
 
 from sqlalchemy import inspect
 
-EXPECTED_TABLES = {"strategies", "backtests", "settings"}
+EXPECTED_TABLES = {
+    "strategies", "backtests", "settings", "knowledge_sources", "knowledge_nodes",
+    "knowledge_edges", "knowledge_chunks", "knowledge_chunks_fts", "agent_threads", "agent_messages",
+    "agent_runs",
+}
 REMOVED_TABLES = {
-    "agent_runs", "findings", "research_sources", "research_docs", "research_queue", "primitive_requests", "llm_usage",
+    "findings", "research_sources", "research_docs", "research_queue", "primitive_requests", "llm_usage",
     "knowledge_facts", "teaching_sessions", "teaching_trades", "teaching_events", "teaching_questions",
 }
 
@@ -14,7 +18,7 @@ def test_tables_exist(db_engine):
     missing = EXPECTED_TABLES - names
     assert not missing, f"missing tables: {sorted(missing)}"
     assert not (REMOVED_TABLES & names), f"removed tables still present: {sorted(REMOVED_TABLES & names)}"
-    assert "agent_run_id" not in {c["name"] for c in inspect(db_engine).get_columns("backtests")}
+    assert "agent_run_id" in {c["name"] for c in inspect(db_engine).get_columns("backtests")}
     assert "alembic_version" in names
 
 

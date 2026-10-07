@@ -104,6 +104,20 @@ class RelVolume(Primitive):
 
 
 @register
+class AggressorShare(Primitive):
+    """Fraction of the last closed bar's volume initiated on `side` (bid = sellers, ask = buyers)."""
+    name = "aggressor_share"
+    params = {"side": Param("str", "bid", "bid (selling) | ask (buying)", choices=("bid", "ask"))}
+
+    def value(self, ctx):
+        b = ctx.bar
+        if b is None or b.volume <= 0:
+            return None
+        aggressive_volume = b.sell_vol if self.p["side"] == "bid" else b.buy_vol
+        return aggressive_volume / b.volume
+
+
+@register
 class DeltaDivergence(Primitive):
     """Price vs. flow disagreement over `n` bars: +1 bullish (price down, CVD up), −1 bearish (price up, CVD down), 0 none."""
     name = "delta_divergence"

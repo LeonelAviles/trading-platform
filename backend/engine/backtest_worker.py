@@ -32,6 +32,7 @@ Modes
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -122,7 +123,7 @@ def _make_strategy_class():
 
     class ExecStrategy(Strategy):
         def configure(self, *, params: dict, rules, instrument, mode: str, cspec: P.ContractSpec,
-                      flow_sidecar: dict | None, ledger: Ledger, slippage_ticks: int):
+                      flow_sidecar: dict | None, ledger: Ledger, slippage_ticks: int, live_progress=None):
             self.p = params
             self.rules = rules
             self.inst = instrument
@@ -153,6 +154,7 @@ def _make_strategy_class():
             self.bar_type = None
             self.bar_type_match = None
             self.book_feed = None                   # engine.book_feed.LiquidityBookFeed for the current day, if the spec reads the book
+            self.live_progress = live_progress
             self.stats = {"signals": 0, "blocked": 0}
 
         # -- lifecycle ------------------------------------------------------
@@ -316,6 +318,8 @@ def _make_strategy_class():
                 self._check_entry_timeout(b.ts_close, bar_index=b.index)
             if self.open is None and self.pending_entry is None and self.pending_exit_reason is None:
                 self._maybe_enter(b, d)
+            if self.live_progress is not None:
+                self.live_progress(d, b.ts_close)
 
         def _manage_open(self, b: Bar, d: date):
             t = self.open
@@ -655,6 +659,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
     slippage = ins.costs.slippage_ticks_market if params["slippage_ticks"] is None else int(params["slippage_ticks"])
     ranges = ins_mod.resolve_ranges(params["symbol"], date_from, date_to)
     session_dates = [d.isoformat() for r in ranges for d in r.dates]
+    session_total = len(session_dates)
     if book_prims:
         missing = [(r.symbol, d) for r in ranges for d in r.dates if d not in book_feed_mod.covered_days(r.symbol, r.dates)]
         if missing:
@@ -678,7 +683,38 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
         fill_model=FillModel(prob_fill_on_limit=1.0, prob_slippage=1.0 if slippage >= 1 else 0.0, random_seed=1),
         fee_model=PerContractFeeModel(commission=Money(root.commission_per_side, USD)),
     )
-    bars_total = ticks_total = book_days = 0
+    bars_total = ticks_total = book_days = engine_bars_processed = 0
+    sessions_completed = 0
+    last_progress_emit = 0.0
+
+    def publish_progress(current_date: date | None = None, current_time_ns: int | None = None, *, force: bool = False) -> None:
+        nonlocal last_progress_emit
+        if progress is None:
+            return
+        now = time.monotonic()
+        if not force and now - last_progress_emit < 0.2:
+            return
+        last_progress_emit = now
+        elapsed = max(time.time() - t0, 0.0)
+        rate = sessions_completed / elapsed if sessions_completed and elapsed else 0.0
+        remaining = max(session_total - sessions_completed, 0)
+        progress({
+            "phase": "running",
+            "sessionsCompleted": sessions_completed,
+            "sessionsTotal": session_total,
+            "percent": round((sessions_completed / session_total) * 100, 1) if session_total else 100.0,
+            "currentDate": current_date.isoformat() if current_date else None,
+            "currentTime": int(current_time_ns / NS) if current_time_ns is not None else (int(et_to_ns(current_date, params["flatten_at"]) / NS) if current_date else None),
+            "tradeCount": len(ledger.trades),
+            "barsProcessed": engine_bars_processed if mode != "bars" else bars_total,
+            "ticksProcessed": ticks_total,
+            "elapsedSeconds": round(elapsed, 1),
+            "etaSeconds": round(remaining / rate, 1) if rate else None,
+            "updatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "liveTrades": list(ledger.trades),
+        })
+
+    publish_progress(force=True)
     try:
         for rng in ranges:
             inst = catalog.instruments(instrument_ids=[cat.instrument_id(rng.symbol)])
@@ -687,8 +723,12 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
             inst = inst[0]
             engine.add_instrument(inst)
             strat = ExecStrategy()
+            def on_engine_bar(live_date, live_ts):
+                nonlocal engine_bars_processed
+                engine_bars_processed += 1
+                publish_progress(live_date, live_ts)
             strat.configure(params=params, rules=rules, instrument=inst, mode=mode, cspec=cspec,
-                            flow_sidecar=None, ledger=ledger, slippage_ticks=slippage)
+                            flow_sidecar=None, ledger=ledger, slippage_ticks=slippage, live_progress=on_engine_bar)
             engine.add_strategy(strat)
             for d in rng.dates:
                 start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
@@ -703,13 +743,12 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
                 else:
                     data = catalog.trade_ticks(instrument_ids=[str(inst.id)], start=start, end=end)
                     ticks_total += len(data)
-                if not data:
-                    continue
-                engine.add_data(data)
-                engine.run(streaming=True)
-                engine.clear_data()
-                if progress:
-                    progress(d.isoformat())
+                if data:
+                    engine.add_data(data)
+                    engine.run(streaming=True)
+                    engine.clear_data()
+                sessions_completed += 1
+                publish_progress(d, force=True)
             engine.end()
             # A new contract range needs a fresh strategy instance (Nautilus binds a
             # strategy to its subscriptions); the rules object carries over so
@@ -747,9 +786,18 @@ def main(argv=None) -> int:
         return 2
     spec_path, date_from, date_to, mode, out_path = argv
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
-    result = run_backtest(spec, date.fromisoformat(date_from), date.fromisoformat(date_to), mode,
-                          progress=lambda d: print(f"session {d} done", flush=True))
-    Path(out_path).write_text(json.dumps(result), encoding="utf-8")
+    output = Path(out_path)
+    progress_path = output.with_name("progress.json")
+
+    def write_progress(snapshot: dict) -> None:
+        tmp = progress_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(snapshot), encoding="utf-8")
+        os.replace(tmp, progress_path)
+        done, total = snapshot["sessionsCompleted"], snapshot["sessionsTotal"]
+        print(f"progress {done}/{total} sessions · {snapshot['tradeCount']} trades", flush=True)
+
+    result = run_backtest(spec, date.fromisoformat(date_from), date.fromisoformat(date_to), mode, progress=write_progress)
+    output.write_text(json.dumps(result), encoding="utf-8")
     print(f"done: {result['summary']}", flush=True)
     return 0
 

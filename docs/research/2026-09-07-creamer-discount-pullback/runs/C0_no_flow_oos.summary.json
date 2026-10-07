@@ -1,0 +1,33 @@
+{
+ "trades": 3,
+ "net": -251.0,
+ "pf": 0.6,
+ "win%": 33.3,
+ "expR": -0.101,
+ "avg$": -83.7,
+ "maxDD$": 492.0,
+ "exits": {
+  "stop": 2,
+  "target": 1
+ },
+ "months": {
+  "2025-12": -251.0
+ },
+ "byDir": {
+  "short": [
+   1,
+   -142.0
+  ],
+  "long": [
+   2,
+   -109.0
+  ]
+ },
+ "medStopTicks": 17.0,
+ "avgBarsHeld": 2.0,
+ "sessions": 104,
+ "seconds": 8.7,
+ "variant": "C0_no_flow",
+ "window": "2025-12-01..2026-03-31",
+ "mode": "bars"
+}

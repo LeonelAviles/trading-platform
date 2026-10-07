@@ -12,7 +12,7 @@ import { useReplaySelect } from './useReplaySelect';
 import { useFootprintHistory } from './useFootprintHistory';
 import { useLayerSettings, useLayerToggles } from './layerSettings';
 import { aggregateFootprints } from './orderflowMath';
-import { etDateString, formatEtClock } from './time';
+import { etDateString } from './time';
 import { DEFAULT_COLOR, intervalToSeconds, remapShapeToInterval } from '../drawing/geometry';
 import { useDrawings } from '../hooks/useDrawings';
 import { useChartSettings } from '../hooks/useChartSettings';
@@ -38,6 +38,18 @@ const GEAR = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 );
 
+function throughTime(bars, cutoff) {
+  if (cutoff == null || !bars.length || bars[bars.length - 1].time <= cutoff) return bars;
+  let lo = 0;
+  let hi = bars.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars[mid].time <= cutoff) lo = mid + 1;
+    else hi = mid;
+  }
+  return bars.slice(0, lo);
+}
+
 // The chart (PLATFORM-SPEC.md Phase 5): the continuous series end to end,
 // tick replay over /ws/replay from any clicked candle, the order-flow layers
 // (DOM ladder, T&S, heatmap, footprint, bubbles, profile, CVD), drawings,
@@ -49,7 +61,7 @@ const GEAR = (
 //   symbol, interval, setInterval — the series; the page owns `interval`
 //     because the review page sets it from the backtest job.
 //   root — instrument root for the "decoding…" message.
-export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
+export function useOrderFlowChart({ symbol, interval, setInterval, root, displayUntil = null }) {
   const [status, setStatus] = useState('');
   const [settings, setSettings] = useChartSettings();
   const [layerSettings, setLayerSettings] = useLayerSettings();
@@ -77,6 +89,8 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
   // timeframe re-anchors them through real time instead of leaving them on
   // unrelated bars. Only advances once a full load completes.
   const anchorRef = useRef({ bars: [], interval, symbol });
+  const displayUntilRef = useRef(displayUntil);
+  displayUntilRef.current = displayUntil;
 
   const onReady = useCallback((a) => setApi(a), []);
 
@@ -91,8 +105,9 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
     setStatus('Loading…');
     const paint = (bars) => {
       setIdleBars(bars);
-      api.candleSeries.setData(bars.map(candlePoint));
-      api.volumeSeries.setData(bars.map(volumePoint));
+      const shown = throughTime(bars, displayUntilRef.current);
+      api.candleSeries.setData(shown.map(candlePoint));
+      api.volumeSeries.setData(shown.map(volumePoint));
     };
     const reanchor = (bars) => {
       if (anchor.symbol === symbol && anchor.interval !== interval && anchor.bars.length && bars.length) {
@@ -138,12 +153,23 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
 
   // Session bars for the chart: history + the replay's bars for `interval`.
   const sessionBars = replay.bars?.[interval] || [];
+  const visibleIdleBars = useMemo(() => throughTime(idleBars, displayUntil), [idleBars, displayUntil]);
   const bars = useMemo(() => {
-    if (!replaying) return idleBars;
+    if (!replaying) return visibleIdleBars;
     const h = historyRef.current.bars;
     return h.length ? h.concat(sessionBars) : sessionBars;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replaying, idleBars, sessionBars, sessionBars.length, historyVersion, tick]);
+  }, [replaying, visibleIdleBars, sessionBars, sessionBars.length, historyVersion, tick]);
+
+  // Engine-follow mode owns the visible edge of the ordinary historical
+  // series. Future candles stay out of the chart until Nautilus reaches them.
+  useEffect(() => {
+    if (!api || replaying || !idleBars.length) return;
+    api.candleSeries.setData(visibleIdleBars.map(candlePoint));
+    api.volumeSeries.setData(visibleIdleBars.map(volumePoint));
+    if (displayUntil != null) api.chart.timeScale().scrollToRealTime();
+    api.forceUpdate();
+  }, [api, replaying, idleBars.length, visibleIdleBars, displayUntil]);
 
   // Paint on ready / interval change; update incrementally on bar messages.
   const paintAll = useCallback(() => {
@@ -293,7 +319,7 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
   const clockTime = replaying && replay.clock != null ? replay.clock / 1e9 : null;
   const oneMin = replay.bars?.['1min'] || [];
   const rootLabel = root || replay.root || symbol.replace(/1!$/, '');
-  const showIdleHint = !replaying && !selecting && bars.length > 0;
+  const activeLayerCount = Object.values(layers).filter(Boolean).length;
 
   // ---- render helpers ------------------------------------------------------
 
@@ -304,15 +330,24 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
       <div className="toolbar-sep-v" />
       <div className="interval-group">
         {INTERVALS.map(([value, label]) => (
-          <button key={value} className={`interval-btn ${interval === value ? 'active' : ''}`} onClick={() => setInterval(value)}>{label}</button>
+          <button key={value} aria-pressed={interval === value} className={`interval-btn ${interval === value ? 'active' : ''}`} onClick={() => setInterval(value)}>{label}</button>
         ))}
       </div>
       <div className="toolbar-sep-v" />
-      <div className="layer-group">
-        {LAYER_BUTTONS.map(([key, label]) => (
-          <button key={key} className={`replay-toggle ${layers[key] ? 'active' : ''}`} onClick={() => toggleLayer(key)}>{label}</button>
-        ))}
-      </div>
+      <details className="layer-overflow">
+        <summary className="replay-toggle">
+          Layers
+          {activeLayerCount > 0 && <span className="layer-count">{activeLayerCount}</span>}
+          <svg className="layer-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+        </summary>
+        <div className="layer-menu" role="group" aria-label="Chart layers">
+          {LAYER_BUTTONS.map(([key, label]) => (
+            <button key={key} aria-pressed={Boolean(layers[key])} className={`layer-menu-item ${layers[key] ? 'active' : ''}`} onClick={() => toggleLayer(key)}>
+              <span>{label}</span><i aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </details>
       <span className="status">{status}</span>
       <div className="toolbar-spacer" />
       <div className="session-picker">
@@ -394,12 +429,9 @@ export function useOrderFlowChart({ symbol, interval, setInterval, root }) {
         )}
         {replaying && replay.status === 'ready' && replay.error && <div className="replay-toast">{replay.error}</div>}
         {children}
-        {(dock || showIdleHint) && (
+        {dock && (
           <div className="backtest-dock">
             {dock}
-            {showIdleHint && (
-              <span className="compare-chip">Press Replay, then click a candle · {formatEtClock(bars[bars.length - 1]?.time, { date: true })} ET is the latest bar</span>
-            )}
           </div>
         )}
       </ChartView>

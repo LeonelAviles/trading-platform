@@ -170,3 +170,52 @@ export async function compareStrategies(a, b, window = 'is') {
   return json(await fetch(`${BASE}/strategies/${a}/compare/${b}?window=${window}`));
 }
 
+// --- Stratos Research agent ------------------------------------------------
+export async function fetchAgentStatus() { return json(await fetch(`${BASE}/agent/status`)); }
+export async function createAgentThread(title = 'New research') {
+  return json(await fetch(`${BASE}/agent/threads`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+  }));
+}
+export async function fetchAgentThread(id) { return json(await fetch(`${BASE}/agent/threads/${id}`)); }
+export async function fetchAgentWorkflow(threadId) { return json(await fetch(`${BASE}/agent/threads/${threadId}/workflow`)); }
+export async function sendAgentMessage(threadId, message) {
+  return json(await fetch(`${BASE}/agent/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ threadId, message }),
+  }));
+}
+
+export async function streamAgentMessage(threadId, message, onEvent, { signal } = {}) {
+  const res = await fetch(`${BASE}/agent/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+    body: JSON.stringify({ threadId, message }),
+    signal,
+  });
+  if (!res.ok) return json(res);
+  if (!res.body) throw new Error('The browser did not provide a streaming response body');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  function consume(line) {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    onEvent?.(event);
+    if (event.type === 'error') throw new Error(event.message || 'Agent request failed');
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    let newline = buffer.indexOf('\n');
+    while (newline !== -1) {
+      consume(buffer.slice(0, newline));
+      buffer = buffer.slice(newline + 1);
+      newline = buffer.indexOf('\n');
+    }
+    if (done) break;
+  }
+  consume(buffer);
+}

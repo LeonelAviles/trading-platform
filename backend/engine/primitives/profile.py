@@ -87,3 +87,31 @@ class ProfileShape(Primitive):
             return 0.0
         pos = (poc - val) / (vah - val)
         return 1.0 if pos >= 0.66 else -1.0 if pos <= 0.34 else 0.0
+
+
+class _PriorVA(Primitive):
+    output, mirror = "level", "price"
+    idx = 0
+
+    def value(self, ctx):
+        if ctx.prior is None or not ctx.prior.profile:
+            return None
+        return value_area(ctx.prior.profile)[self.idx]
+
+
+@register
+class PriorDayPOC(_PriorVA):
+    """Point of control of the previous RTH session's volume profile."""
+    name, idx = "prior_day_poc", 0
+
+
+@register
+class PriorDayVAH(_PriorVA):
+    """Value-area high (70 % of volume around the POC) of the previous RTH session."""
+    name, idx, mirror_name = "prior_day_vah", 1, "prior_day_val"
+
+
+@register
+class PriorDayVAL(_PriorVA):
+    """Value-area low (70 % of volume around the POC) of the previous RTH session."""
+    name, idx, mirror_name = "prior_day_val", 2, "prior_day_vah"

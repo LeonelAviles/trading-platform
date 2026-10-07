@@ -1,7 +1,8 @@
 import pytest
+from datetime import timedelta
 
 from engine import expr as X
-from tests.helpers_bars import bar, make_ctx
+from tests.helpers_bars import D, bar, make_ctx
 
 
 def _eval_series(expr, closes, direction="long", deltas=None):
@@ -50,6 +51,27 @@ def test_cross_and_rising():
     assert _eval_series(e, [10, 11, 12, 11, 12, 13]) == [False, False, True, False, False, True]
     e = {"op": "falling", "args": [{"field": "close"}, 2]}
     assert _eval_series(e, [12, 11, 10])[-1] is True
+
+
+def test_first_below_is_rth_only_and_latches_for_the_session():
+    ctx = make_ctx()
+    ev = X.Evaluator({"op": "first_below", "args": [{"field": "low"}, 10]}, ctx)
+    inputs = [
+        bar(0, 10, 10.5, 9, 10, start="08:00"),
+        bar(0, 10.5, 11, 9.5, 10.25),
+        bar(1, 10.25, 11, 10.1, 10.5),
+        bar(2, 10.5, 10.75, 9.25, 9.5),
+        bar(0, 10.5, 11, 9.75, 10, d=D + timedelta(days=1)),
+    ]
+    out = []
+    for value in inputs:
+        ctx.on_bar(value)
+        ev.on_bar()
+        out.append(ev.eval())
+    assert out == [False, True, False, False, True]
+    assert X.mirror({"op": "first_above", "args": [{"field": "high"}, {"ind": "prior_day_high"}]}) == {
+        "op": "first_below", "args": [{"field": "low"}, {"ind": "prior_day_low"}],
+    }
 
 
 def test_held_touched_bars_since():

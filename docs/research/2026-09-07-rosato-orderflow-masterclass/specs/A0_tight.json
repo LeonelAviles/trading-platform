@@ -1,0 +1,140 @@
+{
+ "schemaVersion": 2,
+ "name": "Rosato A0 \u2014 balance-low touch & reclaim (no flow, control) + 3-day range \u2264 80 pts",
+ "description": "Control for the order-flow confirmations: bar touches the 2-day range low (\u00b11 pt) and closes back above it. Stop 2 pts beyond the session low, target 3R. Mirrored for shorts at the 2-day range high. Context filter: the previous 3 days span at most 80 points (tight balance).",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "1min",
+  "context": [
+   "1D"
+  ]
+ },
+ "direction": "both",
+ "session": {
+  "entryWindow": {
+   "start": "09:31",
+   "end": "15:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "touched",
+     "args": [
+      {
+       "ind": "lowest",
+       "params": {
+        "n": 2,
+        "exclude_current": false
+       },
+       "tf": "1D"
+      },
+      4,
+      0
+     ]
+    },
+    {
+     "op": "gt",
+     "args": [
+      {
+       "field": "close"
+      },
+      {
+       "ind": "lowest",
+       "params": {
+        "n": 2,
+        "exclude_current": false
+       },
+       "tf": "1D"
+      }
+     ]
+    }
+   ]
+  },
+  "sequence": [],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [
+  {
+   "op": "within_ticks",
+   "args": [
+    {
+     "ind": "highest",
+     "params": {
+      "n": 3,
+      "exclude_current": false
+     },
+     "tf": "1D"
+    },
+    {
+     "ind": "lowest",
+     "params": {
+      "n": 3,
+      "exclude_current": false
+     },
+     "tf": "1D"
+    },
+    320
+   ]
+  }
+ ],
+ "exit": {
+  "stop": {
+   "type": "structure",
+   "structure": "session_low",
+   "bufferTicks": 8,
+   "value": null,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 3.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 10,
+  "stopAfterConsecutiveLosses": 0,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "bars",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "rosato-balance-fade-2026-09-07",
+  "variant": "A0_tight"
+ }
+}

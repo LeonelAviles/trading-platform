@@ -1,0 +1,33 @@
+{
+ "trades": 43,
+ "net": -556.0,
+ "pf": 0.93,
+ "win%": 32.6,
+ "expR": -0.034,
+ "avg$": -12.9,
+ "maxDD$": 3070.0,
+ "exits": {
+  "stop": 28,
+  "target": 14,
+  "flatten": 1
+ },
+ "months": {
+  "2025-12": -1412.0,
+  "2026-01": -438.0,
+  "2026-02": -382.0,
+  "2026-03": 1676.0
+ },
+ "byDir": {
+  "long": [
+   43,
+   -556.0
+  ]
+ },
+ "medStopTicks": 20.0,
+ "avgBarsHeld": 17.3,
+ "sessions": 104,
+ "seconds": 7.1,
+ "variant": "B0_retest",
+ "window": "2025-12-01..2026-03-31",
+ "mode": "bars"
+}

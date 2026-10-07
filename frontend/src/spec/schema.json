@@ -17,7 +17,9 @@
     "prior_day_low",
     "or_high",
     "or_low",
-    "vwap"
+    "vwap",
+    "swing_high",
+    "swing_low"
   ],
   "operators": [
     "and",
@@ -27,6 +29,8 @@
     "cross_below",
     "eq",
     "falling",
+    "first_above",
+    "first_below",
     "gt",
     "gte",
     "held_above",
@@ -87,6 +91,26 @@
         }
       },
       "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Fraction of the last closed bar's volume initiated on `side` (bid = sellers, ask = buyers).",
+      "mirror": "none",
+      "name": "aggressor_share",
+      "output": "number",
+      "params": {
+        "side": {
+          "choices": [
+            "bid",
+            "ask"
+          ],
+          "default": "bid",
+          "doc": "bid (selling) | ask (buying)",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": false,
       "updateOn": "bar"
     },
     {
@@ -521,6 +545,32 @@
       "updateOn": "book"
     },
     {
+      "doc": "How much of the last confirmed swing leg price has retraced, signed. After an up-leg (the latest\nconfirmed swing is a high) it is (swing_high \u2212 close) / (swing_high \u2212 swing_low): 0 at the high, 1 back at\nthe low, > 1 beyond it. After a down-leg the same fraction is reported negative, so\n`between(x, 0.705, 0.886)` (a deep pullback into \"discount\" in an up-leg) mirrors to the down-leg reading\nfor shorts. None until both swings exist.",
+      "mirror": "signed",
+      "name": "leg_retracement",
+      "output": "number",
+      "params": {
+        "n": {
+          "default": 3,
+          "doc": "bars on each side of a swing",
+          "required": false,
+          "type": "int"
+        },
+        "price": {
+          "choices": [
+            "close",
+            "extreme"
+          ],
+          "default": "close",
+          "doc": "close | extreme (the bar's low in an up-leg, its high in a down-leg \u2014 the wick that probes the zone)",
+          "required": false,
+          "type": "str"
+        }
+      },
+      "tfCapable": true,
+      "updateOn": "bar"
+    },
+    {
       "doc": "Low of the last closed bar (on `tf`).",
       "mirror": "price",
       "name": "low",
@@ -649,6 +699,42 @@
       "mirror": "price",
       "name": "prior_day_low",
       "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Point of control of the previous RTH session's volume profile.",
+      "mirror": "price",
+      "name": "prior_day_poc",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Value-area high (70 % of volume around the POC) of the previous RTH session.",
+      "mirror": "price",
+      "name": "prior_day_vah",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Value-area low (70 % of volume around the POC) of the previous RTH session.",
+      "mirror": "price",
+      "name": "prior_day_val",
+      "output": "level",
+      "params": {},
+      "tfCapable": false,
+      "updateOn": "bar"
+    },
+    {
+      "doc": "Previous RTH session's close-to-close direction: 1 up, -1 down, 0 unchanged.\n\nCompares the previous session close with the RTH close two completed\nsessions ago. Its signed mirror makes a `direction: both` continuation\nfilter (`prior_session_direction > 0`) become `< 0` for short entries.",
+      "mirror": "signed",
+      "name": "prior_session_direction",
+      "output": "number",
       "params": {},
       "tfCapable": false,
       "updateOn": "bar"
@@ -1162,8 +1248,11 @@
             "title": "Sourceid"
           },
           "type": {
-            "const": "manual",
             "default": "manual",
+            "enum": [
+              "manual",
+              "agent"
+            ],
             "title": "Type",
             "type": "string"
           }
@@ -1478,7 +1567,9 @@
                   "prior_day_low",
                   "or_high",
                   "or_low",
-                  "vwap"
+                  "vwap",
+                  "swing_high",
+                  "swing_low"
                 ],
                 "type": "string"
               },
@@ -1745,6 +1836,8 @@
       "cross_below",
       "eq",
       "falling",
+      "first_above",
+      "first_below",
       "gt",
       "gte",
       "held_above",

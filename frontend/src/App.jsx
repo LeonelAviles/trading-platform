@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { HeaderSlotContext } from './headerSlot';
 import Sidebar from './components/Sidebar';
-import DeskPage from './pages/DeskPage';
-import StrategiesPage from './pages/StrategiesPage';
-import StrategyPage from './pages/StrategyPage';
-import BacktestsPage from './pages/BacktestsPage';
-import CandlestickPage from './pages/CandlestickPage';
-import SettingsPage from './pages/SettingsPage';
+
+const DeskPage = lazy(() => import('./pages/DeskPage'));
+const StrategiesPage = lazy(() => import('./pages/StrategiesPage'));
+const StrategyPage = lazy(() => import('./pages/StrategyPage'));
+const BacktestsPage = lazy(() => import('./pages/BacktestsPage'));
+const CandlestickPage = lazy(() => import('./pages/CandlestickPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const AgentPage = lazy(() => import('./pages/AgentPage'));
 
 const CHART_ROUTES = ['/review/'];
 
@@ -20,6 +22,7 @@ function readPref() {
 export default function App() {
   const { pathname } = useLocation();
   const onChart = CHART_ROUTES.some((p) => pathname.startsWith(p));
+  const showRouteBar = onChart || pathname === '/agent';
   const [pref, setPref] = useState(readPref);
   const collapsed = onChart || pref;
   const [leadingSlot, setLeadingSlot] = useState(null);
@@ -34,23 +37,28 @@ export default function App() {
     <div className="app-shell">
       <Sidebar collapsed={collapsed} onToggle={() => setPref((p) => (onChart ? false : !p))} />
       <div className="app">
-        <header className="app-header">
-          <div className="hdr-leading" ref={setLeadingSlot} />
-          <div className="hdr-slot" ref={setSlot} />
-          <div className="hdr-trailing" ref={setTrailingSlot} />
-        </header>
+        {showRouteBar && (
+          <header className="app-header">
+            <div className="hdr-leading" ref={setLeadingSlot} />
+            <div className="hdr-slot" ref={setSlot} />
+            <div className="hdr-trailing" ref={setTrailingSlot} />
+          </header>
+        )}
         <div className="app-body">
           <HeaderSlotContext.Provider value={{ leading: leadingSlot, main: slot, trailing: trailingSlot }}>
-            <Routes>
-              <Route path="/" element={<DeskPage />} />
-              <Route path="/strategies" element={<StrategiesPage />} />
-              <Route path="/strategies/:strategyId" element={<StrategyPage />} />
-              <Route path="/backtests" element={<BacktestsPage />} />
-              <Route path="/review" element={<Navigate to="/backtests" replace />} />
-              <Route path="/review/:backtestId" element={<CandlestickPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            <Suspense fallback={<div className="route-loading"><span /><span /><span /></div>}>
+              <Routes>
+                <Route path="/" element={<DeskPage />} />
+                <Route path="/strategies" element={<StrategiesPage />} />
+                <Route path="/strategies/:strategyId" element={<StrategyPage />} />
+                <Route path="/backtests" element={<BacktestsPage />} />
+                <Route path="/agent" element={<AgentPage />} />
+                <Route path="/review" element={<Navigate to="/backtests" replace />} />
+                <Route path="/review/:backtestId" element={<CandlestickPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
           </HeaderSlotContext.Provider>
         </div>
       </div>

@@ -1,0 +1,37 @@
+{
+ "trades": 52,
+ "net": -8072.0,
+ "pf": 0.5,
+ "win%": 26.9,
+ "expR": -0.2,
+ "avg$": -155.2,
+ "maxDD$": 10462.0,
+ "exits": {
+  "target": 9,
+  "flatten": 9,
+  "stop": 34
+ },
+ "months": {
+  "2026-04": -2764.0,
+  "2026-05": -5305.0,
+  "2026-06": -1902.0,
+  "2026-07": 1900.0
+ },
+ "byDir": {
+  "long": [
+   19,
+   -1773.0
+  ],
+  "short": [
+   33,
+   -6298.0
+  ]
+ },
+ "medStopTicks": 37.0,
+ "avgBarsHeld": 59.3,
+ "sessions": 105,
+ "seconds": 10.3,
+ "variant": "A1_tgt_sesshigh",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "bars"
+}

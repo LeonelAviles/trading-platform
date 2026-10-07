@@ -1,15 +1,50 @@
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { fetchDesk, strategyPackageUrl } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
-import LineageTree from '../components/LineageTree';
 import { PageHeader, StatTile } from '../components/ui';
 
 function pct(v) { return v == null ? '—' : `${Number(v).toFixed(1)}%`; }
 function num(v, d = 2) { return v == null ? '—' : Number(v).toFixed(d); }
-function gb(bytes) { return `${(bytes / 1e9).toFixed(2)} GB`; }
 function mb(bytes) { return `${(bytes / 1e6).toFixed(0)} MB`; }
+
+function flattenTree(node) {
+  if (!node) return [];
+  return [node, ...(node.children || []).flatMap(flattenTree)];
+}
+
+function ResearchSummary({ lineage }) {
+  const versions = flattenTree(lineage.tree);
+  const candidate = versions.find((node) => node.status === 'candidate')
+    || versions.find((node) => node.id === lineage.champion)
+    || lineage.tree;
+  const verdict = candidate?.verdict;
+  const trades = verdict?.trades || 0;
+  const minimum = Number((verdict?.failures?.[0] || '').match(/minimum (\d+)/)?.[1]) || 100;
+  const progress = Math.min(100, (trades / minimum) * 100);
+  const family = lineage.name?.split(' — ')[0] || 'Strategy idea';
+
+  return (
+    <article className="desk-research-summary">
+      <header>
+        <div><span>Strategy idea</span><strong>{family}</strong></div>
+        <span className={`desk-research-state ${verdict?.status || 'pending'}`}>{verdict?.untestable ? 'Needs more history' : verdict?.status === 'pass' ? 'Passed checks' : verdict?.status || 'Not tested'}</span>
+      </header>
+      <div className="desk-research-metrics">
+        <div><span>Versions compared</span><strong>{lineage.nodes}</strong></div>
+        <div><span>Profit per $1 lost</span><strong>{verdict?.profitFactor != null ? `$${verdict.profitFactor.toFixed(2)}` : '—'}</strong></div>
+        <div><span>Average result per trade</span><strong>{verdict?.expectancyR != null ? `${verdict.expectancyR > 0 ? '+' : ''}${verdict.expectancyR.toFixed(2)} × risk` : '—'}</strong></div>
+      </div>
+      <div className="desk-evidence-progress">
+        <div><span>Evidence collected</span><strong>{trades} of {minimum} trades</strong></div>
+        <div className="desk-evidence-track"><span style={{ width: `${progress}%` }} /></div>
+        <p>{trades < minimum ? `The platform needs at least ${minimum - trades} more qualifying trades before it can make a reliable decision.` : 'There is enough trade history for the platform to apply its validation checks.'}</p>
+      </div>
+      <Link to={`/strategies/${candidate.id}?tab=lineage`} className="desk-research-link">Open this strategy’s experiment history <span>→</span></Link>
+    </article>
+  );
+}
 
 function Tile({ title, sub, children, extra, className = '' }) {
   return (
@@ -31,18 +66,28 @@ function CandidateCard({ c }) {
   return (
     <li className="desk-candidate">
       <div className="desk-candidate-head">
-        <Link to={`/strategies/${c.id}`} className="desk-candidate-name">{c.name}</Link>
-        <span className={`review-chip status-${c.status}`}>{c.status}</span>
-        {v && <span className={`review-chip verdict ${v.status}`} title={(v.failures || []).join('\n')}>{v.status}</span>}
+        <div className="desk-candidate-identity">
+          <span className="desk-candidate-symbol">{c.symbol || 'ES'}</span>
+          <div>
+            <Link to={`/strategies/${c.id}`} className="desk-candidate-name">{c.name}</Link>
+            <div className="desk-candidate-badges">
+              <span className={`review-chip status-${c.status}`}>{c.status}</span>
+              {v && <span className={`review-chip verdict ${v.status}`} title={(v.failures || []).join('\n')}>{v.status}</span>}
+            </div>
+          </div>
+        </div>
+        <Link to={`/strategies/${c.id}`} className="desk-open-link">Open dossier <span>→</span></Link>
       </div>
       <div className="desk-candidate-stats">
-        <span>IS {c.inSample?.trades ?? '—'} trades · PF {num(c.inSample?.profitFactor)} · {c.inSample?.expectancyR != null ? `${Number(c.inSample.expectancyR).toFixed(2)} R` : '—'}</span>
-        <span>MC DD95 {pct(c.monteCarloDd95Pct)}</span>
-        <span>WF {c.walkForwardPositive}/{c.walkForwardWindows} positive</span>
+        <div><span>Profit factor</span><b>{num(c.inSample?.profitFactor)}</b></div>
+        <div><span>Expectancy</span><b>{c.inSample?.expectancyR != null ? `${Number(c.inSample.expectancyR).toFixed(2)} R` : '—'}</b></div>
+        <div><span>IS trades</span><b>{c.inSample?.trades ?? '—'}</b></div>
+        <div><span>MC drawdown 95</span><b>{pct(c.monteCarloDd95Pct)}</b></div>
+        <div><span>WF positive</span><b>{c.walkForwardPositive}/{c.walkForwardWindows}</b></div>
       </div>
       {c.regimeNotes?.length > 0 && <div className="desk-candidate-regimes muted">{c.regimeNotes.join(' · ')}</div>}
       <div className="desk-candidate-actions">
-        <a className="btn btn-sm" href={strategyPackageUrl(c.id)} download>Package</a>
+        <a className="desk-package-link" href={strategyPackageUrl(c.id)} download>Download evidence package</a>
       </div>
     </li>
   );
@@ -51,6 +96,7 @@ function CandidateCard({ c }) {
 // `/` — the desk (PLATFORM-SPEC.md Phase 7): what is worth trading, what is
 // being tested, and what data is on disk. One read of /api/desk; refreshes every 20 s while open.
 export default function DeskPage() {
+  const navigate = useNavigate();
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
   const [desk, setDesk] = useState(null);
   const [error, setError] = useState('');
@@ -74,17 +120,18 @@ export default function DeskPage() {
   const testing = desk?.testing || {};
 
   return (
-    <div className="page review-page desk-page">
+    <div className="page workspace-page desk-page">
       {leadingSlot && createPortal(<div className="hdr-title">Desk</div>, leadingSlot)}
       <div className="page-scroll"><div className="page-inner wide">
         <PageHeader
-          title="Desk"
-          subtitle="What is worth attention today: candidates, what is testing and the data on disk."
+          eyebrow="Research operations"
+          title="Trading desk"
+          subtitle="A live view of strategy readiness, active validation, and market-data health."
         />
         {desk && (
           <div className="stat-row">
             <StatTile label="Strategies" value={desk.strategies.total} sub={Object.entries(desk.strategies.byStatus).map(([k, n]) => `${n} ${k.replace('_', ' ')}`).join(' · ') || 'none yet'} to="/strategies" />
-            <StatTile label="Candidates" value={desk.candidates.length} sub={desk.candidates.length ? 'passed validation' : 'none passed validation yet'} tone={desk.candidates.length ? 'good' : ''} to="/strategies?status=candidate" />
+            <StatTile label="Candidates" value={desk.candidates.length} sub={desk.candidates.length ? 'promoted for review' : 'none promoted yet'} tone={desk.candidates.length ? 'good' : ''} to="/strategies?status=candidate" />
             <StatTile label="Testing now" value={testing.backtests?.length || 0} sub={`${testing.backtests?.length || 0} backtest${testing.backtests?.length === 1 ? '' : 's'} running`} to="/backtests" />
             <StatTile label="Sessions on disk" value={Object.values(roots).reduce((a, r) => a + (r.sessions || 0), 0)} sub={Object.entries(roots).map(([k, r]) => `${k} ${r.first?.slice(5)} → ${r.last?.slice(5)}`).join(' · ') || 'no data'} to="/settings" />
           </div>
@@ -96,8 +143,8 @@ export default function DeskPage() {
           <div className="desk-grid">
             <Tile
               title="Candidates"
-              sub={`${desk.candidates.length} candidate${desk.candidates.length === 1 ? '' : 's'} · ${desk.strategies.total} strategies (${Object.entries(desk.strategies.byStatus).map(([k, n]) => `${n} ${k}`).join(', ') || 'none'})`}
-              className="desk-tile-wide"
+              sub={`${desk.candidates.length} promoted for review · ${desk.strategies.total} total strategies`}
+              className="desk-tile-candidates"
             >
               {desk.candidates.length === 0 ? (
                 <div className="review-card-empty">Nothing at candidate status yet. A strategy becomes a candidate when its validation passes — or when you set it so on its page.</div>
@@ -108,8 +155,24 @@ export default function DeskPage() {
               )}
             </Tile>
 
-            <Tile title="Testing" sub={`${testing.backtests?.length || 0} backtest(s) running`} className="desk-tile-wide">
-              {testing.backtests?.length === 0 && <div className="review-card-empty">Nothing running. Start a backtest from Strategies or Backtests.</div>}
+            <Tile title="Testing now" sub={`${testing.backtests?.length || 0} active backtest${testing.backtests?.length === 1 ? '' : 's'}`} className="desk-tile-testing">
+              {testing.backtests?.length === 0 && (
+                <div className="desk-testing-idle">
+                  <div className="desk-queue-clear"><span />Compute queue clear</div>
+                  <div className="desk-recent-label">Recent completions</div>
+                  <ul className="review-run-list">
+                    {(testing.recentBacktests || []).slice(0, 4).map((b) => (
+                      <li key={b.id} className="review-run">
+                        <button className="review-run-open" onClick={() => navigate(`/review/${b.id}`)}>
+                          <span className="review-run-tf">{(b.windowKind || 'full').toUpperCase()}</span>
+                          <span className="desk-recent-name">{b.strategyName || b.strategyId}</span>
+                          <span className={`desk-recent-pnl ${(b.summary?.totalPnl || 0) >= 0 ? 'pos' : 'neg'}`}>{b.summary ? `${b.summary.totalPnl >= 0 ? '+' : ''}$${Number(b.summary.totalPnl).toLocaleString()}` : 'Done'}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {testing.backtests?.length > 0 && (
                 <ul className="review-run-list">
                   {testing.backtests.map((b) => (
@@ -126,44 +189,40 @@ export default function DeskPage() {
               )}
             </Tile>
 
-            <Tile title="Data coverage" sub={cov.sizes ? `${mb(Object.values(cov.sizes).reduce((a, b) => a + (b || 0), 0))} on disk` : ''} className="desk-tile-wide">
+            <Tile title="Market data" sub="The historical information available for backtesting" className="desk-tile-data">
               {cov.error && <div className="review-error">{cov.error}</div>}
               {Object.keys(roots).length === 0 ? (
                 <div className="review-card-empty">No ingested data — drop Databento files under market-data/ and run <code>make ingest</code>.</div>
               ) : (
-                <table className="desk-table">
-                  <thead><tr><th>Root</th><th>Sessions</th><th>Range</th><th>In-sample</th><th>Raw files</th><th>Archived</th></tr></thead>
-                  <tbody>
-                    {Object.entries(roots).map(([root, r]) => (
-                      <tr key={root}>
-                        <td><b>{root}</b></td>
-                        <td>{r.sessions}</td>
-                        <td>{r.first} → {r.last}</td>
-                        <td>{r.inSample ? `${r.inSample[0]} → ${r.inSample[1]} (${r.inSampleSessions})` : '—'}</td>
-                        <td>{r.rawFiles}</td>
-                        <td>{r.archived}/{r.rawFiles}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="desk-market-list">
+                  {Object.entries(roots).map(([root, r]) => {
+                    const ready = r.sessions > 0 && r.rawFiles > 0 && r.archived === r.rawFiles;
+                    return (
+                      <article className="desk-market-summary" key={root}>
+                        <div className="desk-market-head">
+                          <span className="desk-market-symbol">{root}</span>
+                          <div><strong>{root} historical data is available</strong><span>{r.sessions} trading sessions · {r.first} through {r.last}</span></div>
+                          <span className={`desk-data-ready ${ready ? '' : 'warning'}`}><i />{ready ? 'Ready' : 'Check data'}</span>
+                        </div>
+                        <div className="desk-market-facts">
+                          <div><span>Trading days</span><strong>{r.sessions}</strong></div>
+                          <div><span>Original files saved</span><strong>{r.archived} of {r.rawFiles}</strong></div>
+                          <div><span>Fast replay ready</span><strong>{(cov.replayCache || []).filter((c) => c.root === root).length} days</strong></div>
+                          <div><span>Storage used</span><strong>{mb(Object.values(cov.sizes || {}).reduce((a, b) => a + (b || 0), 0))}</strong></div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
               )}
-              <div className="desk-cache">
-                <span className="muted">Replay cache: {cov.replayCache?.length || 0} day(s), {gb(cov.sizes?.replayCache || 0)} of {cov.replayCacheMaxGb ?? '—'} GB</span>
-                {cov.replayCache?.length > 0 && (
-                  <span className="desk-cache-days">
-                    {cov.replayCache.map((c) => <span key={`${c.root}-${c.date}`} className="review-chip">{c.root} {c.date} · {mb(c.bytes)}</span>)}
-                  </span>
-                )}
-              </div>
+              <Link to="/settings" className="desk-card-link">View and manage market data <span>→</span></Link>
             </Tile>
 
-            <Tile title="Lineage" sub={`${desk.lineage.length} tree(s) — ★ marks the champion`} className="desk-tile-wide">
+            <Tile title="Strategy experiments" sub="Which ideas were tested and whether there is enough evidence" className="desk-tile-lineage">
               {desk.lineage.length === 0 ? (
-                <div className="review-card-empty">No lineages yet — save a variant with `lineage.parentId` to start one.</div>
+                <div className="review-card-empty">No strategy experiments yet.</div>
               ) : desk.lineage.map((l) => (
-                <div key={l.rootId} className="desk-lineage">
-                  <LineageTree lineage={{ tree: l.tree, champion: l.champion, rootId: l.rootId }} />
-                </div>
+                <ResearchSummary key={l.rootId} lineage={l} />
               ))}
             </Tile>
           </div>

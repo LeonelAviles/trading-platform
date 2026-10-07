@@ -54,6 +54,19 @@ def test_windows_from_splits(store):
         validation.window_for("ES", "bogus")
 
 
+def test_full_window_spans_earlier_oos_and_later_is(store):
+    split_path = store["paths"].splits
+    original = json.loads(split_path.read_text())
+    changed = json.loads(split_path.read_text())
+    changed["roots"]["ES"]["inSample"] = ["2026-06-17", "2026-06-18", "2026-06-19"]
+    changed["roots"]["ES"]["outOfSample"] = ["2026-06-15", "2026-06-16"]
+    split_path.write_text(json.dumps(changed))
+    try:
+        assert validation.windows("ES")["full"] == ("2026-06-15", "2026-06-19")
+    finally:
+        split_path.write_text(json.dumps(original))
+
+
 STRATEGY = {
     "id": "abc123abc123", "name": "open-close test", "instrument": {"symbol": "ES1!"},
     "timeframes": {"primary": "1min"},
@@ -74,13 +87,39 @@ def test_job_lifecycle_and_analytics(store):
     assert len(job["trades"]) == 5 and all("pnlUsd" in t for t in job["trades"])
     assert (jobs.JOBS_DIR / job["id"] / "trades.json").exists()
     assert (jobs.JOBS_DIR / job["id"] / "worker.log").exists()
+    assert (jobs.JOBS_DIR / job["id"] / "progress.json").exists()
+    assert job["progress"]["sessionsCompleted"] == job["progress"]["sessionsTotal"] == 5
+    assert job["progress"]["percent"] == 100.0 and job["progress"]["tradeCount"] == 5
     stats = jobs.strategy_analytics(job)
     assert stats["trades"] == 5 and stats["sessions"] == 5 and stats["sessionsTraded"] == 5
     assert set(stats["byRegime"]) and stats["byHour"][0]["hourEt"] == 9
     assert job["metrics"]["trades"] == 5 and "sharpe" in job["metrics"]
     listed = jobs.list_jobs()
     assert listed[0]["id"] == job["id"] and "trades" not in listed[0]
+    assert "liveTrades" not in listed[0]["progress"]
     assert jobs.get_job("nope") is None
+
+
+def test_running_job_exposes_live_progress_and_trades(store):
+    job = jobs.create_job(STRATEGY, window_kind="wf1")
+    live_trade = {
+        "entryTime": 1, "exitTime": 2, "entryPrice": 6000, "exitPrice": 6001,
+        "direction": "long", "pnlUsd": 50, "pnl": 50,
+    }
+    (jobs.JOBS_DIR / job["id"] / "progress.json").write_text(json.dumps({
+        "sessionsCompleted": 1, "sessionsTotal": 2, "percent": 50.0,
+        "currentDate": "2026-06-16", "tradeCount": 1, "liveTrades": [live_trade],
+    }))
+    with database.session_scope() as db:
+        from models import Backtest
+        db.get(Backtest, job["id"]).status = "running"
+
+    detail = jobs.get_job(job["id"])
+    assert detail["progress"]["percent"] == 50.0
+    assert len(detail["trades"]) == 1 and detail["trades"][0]["pnlUsd"] == 50
+    listed = next(j for j in jobs.list_jobs() if j["id"] == job["id"])
+    assert listed["progress"]["tradeCount"] == 1 and "liveTrades" not in listed["progress"]
+    jobs.delete_job(job["id"])
 
 
 def test_validation_runs_is_and_wf_only(store):
@@ -122,3 +161,23 @@ def test_delete_job(store):
     job = jobs.run_sync(STRATEGY, window_kind="wf1", timeout_s=300)
     assert jobs.delete_job(job["id"]) and not jobs.delete_job(job["id"])
     assert not (jobs.JOBS_DIR / job["id"]).exists()
+
+
+def test_recovery_finalizes_artifact_and_resumes_queue(store, monkeypatch):
+    completed = jobs.create_job(STRATEGY, window_kind="wf1")
+    queued = jobs.create_job(STRATEGY, window_kind="wf2")
+    completed_dir = jobs.JOBS_DIR / completed["id"]
+    (completed_dir / "trades.json").write_text(json.dumps({
+        "trades": [], "dailyReturns": [], "summary": {"trades": 0}, "meta": {},
+    }))
+    with database.session_scope() as db:
+        from models import Backtest
+        db.get(Backtest, completed["id"]).status = "running"
+
+    started = []
+    monkeypatch.setattr(jobs, "start", lambda job_id: started.append(job_id))
+    recovered = jobs.recover_pending_jobs()
+
+    assert jobs.get_job(completed["id"])["status"] == "done"
+    assert started == [queued["id"]]
+    assert recovered == {"recovered": 1, "resumed": 1, "adopted": 0}

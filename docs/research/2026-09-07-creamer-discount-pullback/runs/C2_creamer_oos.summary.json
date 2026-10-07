@@ -1,0 +1,35 @@
+{
+ "trades": 6,
+ "net": 1636.0,
+ "pf": 2.54,
+ "win%": 50.0,
+ "expR": 0.413,
+ "avg$": 272.6,
+ "maxDD$": 1064.0,
+ "exits": {
+  "target": 3,
+  "stop": 3
+ },
+ "months": {
+  "2026-01": -830.0,
+  "2026-02": 1633.0,
+  "2026-03": 833.0
+ },
+ "byDir": {
+  "long": [
+   4,
+   2332.0
+  ],
+  "short": [
+   2,
+   -696.0
+  ]
+ },
+ "medStopTicks": 33.0,
+ "avgBarsHeld": 6.7,
+ "sessions": 104,
+ "seconds": 9.6,
+ "variant": "C2_creamer",
+ "window": "2025-12-01..2026-03-31",
+ "mode": "bars"
+}

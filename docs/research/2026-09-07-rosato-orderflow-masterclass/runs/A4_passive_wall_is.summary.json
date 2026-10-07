@@ -1,0 +1,37 @@
+{
+ "trades": 37,
+ "net": 684.0,
+ "pf": 1.07,
+ "win%": 29.7,
+ "expR": 0.013,
+ "avg$": 18.5,
+ "maxDD$": 2206.0,
+ "exits": {
+  "flatten": 9,
+  "target": 7,
+  "stop": 21
+ },
+ "months": {
+  "2026-04": 872.0,
+  "2026-05": -468.0,
+  "2026-06": 1086.0,
+  "2026-07": -806.0
+ },
+ "byDir": {
+  "short": [
+   27,
+   254.0
+  ],
+  "long": [
+   10,
+   430.0
+  ]
+ },
+ "medStopTicks": 31.0,
+ "avgBarsHeld": 81.5,
+ "sessions": 105,
+ "seconds": 467.7,
+ "variant": "A4_passive_wall",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "ticks"
+}

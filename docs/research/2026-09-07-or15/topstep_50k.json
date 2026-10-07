@@ -1,0 +1,48 @@
+{
+  "provider": "Topstep",
+  "plan": "50K Trading Combine on TopstepX, default optional-DLL not selected",
+  "verified_date": "2026-09-07",
+  "status": "research benchmark, not connected to any account",
+  "starting_balance_usd": 50000,
+  "profit_target_usd": 3000,
+  "drawdown_usd": 2000,
+  "drawdown_update": "highest end-of-day balance",
+  "drawdown_enforcement": "intraday including unrealized losses; touching fails",
+  "drawdown_floor_cap_net_usd": 0,
+  "best_day_max_fraction": 0.5,
+  "minimum_trading_days": 2,
+  "max_mini_contracts": 5,
+  "max_micro_contracts": 50,
+  "required_daily_loss_limit_usd": null,
+  "optional_purchase_daily_loss_limit_usd": 1000,
+  "time_limit_days": null,
+  "flat_by": "15:10 America/Chicago, or earlier product/holiday close",
+  "round_trip_commission_usd": {"ES": 3.78, "MES": 1.22},
+  "automation": {
+    "allowed": true,
+    "route": "TopstepX / ProjectX API",
+    "order_origin": "personal device; no VPS, VPN or remote order execution",
+    "hft_allowed": false,
+    "separate_api_subscription": true
+  },
+  "research_sizing": {
+    "risk_budgets_usd": [100, 150, 200],
+    "max_fraction_of_remaining_drawdown": 0.1,
+    "minimum_remaining_drawdown_usd": 250,
+    "round_down_contracts": true,
+    "skip_if_one_contract_exceeds_budget": true,
+    "max_trades_per_day": 1,
+    "strategy_flatten": "15:58 America/New_York",
+    "micro_execution_status": "ES-price proxy only; MES tape not available locally"
+  },
+  "sources": {
+    "automation": "https://help.topstep.com/en/articles/11187768-topstepx-api-access",
+    "parameters": "https://help.topstep.com/en/articles/8284197-trading-combine-parameters",
+    "drawdown": "https://help.topstep.com/en/articles/8284204-what-is-the-maximum-loss-limit",
+    "consistency": "https://help.topstep.com/en/articles/8284208-consistency-at-topstep",
+    "daily_loss": "https://help.topstep.com/en/articles/10490293-daily-loss-limit-in-the-trading-combine-and-express-funded-account",
+    "hours": "https://help.topstep.com/en/articles/8284206-when-and-what-products-can-i-trade",
+    "time_limit": "https://help.topstep.com/en/articles/8284121-trading-combine-subscriptions",
+    "commissions": "https://help.topstep.com/en/articles/8284213-topstepx-commissions-and-fees"
+  }
+}

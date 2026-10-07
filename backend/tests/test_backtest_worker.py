@@ -67,7 +67,8 @@ def _hand_pnl(tape, d, contracts=1):
 
 
 def test_ticks_mode_matches_hand_computed_pnl(store):
-    res = run_backtest(_spec(), DAYS[0], DAYS[-1], "ticks")
+    progress = []
+    res = run_backtest(_spec(), DAYS[0], DAYS[-1], "ticks", progress=progress.append)
     trades = res["trades"]
     assert len(trades) == 3 and res["meta"]["sessions"] == 3
     for t, d in zip(trades, DAYS):
@@ -85,6 +86,9 @@ def test_ticks_mode_matches_hand_computed_pnl(store):
     daily = res["dailyReturns"]
     assert [d_["date"] for d_ in daily] == [d.isoformat() for d in DAYS]
     assert sum(d_["pnlUsd"] for d_ in daily) == pytest.approx(res["summary"]["totalPnl"], abs=0.01)
+    assert progress[0]["sessionsCompleted"] == 0
+    assert progress[-1]["sessionsCompleted"] == progress[-1]["sessionsTotal"] == 3
+    assert progress[-1]["currentTime"] is not None and progress[-1]["barsProcessed"] > 0
 
 
 def test_bars_mode_agrees_within_slippage(store):

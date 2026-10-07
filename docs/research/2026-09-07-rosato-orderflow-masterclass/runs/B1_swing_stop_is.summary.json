@@ -1,0 +1,33 @@
+{
+ "trades": 35,
+ "net": -1245.0,
+ "pf": 0.9,
+ "win%": 40.0,
+ "expR": 0.108,
+ "avg$": -35.6,
+ "maxDD$": 4252.0,
+ "exits": {
+  "stop": 18,
+  "target": 6,
+  "flatten": 11
+ },
+ "months": {
+  "2026-04": -148.0,
+  "2026-05": 1476.0,
+  "2026-06": -356.0,
+  "2026-07": -2216.0
+ },
+ "byDir": {
+  "long": [
+   35,
+   -1245.0
+  ]
+ },
+ "medStopTicks": 46.0,
+ "avgBarsHeld": 135.4,
+ "sessions": 105,
+ "seconds": 6.9,
+ "variant": "B1_swing_stop",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "bars"
+}

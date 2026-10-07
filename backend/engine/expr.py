@@ -26,14 +26,16 @@ from engine.primitives.base import get_class
 FIELDS = ("open", "high", "low", "close", "volume", "delta")
 COMPARE_OPS = {"gt", "gte", "lt", "lte", "eq"}
 LOGIC_OPS = {"and", "or", "not"}
-STATEFUL_OPS = {"cross_above", "cross_below", "rising", "falling", "touched", "held_above", "held_below", "bars_since", "retest"}
+STATEFUL_OPS = {"cross_above", "cross_below", "first_above", "first_below", "rising", "falling", "touched", "held_above", "held_below", "bars_since", "retest"}
 OTHER_OPS = {"between", "within_ticks"}
 OPS = COMPARE_OPS | LOGIC_OPS | STATEFUL_OPS | OTHER_OPS
 ARITY = {"and": (2, None), "or": (2, None), "not": (1, 1), "gt": (2, 2), "gte": (2, 2), "lt": (2, 2), "lte": (2, 2),
          "eq": (2, 2), "between": (3, 3), "cross_above": (2, 2), "cross_below": (2, 2), "rising": (2, 2),
+         "first_above": (2, 2), "first_below": (2, 2),
          "falling": (2, 2), "within_ticks": (3, 3), "touched": (3, 3), "held_above": (2, 2), "held_below": (2, 2),
          "bars_since": (1, 1), "retest": (3, 3)}
 _MIRROR_OP = {"gt": "lt", "lt": "gt", "gte": "lte", "lte": "gte", "cross_above": "cross_below", "cross_below": "cross_above",
+              "first_above": "first_below", "first_below": "first_above",
               "rising": "falling", "falling": "rising", "held_above": "held_below", "held_below": "held_above"}
 _MIRROR_FIELD = {"high": "low", "low": "high"}
 
@@ -147,7 +149,7 @@ def mirror(e):
             out["params"] = params
         return out
     op, args = e["op"], e.get("args", [])
-    if op in COMPARE_OPS or op in ("cross_above", "cross_below", "rising", "falling", "held_above", "held_below"):
+    if op in COMPARE_OPS or op in ("cross_above", "cross_below", "first_above", "first_below", "rising", "falling", "held_above", "held_below"):
         kinds = [_mirror_kind(a) for a in args[:2]]
         directional = any(k in ("price", "signed", "rsi") for k in kinds)
         new_args = [_mirror_arg(a, kinds) for a in args[:2]] + [mirror(a) for a in args[2:]]
@@ -255,6 +257,19 @@ class Op(Node):
         op = self.op
         if op in ("cross_above", "cross_below", "rising", "falling"):
             self.hist.append((self.args[0].eval(), self.args[1].eval() if op.startswith("cross") else None))
+        elif op in ("first_above", "first_below"):
+            session_key = self.ctx.session.date if self.ctx.session else None
+            if self.state.get("session") != session_key:
+                self.state = {"session": session_key, "used": False, "fire": False}
+            else:
+                self.state["fire"] = False
+            if not self.ctx.in_rth() or self.state["used"]:
+                return
+            a, b = self.args[0].eval(), self.args[1].eval()
+            breached = a is not None and b is not None and (a > b if op == "first_above" else a < b)
+            if breached:
+                self.state["used"] = True
+                self.state["fire"] = True
         elif op in ("held_above", "held_below"):
             lvl, x = self.args[0].eval(), self.ctx.bar
             if x is None or lvl is None:
@@ -344,6 +359,8 @@ class Op(Node):
             if None in (a0, b0, a1, b1):
                 return False
             return (a0 <= b0 and a1 > b1) if op == "cross_above" else (a0 >= b0 and a1 < b1)
+        if op in ("first_above", "first_below"):
+            return bool(self.state.get("fire"))
         if op in ("rising", "falling"):
             n = int(self.args[1].eval())
             vals = [h[0] for h in list(self.hist)[-(n + 1):]]

@@ -1,0 +1,136 @@
+{
+ "schemaVersion": 2,
+ "name": "Rosato A4 \u2014 balance-low touch with resting bid wall",
+ "description": "Touch-and-reclaim of the 2-day range low with a resting bid of \u2265 100 contracts within 8 ticks of price on the 1-second liquidity view (his heat-map 'passive buyer filling at the level'). Ticks mode.",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "1min",
+  "context": [
+   "1D"
+  ]
+ },
+ "direction": "both",
+ "session": {
+  "entryWindow": {
+   "start": "09:31",
+   "end": "15:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "and",
+     "args": [
+      {
+       "op": "touched",
+       "args": [
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        },
+        4,
+        0
+       ]
+      },
+      {
+       "op": "gt",
+       "args": [
+        {
+         "field": "close"
+        },
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "op": "gt",
+     "args": [
+      {
+       "ind": "large_resting_size_near",
+       "params": {
+        "side": "bid",
+        "min_size": 100,
+        "within_ticks": 8
+       }
+      },
+      0
+     ]
+    }
+   ]
+  },
+  "sequence": [],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [],
+ "exit": {
+  "stop": {
+   "type": "structure",
+   "structure": "session_low",
+   "bufferTicks": 8,
+   "value": null,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 3.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 10,
+  "stopAfterConsecutiveLosses": 0,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "ticks",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "rosato-balance-fade-2026-09-07",
+  "variant": "A4_passive_wall"
+ }
+}

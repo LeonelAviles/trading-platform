@@ -1,0 +1,131 @@
+{
+ "schemaVersion": 2,
+ "name": "Rosato A1 \u2014 target 2R",
+ "description": "Carmine Rosato's core confirmation: heavy aggressive selling into the level (bar delta \u2264 \u2212300, ~p75) that fails to push price through \u2014 the bar closes back above the 2-day range low. Stop 2 pts beyond session low, 3R target.",
+ "origin": {
+  "type": "manual",
+  "sourceId": null
+ },
+ "lineage": {
+  "parentId": null,
+  "changedVariable": null,
+  "rationale": null,
+  "trialIndex": 0
+ },
+ "status": "testing",
+ "instrument": {
+  "root": "ES",
+  "symbol": "ES1!"
+ },
+ "timeframes": {
+  "primary": "1min",
+  "context": [
+   "1D"
+  ]
+ },
+ "direction": "both",
+ "session": {
+  "entryWindow": {
+   "start": "09:31",
+   "end": "15:00"
+  },
+  "noTradeWindows": [],
+  "flattenAt": "15:58"
+ },
+ "entry": {
+  "trigger": {
+   "op": "and",
+   "args": [
+    {
+     "op": "and",
+     "args": [
+      {
+       "op": "touched",
+       "args": [
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        },
+        4,
+        0
+       ]
+      },
+      {
+       "op": "gt",
+       "args": [
+        {
+         "field": "close"
+        },
+        {
+         "ind": "lowest",
+         "params": {
+          "n": 2,
+          "exclude_current": false
+         },
+         "tf": "1D"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "op": "lte",
+     "args": [
+      {
+       "ind": "bar_delta"
+      },
+      -300
+     ]
+    }
+   ]
+  },
+  "sequence": [],
+  "orderType": "market",
+  "limitOffsetTicks": 0,
+  "stopOffsetTicks": 1,
+  "timeoutBars": 3
+ },
+ "filters": [],
+ "exit": {
+  "stop": {
+   "type": "structure",
+   "structure": "session_low",
+   "bufferTicks": 8,
+   "value": null,
+   "period": 14
+  },
+  "target": {
+   "type": "rr",
+   "value": 2.0,
+   "level": null
+  },
+  "trailing": null,
+  "breakeven": null,
+  "timeStop": null,
+  "scaleOut": []
+ },
+ "sizing": {
+  "type": "fixed_contracts",
+  "value": 1.0,
+  "maxContracts": 1,
+  "period": 14
+ },
+ "constraints": {
+  "maxTradesPerDay": 2,
+  "cooldownBars": 10,
+  "stopAfterConsecutiveLosses": 0,
+  "maxConcurrentPositions": 1
+ },
+ "execution": {
+  "mode": "bars",
+  "slippageTicksOverride": null
+ },
+ "meta": {
+  "study": "rosato-balance-fade-2026-09-07",
+  "variant": "A1_rr2"
+ }
+}

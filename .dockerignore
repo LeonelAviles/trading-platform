@@ -4,6 +4,7 @@ market-data/
 data/
 backtests/
 backend/.venv/
+.venv*/
 backend/**/__pycache__/
 backend/.pytest_cache/
 frontend/node_modules/

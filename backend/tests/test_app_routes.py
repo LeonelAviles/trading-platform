@@ -9,9 +9,13 @@ LEGACY_PATHS = {
     ("GET", "/api/backtests/{job_id}"), ("DELETE", "/api/backtests/{job_id}"),
     ("GET", "/api/backtests/{job_id}/analytics"),
     ("GET", "/api/desk"), ("GET", "/api/settings"),
+    ("GET", "/api/agent/status"), ("POST", "/api/agent/threads"),
+    ("GET", "/api/agent/threads/{thread_id}"), ("POST", "/api/agent/chat"),
+    ("POST", "/api/agent/chat/stream"),
+    ("GET", "/api/agent/threads/{thread_id}/workflow"),
 }
 
-REMOVED_PREFIXES = ("/api/agent", "/api/chat", "/api/research", "/api/knowledge", "/api/usage", "/ws/agent", "/api/teaching")
+REMOVED_PREFIXES = ("/api/chat", "/api/research", "/api/knowledge", "/api/usage", "/ws/agent", "/api/teaching")
 
 
 def test_routes_registered(client):
@@ -62,3 +66,13 @@ def test_main_shim_reexports_app(client):
     import main
 
     assert main.app is app_module.app
+
+
+def test_new_agent_routes_are_safe_when_unconfigured(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    status = client.get("/api/agent/status")
+    assert status.status_code == 200 and status.json()["configured"] is False
+    thread = client.post("/api/agent/threads", json={}).json()
+    assert client.get(f"/api/agent/threads/{thread['id']}").status_code == 200
+    response = client.post("/api/agent/chat", json={"threadId": thread["id"], "message": "Explain walk-forward validation"})
+    assert response.status_code == 503

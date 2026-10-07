@@ -11,17 +11,18 @@
 
 SHELL := /bin/bash
 ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-PY    := $(ROOT)/backend/.venv/bin/python
-PIP   := $(ROOT)/backend/.venv/bin/pip
+PYTHON ?= python3.12
+PY    := $(ROOT)/.venv/bin/python
+PIP   := $(PY) -m pip
 
-.PHONY: dev backend frontend up down ingest catalog verify warm test test-backend test-frontend lint venv
+.PHONY: dev backend frontend up down ingest catalog verify warm knowledge-ml4t knowledge-ml4t-bootstrap test test-backend test-frontend lint venv
 
 venv:
-	@test -x $(PY) || python3 -m venv $(ROOT)/backend/.venv
+	@test -x $(PY) || $(PYTHON) -m venv $(ROOT)/.venv
 	@$(PIP) install -q -r $(ROOT)/backend/requirements.txt
 
 backend:
-	cd $(ROOT)/backend && $(PY) -m uvicorn app:app --host 127.0.0.1 --port 8123 --reload
+	cd $(ROOT)/backend && $(PY) -m uvicorn app:app --host 127.0.0.1 --port 8123 --reload --reload-exclude '.venv*/**'
 
 frontend:
 	cd $(ROOT)/frontend && npm run dev
@@ -29,7 +30,7 @@ frontend:
 # Runs both processes in the foreground; Ctrl-C stops both.
 dev:
 	@trap 'kill 0' INT TERM EXIT; \
-	( cd $(ROOT)/backend && $(PY) -m uvicorn app:app --host 127.0.0.1 --port 8123 --reload ) & \
+	( cd $(ROOT)/backend && $(PY) -m uvicorn app:app --host 127.0.0.1 --port 8123 --reload --reload-exclude '.venv*/**' ) & \
 	( cd $(ROOT)/frontend && npm run dev ) & \
 	wait
 
@@ -65,3 +66,12 @@ lint:
 
 warm:
 	cd $(ROOT)/backend && $(PY) scripts/warm_replay.py $(ROOT_SYMBOL) $(DATE)
+
+knowledge-ml4t:
+	cd $(ROOT)/backend && $(PY) scripts/ingest_knowledge.py $(ROOT)/data/knowledge/repos/ml4t \
+		--name machine-learning-for-trading \
+		--url https://github.com/stefan-jansen/machine-learning-for-trading \
+		--license MIT
+
+knowledge-ml4t-bootstrap:
+	cd $(ROOT)/backend && $(PY) scripts/bootstrap_ml4t_knowledge.py

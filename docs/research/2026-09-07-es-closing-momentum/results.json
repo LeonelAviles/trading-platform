@@ -1,0 +1,280 @@
+{
+  "method": "One contract; signal previous RTH close to 15:30; entry 15:30 bar open; exit 16:00 bar open; no stops/targets; zero signal stays flat.",
+  "source": "https://ssrn.com/abstract=3760365",
+  "contract_selection": "Previous observed RTH day's front-month mapping, same outright for both signal prices and fills.",
+  "cost_config": {
+    "name": "E-mini S&P 500",
+    "tick_size": 0.25,
+    "tick_value": 12.5,
+    "multiplier": 50,
+    "currency": "USD",
+    "continuous": "ES1!",
+    "outright_regex": "^ES[HMUZ]\\d$",
+    "commission_per_side": 2.25,
+    "initial_margin": 15000
+  },
+  "base_slippage_ticks_per_side": 1,
+  "eligible_sessions": 159,
+  "skipped": [
+    {
+      "date": "2025-12-24",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2025-12-26",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-01-19",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-01-20",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-02-16",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-02-17",
+      "symbol": "ESH6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-05-25",
+      "symbol": "ESM6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-05-26",
+      "symbol": "ESM6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-06-19",
+      "symbol": "ESU6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-06-22",
+      "symbol": "ESU6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-07-03",
+      "symbol": "ESU6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    },
+    {
+      "date": "2026-07-06",
+      "symbol": "ESU6",
+      "reason": "short or incomplete RTH session (current or prior)"
+    }
+  ],
+  "first_observed_session": "2025-12-01",
+  "last_observed_session": "2026-07-31",
+  "limitations": [
+    "First observed RTH day is warmup only. Short/incomplete current or previous RTH days excluded.",
+    "Minute-bar execution proxy, not executable bid/ask quotes or queue simulation.",
+    "Existing holdout predates existing in-sample period; this is a retrospective audit, not forward validation.",
+    "Both existing windows are evaluated and are now exposed for this hypothesis; future tuning needs fresh data.",
+    "Sharpe annualizes eligible-session PnL at 252 sessions/year; excluded days are not included.",
+    "Five-session circular block bootstrap intervals are approximate given this short sample."
+  ],
+  "summaries": {
+    "momentum_1tick": {
+      "all": {
+        "sessions": 159,
+        "trades": 159,
+        "net_usd": -12278.0,
+        "mean_net_usd": -77.22,
+        "gross_usd": -7587.5,
+        "win_rate_pct": 44.65,
+        "profit_factor": 0.699,
+        "max_drawdown_usd": 14702.0,
+        "annualized_daily_sharpe": -2.076,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -163.23,
+          6.04
+        ]
+      },
+      "existing_in_sample": {
+        "sessions": 81,
+        "trades": 81,
+        "net_usd": -4639.5,
+        "mean_net_usd": -57.28,
+        "gross_usd": -2250.0,
+        "win_rate_pct": 45.68,
+        "profit_factor": 0.774,
+        "max_drawdown_usd": 9421.0,
+        "annualized_daily_sharpe": -1.39,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -179.81,
+          71.74
+        ]
+      },
+      "existing_holdout": {
+        "sessions": 78,
+        "trades": 78,
+        "net_usd": -7638.5,
+        "mean_net_usd": -97.93,
+        "gross_usd": -5337.5,
+        "win_rate_pct": 43.59,
+        "profit_factor": 0.623,
+        "max_drawdown_usd": 8261.5,
+        "annualized_daily_sharpe": -2.991,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -211.55,
+          9.45
+        ]
+      }
+    },
+    "momentum_2tick": {
+      "all": {
+        "sessions": 159,
+        "trades": 159,
+        "net_usd": -16253.0,
+        "mean_net_usd": -102.22,
+        "gross_usd": -7587.5,
+        "win_rate_pct": 41.51,
+        "profit_factor": 0.623,
+        "max_drawdown_usd": 18602.0,
+        "annualized_daily_sharpe": -2.748,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -188.23,
+          -18.96
+        ]
+      },
+      "existing_in_sample": {
+        "sessions": 81,
+        "trades": 81,
+        "net_usd": -6664.5,
+        "mean_net_usd": -82.28,
+        "gross_usd": -2250.0,
+        "win_rate_pct": 40.74,
+        "profit_factor": 0.693,
+        "max_drawdown_usd": 10996.0,
+        "annualized_daily_sharpe": -1.997,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -204.81,
+          46.74
+        ]
+      },
+      "existing_holdout": {
+        "sessions": 78,
+        "trades": 78,
+        "net_usd": -9588.5,
+        "mean_net_usd": -122.93,
+        "gross_usd": -5337.5,
+        "win_rate_pct": 42.31,
+        "profit_factor": 0.551,
+        "max_drawdown_usd": 10061.5,
+        "annualized_daily_sharpe": -3.754,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -236.55,
+          -15.55
+        ]
+      }
+    },
+    "always_long_1tick": {
+      "all": {
+        "sessions": 159,
+        "trades": 159,
+        "net_usd": -1003.0,
+        "mean_net_usd": -6.31,
+        "gross_usd": 3687.5,
+        "win_rate_pct": 46.54,
+        "profit_factor": 0.971,
+        "max_drawdown_usd": 5831.0,
+        "annualized_daily_sharpe": -0.169,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -103.17,
+          92.2
+        ]
+      },
+      "existing_in_sample": {
+        "sessions": 81,
+        "trades": 81,
+        "net_usd": -1039.5,
+        "mean_net_usd": -12.83,
+        "gross_usd": 1350.0,
+        "win_rate_pct": 51.85,
+        "profit_factor": 0.944,
+        "max_drawdown_usd": 5831.0,
+        "annualized_daily_sharpe": -0.311,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -161.29,
+          128.37
+        ]
+      },
+      "existing_holdout": {
+        "sessions": 78,
+        "trades": 78,
+        "net_usd": 36.5,
+        "mean_net_usd": 0.47,
+        "gross_usd": 2337.5,
+        "win_rate_pct": 41.03,
+        "profit_factor": 1.002,
+        "max_drawdown_usd": 4354.0,
+        "annualized_daily_sharpe": 0.014,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -120.37,
+          132.68
+        ]
+      }
+    },
+    "always_long_2tick": {
+      "all": {
+        "sessions": 159,
+        "trades": 159,
+        "net_usd": -4978.0,
+        "mean_net_usd": -31.31,
+        "gross_usd": 3687.5,
+        "win_rate_pct": 42.77,
+        "profit_factor": 0.866,
+        "max_drawdown_usd": 7531.0,
+        "annualized_daily_sharpe": -0.839,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -128.17,
+          67.2
+        ]
+      },
+      "existing_in_sample": {
+        "sessions": 81,
+        "trades": 81,
+        "net_usd": -3064.5,
+        "mean_net_usd": -37.83,
+        "gross_usd": 1350.0,
+        "win_rate_pct": 45.68,
+        "profit_factor": 0.844,
+        "max_drawdown_usd": 7531.0,
+        "annualized_daily_sharpe": -0.918,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -186.29,
+          103.37
+        ]
+      },
+      "existing_holdout": {
+        "sessions": 78,
+        "trades": 78,
+        "net_usd": -1913.5,
+        "mean_net_usd": -24.53,
+        "gross_usd": 2337.5,
+        "win_rate_pct": 39.74,
+        "profit_factor": 0.891,
+        "max_drawdown_usd": 4654.0,
+        "annualized_daily_sharpe": -0.744,
+        "mean_net_95pct_block_bootstrap_ci": [
+          -145.37,
+          107.68
+        ]
+      }
+    }
+  }
+}

@@ -419,6 +419,31 @@ decisions". Newest at the bottom.
   `FeatureContext.snapshot()` feature vector stays because the backtester and
   the primitive tests use it.
 
+## Stratos Research — clean agent replacement (2026-09-04)
+
+- This is a new implementation, not a restoration of the removed Phase 4
+  agent. Its scope is research retrieval, plain-language explanation,
+  Strategy Spec creation and existing-engine validation.
+- One model API: OpenAI Responses API. The default is `gpt-5.6-sol`, selected
+  for professional reasoning plus function tools; the model remains an env
+  setting so availability can be handled without a code change.
+- One local store: SQLite. `knowledge_sources`, `knowledge_nodes`,
+  `knowledge_edges` and `knowledge_chunks` form a simple provenance graph;
+  SQLite FTS5 provides BM25 retrieval. Neo4j, Graphiti and a separate embedding
+  service are deliberately absent.
+- The only first-party research source is a commit-pinned sparse checkout of
+  `stefan-jansen/machine-learning-for-trading`. Notebook outputs, datasets,
+  assets and environments are excluded. Repository, document and section
+  nodes preserve the exact revision and source URL.
+- The model has no shell, web, arbitrary-code, order-execution or OOS tool.
+  Side-effect tools (`save_strategy`, `run_validation`) require an explicit
+  user request in the system policy; validation itself enforces the schema and
+  only queues IS/WF windows.
+- Conversations and citations are persisted locally. OpenAI response IDs are
+  kept only to continue conversation state; the system instructions are sent
+  on every turn because Responses does not carry them forward with
+  `previous_response_id`.
+
 ## Everything in-sample (2026-08-31)
 
 - **No out-of-sample holdout for now.** `market.ingest.IS_FRACTION` is `1.0`
@@ -461,3 +486,22 @@ decisions". Newest at the bottom.
   `on_bar` returned early on every bar and the run finished silently with no
   trades (found with a 5-minute variant of the IB breakout). It now matches on
   `BarType.standard()` for composite subscriptions.
+
+## Creamer pullback study — engine additions (2026-09-07)
+
+- **`leg_retracement(n)` primitive** (structure family): signed fraction of the last confirmed
+  swing leg that price has retraced — `(swing_high − close) / (swing_high − swing_low)` after an
+  up-leg, the negative of the mirror after a down-leg. Added because the expression tree has no
+  arithmetic, so a Fibonacci "discount" zone (`between(x, 0.705, 0.886)`) could not be written from
+  `swing_high` / `swing_low`. Signed output lets `direction: both` mirror it (`between` negates and
+  swaps the bounds for `signed` operands). `price: close | extreme` — `extreme` reads the bar's low in an
+  up-leg (high in a down-leg), i.e. the wick that probes the zone; a close-based reading misses most
+  touches because the bar that probes a discount zone usually closes back out of it.
+- **`prior_day_poc` / `prior_day_vah` / `prior_day_val`** (profile family): the previous RTH
+  session's value area from `FeatureContext.prior.profile`; `vah` ↔ `val` mirror. The session
+  `vah/val/poc` are immature in the first hour, which is when the study needed "below value".
+- **`swing_high` / `swing_low` are valid `exit.target.level` values.** `SpecRules._level` already
+  resolved them for structure stops; `LEVELS` in `engine/spec.py` now lists them and the exported
+  schema was regenerated (`scripts/export_spec_schema.py`). A level on the wrong side of the entry
+  still falls back to the 2R default, as before.
+- Registry count in `docs/03-dsl.md` / README updated to 61. Study: `docs/research/2026-09-07-creamer-discount-pullback.md`.

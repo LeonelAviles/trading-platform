@@ -193,6 +193,7 @@ class FeatureContext:
             self.series.setdefault(tf, TFSeries(tf, history))
         self.session: SessionState | None = None
         self.prior: SessionState | None = None
+        self.completed_sessions: deque[SessionState] = deque(maxlen=10)
         self.bar: BarRec | None = None          # last closed primary bar
         self.bar_index = -1
         self.now_ns = 0
@@ -236,16 +237,21 @@ class FeatureContext:
         return self.primitive(name, params, tf).value(self)
 
     # -- feeds --------------------------------------------------------------------
+    def _ensure_session(self, d: date) -> None:
+        if self.session is not None and self.session.date == d:
+            return
+        if self.session is not None and self.session.bars:
+            self.completed_sessions.append(self.session)
+            self.prior = self.session
+        self.session = SessionState(d, self.rth_start, self.rth_end)
+
     def on_bar(self, b: BarRec) -> None:
         self.bar_index += 1
         b.index = self.bar_index
         self.now_ns = b.ts_close
         self.last_price = b.close
         d = session_date(b.ts_open)
-        if self.session is None or self.session.date != d:
-            if self.session is not None and self.session.bars:
-                self.prior = self.session
-            self.session = SessionState(d, self.rth_start, self.rth_end)
+        self._ensure_session(d)
         self.session.add_bar(b, self.tick, bars_mode_profile=not self.has_trades)
         # footprint: close the forming one (ticks) or synthesise from the bar (bars mode)
         if self.has_trades:
@@ -281,10 +287,7 @@ class FeatureContext:
         elif t.side == "B":
             cell[1] += t.size
         d = session_date(t.ts)
-        if self.session is None or self.session.date != d:
-            if self.session is not None and self.session.bars:
-                self.prior = self.session
-            self.session = SessionState(d, self.rth_start, self.rth_end)
+        self._ensure_session(d)
         self.session.add_trade(t)
         for inst in self._trade_updated:
             inst.on_trade(self, t)

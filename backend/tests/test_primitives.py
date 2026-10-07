@@ -7,7 +7,8 @@ from tests.helpers_bars import bar, feed_closes, make_ctx, trade
 DAY_ONE = """open high low close volume delta sma ema vwap rsi atr adx bollinger_upper bollinger_lower highest lowest
 swing_high swing_low opening_range_high opening_range_low initial_balance_high initial_balance_low session_high
 session_low prior_day_high prior_day_low prior_day_close gap_points consecutive candle_pattern poc vah val
-volume_at_price profile_shape bar_delta cvd_session cvd_window cvd_slope rel_delta rel_volume delta_divergence
+prior_session_direction
+volume_at_price profile_shape bar_delta cvd_session cvd_window cvd_slope rel_delta rel_volume aggressor_share delta_divergence
 footprint_imbalance stacked_imbalances absorption exhaustion poc_migration large_print large_resting_size_near
 resting_size_at book_imbalance time_of_day day_of_week minutes_to_close bars_since_open""".split()
 
@@ -101,12 +102,32 @@ def test_prior_day_and_gap():
     assert ctx.value("gap_points") == 3
 
 
+def test_prior_session_close_to_close_direction_and_mirror():
+    from datetime import date
+    from engine import expr
+
+    ctx = make_ctx()
+    feed_closes(ctx, [100, 101], d=date(2026, 7, 13))
+    ctx.on_bar(bar(0, 101, 104, 100, 103, d=date(2026, 7, 14)))
+    assert ctx.value("prior_session_direction") is None
+    ctx.on_bar(bar(0, 103, 105, 102, 104, d=date(2026, 7, 15)))
+    assert ctx.value("prior_session_direction") == 1
+    continuation = {"op": "gt", "args": [{"ind": "prior_session_direction"}, 0]}
+    assert expr.mirror(continuation) == {"op": "lt", "args": [{"ind": "prior_session_direction"}, 0]}
+    ctx.on_bar(bar(0, 104, 105, 98, 99, d=date(2026, 7, 16)))
+    assert ctx.value("prior_session_direction") == 1
+    ctx.on_bar(bar(0, 99, 100, 97, 98, d=date(2026, 7, 17)))
+    assert ctx.value("prior_session_direction") == -1
+
+
 def test_orderflow_family_bars_mode():
     ctx = feed_closes(make_ctx(), [10, 11, 12, 13, 14, 15], deltas=[5, 10, -3, 8, 6, 20])
     assert ctx.value("bar_delta") == 20 and ctx.value("cvd_session") == 46
     assert ctx.value("cvd_window", {"n": 3}) == 34 and ctx.value("cvd_slope", {"n": 3}) == pytest.approx(34 / 3)
     assert ctx.value("rel_delta", {"n": 3}) == pytest.approx(34 / (34 / 3))
     assert ctx.value("rel_volume", {"n": 3}) == 1.0
+    assert ctx.value("aggressor_share", {"side": "bid"}) == pytest.approx(0.4)
+    assert ctx.value("aggressor_share", {"side": "ask"}) == pytest.approx(0.6)
     assert ctx.value("delta_divergence", {"n": 4}) == 0.0
     diverge = feed_closes(make_ctx(), [10, 11, 12, 13, 14], deltas=[0, -5, -5, -5, -5])
     assert diverge.value("delta_divergence", {"n": 3}) == -1.0
@@ -166,3 +187,44 @@ def test_snapshot_feature_vector():
     snap = ctx.snapshot()
     assert "close" in snap and "sma" in snap and "resting_size_at" not in snap
     assert snap["close"] == 100 + 29 * 0.25
+
+
+def test_leg_retracement_signed_by_leg_direction():
+    from engine import expr
+
+    # Up-leg: swing low at 10 (bar 2), swing high at 20 (bar 6), then a pullback to 12.5 = 75 % retraced.
+    ctx = make_ctx()
+    path = [12, 11, 10, 13, 16, 19, 20, 18, 16, 14, 12.5]
+    for i, c in enumerate(path):
+        ctx.on_bar(bar(i, c, c + 0.5, c - 0.5, c))
+    assert ctx.value("swing_low", {"n": 2}) == 9.5 and ctx.value("swing_high", {"n": 2}) == 20.5
+    assert ctx.value("leg_retracement", {"n": 2}) == pytest.approx((20.5 - 12.5) / (20.5 - 9.5))
+    # Down-leg: mirror image → same magnitude, negative sign.
+    ctx2 = make_ctx()
+    for i, c in enumerate(path):
+        m = 30 - c
+        ctx2.on_bar(bar(i, m, m + 0.5, m - 0.5, m))
+    assert ctx2.value("leg_retracement", {"n": 2}) == pytest.approx(-(20.5 - 12.5) / (20.5 - 9.5))
+    # `price: extreme` reads the wick that probes the zone (low in an up-leg, high in a down-leg).
+    assert ctx.value("leg_retracement", {"n": 2, "price": "extreme"}) == pytest.approx((20.5 - 12.0) / (20.5 - 9.5))
+    assert ctx2.value("leg_retracement", {"n": 2, "price": "extreme"}) == pytest.approx(-(20.5 - 12.0) / (20.5 - 9.5))
+    # Not enough bars → None.
+    assert make_ctx().value("leg_retracement", {"n": 2}) is None
+    # `between(x, 0.705, 0.886)` mirrors to the negative band for the short side.
+    short = expr.mirror({"op": "between", "args": [{"ind": "leg_retracement", "params": {"n": 2}}, 0.705, 0.886]})
+    assert short["args"][1:] == [-0.886, -0.705]
+
+
+def test_prior_day_value_area():
+    from datetime import date
+    from engine.primitives.profile import value_area
+
+    ctx = make_ctx()
+    assert ctx.value("prior_day_val") is None
+    for i in range(5):
+        ctx.on_bar(bar(i, 100, 101, 99, 100.5, v=100, d=date(2026, 7, 14)))
+    poc_d1, vah_d1, val_d1 = value_area(ctx.session.profile)
+    ctx.on_bar(bar(0, 105, 106, 104, 105, d=date(2026, 7, 15)))
+    assert ctx.value("prior_day_poc") == poc_d1 and ctx.value("prior_day_vah") == vah_d1 and ctx.value("prior_day_val") == val_d1
+    assert ctx.value("prior_day_val") <= ctx.value("prior_day_poc") <= ctx.value("prior_day_vah")
+    assert ctx.value("prior_day_vah") < 104           # yesterday's value sits below today's bar

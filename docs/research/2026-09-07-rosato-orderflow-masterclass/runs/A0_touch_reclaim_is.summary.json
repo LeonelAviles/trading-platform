@@ -1,0 +1,37 @@
+{
+ "trades": 91,
+ "net": -2060.0,
+ "pf": 0.94,
+ "win%": 30.8,
+ "expR": -0.066,
+ "avg$": -22.6,
+ "maxDD$": 11113.0,
+ "exits": {
+  "flatten": 16,
+  "stop": 58,
+  "target": 17
+ },
+ "months": {
+  "2026-04": 340.0,
+  "2026-05": -6784.0,
+  "2026-06": 4022.0,
+  "2026-07": 362.0
+ },
+ "byDir": {
+  "long": [
+   33,
+   -3811.0
+  ],
+  "short": [
+   58,
+   1752.0
+  ]
+ },
+ "medStopTicks": 34.0,
+ "avgBarsHeld": 77.5,
+ "sessions": 105,
+ "seconds": 10.3,
+ "variant": "A0_touch_reclaim",
+ "window": "2026-04-01..2026-07-31",
+ "mode": "bars"
+}

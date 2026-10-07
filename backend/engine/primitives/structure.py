@@ -135,6 +135,25 @@ class PriorDayClose(Primitive):
 
 
 @register
+class PriorSessionDirection(Primitive):
+    """Previous RTH session's close-to-close direction: 1 up, -1 down, 0 unchanged.
+
+    Compares the previous session close with the RTH close two completed
+    sessions ago. Its signed mirror makes a `direction: both` continuation
+    filter (`prior_session_direction > 0`) become `< 0` for short entries.
+    """
+    name = "prior_session_direction"
+    output, mirror = "number", "signed"
+
+    def value(self, ctx):
+        sessions = list(ctx.completed_sessions)
+        if len(sessions) < 2 or sessions[-1].close is None or sessions[-2].close is None:
+            return None
+        delta = sessions[-1].close - sessions[-2].close
+        return 1.0 if delta > 0 else -1.0 if delta < 0 else 0.0
+
+
+@register
 class GapPoints(Primitive):
     """Today's RTH open minus the prior session's RTH close (points, signed)."""
     name = "gap_points"
@@ -192,3 +211,47 @@ class CandlePattern(Primitive):
         upper = cur.high - max(cur.open, cur.close)
         lower = min(cur.open, cur.close) - cur.low
         return body > 0 and (upper >= 2 * body or lower >= 2 * body) or (body == 0 and (upper > 0 or lower > 0))
+
+
+@register
+class LegRetracement(Primitive):
+    """How much of the last confirmed swing leg price has retraced, signed. After an up-leg (the latest
+    confirmed swing is a high) it is (swing_high − close) / (swing_high − swing_low): 0 at the high, 1 back at
+    the low, > 1 beyond it. After a down-leg the same fraction is reported negative, so
+    `between(x, 0.705, 0.886)` (a deep pullback into "discount" in an up-leg) mirrors to the down-leg reading
+    for shorts. None until both swings exist."""
+    name = "leg_retracement"
+    params = {"n": Param("int", 3, "bars on each side of a swing"),
+              "price": Param("str", "close", "close | extreme (the bar's low in an up-leg, its high in a down-leg — the wick that probes the zone)",
+                             choices=("close", "extreme"))}
+    output, tf_capable, mirror = "number", True, "signed"
+
+    def lookback_bars(self):
+        return 2 * self.p["n"] + 1
+
+    def value(self, ctx):
+        b = list(self.series(ctx).bars)
+        n = self.p["n"]
+        if len(b) < 2 * n + 2:
+            return None
+        hi = lo = None
+        for i in range(len(b) - 1 - n, n - 1, -1):
+            if hi is None:
+                h = b[i].high
+                if all(b[j].high < h for j in range(i - n, i)) and all(b[j].high <= h for j in range(i + 1, i + n + 1)):
+                    hi = (i, h)
+            if lo is None:
+                l = b[i].low
+                if all(b[j].low > l for j in range(i - n, i)) and all(b[j].low >= l for j in range(i + 1, i + n + 1)):
+                    lo = (i, l)
+            if hi is not None and lo is not None:
+                break
+        if hi is None or lo is None or hi[1] <= lo[1]:
+            return None
+        span = hi[1] - lo[1]
+        ext = self.p["price"] == "extreme"
+        if hi[0] > lo[0]:                      # up-leg: swing low, then swing high; price pulling back
+            px = b[-1].low if ext else b[-1].close
+            return (hi[1] - px) / span
+        px = b[-1].high if ext else b[-1].close
+        return -(px - lo[1]) / span            # down-leg: swing high, then swing low; price bouncing

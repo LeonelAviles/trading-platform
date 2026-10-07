@@ -23,3 +23,6 @@ httpx
 
 # Raw-data archive to S3 (scripts/archive.py, scripts/restore.py)
 boto3
+
+# Stratos Research agent (Responses API + typed platform tools).
+openai>=2.0,<3

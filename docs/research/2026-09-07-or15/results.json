@@ -1,0 +1,268 @@
+{
+  "config": "failed_break|flow|3",
+  "trials": 40,
+  "first": "2025-12-01",
+  "last": "2026-07-31",
+  "sessions": 166,
+  "dev_sessions": 103,
+  "check_sessions": 63,
+  "excluded": 44,
+  "commission_round_trip": 4.5,
+  "selected_bar": {
+    "config": "failed_break|flow|3",
+    "dev_trades": 81,
+    "dev_pf": 1.2174125305126118,
+    "dev_win_rate": 0.32098765432098764,
+    "dev_net_usd": 7348.0,
+    "dev_avg_usd": 90.71604938271605,
+    "dev_max_dd_usd": 8975.0,
+    "dev_payoff": 2.5752957376228327,
+    "check_trades": 50,
+    "check_pf": 1.0619940194004813,
+    "check_win_rate": 0.26,
+    "check_net_usd": 1275.0,
+    "check_avg_usd": 25.5,
+    "check_max_dd_usd": 5600.5,
+    "check_payoff": 3.0225983629090623,
+    "all_trades": 131,
+    "all_pf": 1.1586159958796263,
+    "all_win_rate": 0.29770992366412213,
+    "all_net_usd": 8623.0,
+    "all_avg_usd": 65.82442748091603,
+    "all_max_dd_usd": 8975.0,
+    "all_payoff": 2.73314542617758
+  },
+  "directional": {
+    "resolved": 146,
+    "unresolved": 20,
+    "ambiguous": 0,
+    "opening_direction": {
+      "n": 144,
+      "accuracy": 0.5972222222222222,
+      "wilson_95": [
+        0.5155952900234319,
+        0.6737965996747316
+      ],
+      "distance_only_reference": 0.6253754330477947,
+      "always_up_baseline": 0.5347222222222222
+    },
+    "vwap_direction": {
+      "n": 146,
+      "accuracy": 0.636986301369863,
+      "wilson_95": [
+        0.5563985350879186,
+        0.7105500292627023
+      ],
+      "distance_only_reference": 0.6490061881168447,
+      "always_up_baseline": 0.541095890410959
+    },
+    "delta_direction": {
+      "n": 146,
+      "accuracy": 0.589041095890411,
+      "wilson_95": [
+        0.5079459611651762,
+        0.6655706056627275
+      ],
+      "distance_only_reference": 0.5760621871222186,
+      "always_up_baseline": 0.541095890410959
+    },
+    "nearest_barrier": {
+      "n": 144,
+      "accuracy": 0.625,
+      "wilson_95": [
+        0.5436450605221834,
+        0.6998587976611697
+      ],
+      "distance_only_reference": 0.651146580185361,
+      "always_up_baseline": 0.5486111111111112
+    }
+  },
+  "tick_dev": {
+    "trades": 81,
+    "pf": 1.2255492270138324,
+    "win_rate": 0.32098765432098764,
+    "net_usd": 7623.0,
+    "avg_usd": 94.11111111111111,
+    "max_dd_usd": 8975.0,
+    "payoff": 2.5925079802215683
+  },
+  "stress_dev": {
+    "trades": 81,
+    "pf": 1.1924169928954618,
+    "win_rate": 0.32098765432098764,
+    "net_usd": 6635.5,
+    "avg_usd": 81.91975308641975,
+    "max_dd_usd": 9237.5,
+    "payoff": 2.522420561894246
+  },
+  "bootstrap_dev": {
+    "pf_interval_95": [
+      0.6578267458978905,
+      2.162502088006144
+    ],
+    "net_interval_95": [
+      -13266.625,
+      32480.71249999999
+    ],
+    "note": "Conditional on selected rule; not adjusted for 40 trials or prior research."
+  },
+  "remove_best_five_dev": {
+    "trades": 76,
+    "pf": 0.8489681189437088,
+    "win_rate": 0.27631578947368424,
+    "net_usd": -5104.5,
+    "avg_usd": -67.16447368421052,
+    "max_dd_usd": 10902.5,
+    "payoff": 2.2234879305668565
+  },
+  "tick_check": {
+    "trades": 50,
+    "pf": 1.0601706658887025,
+    "win_rate": 0.26,
+    "net_usd": 1237.5,
+    "avg_usd": 24.75,
+    "max_dd_usd": 5600.5,
+    "payoff": 3.0174088182986147
+  },
+  "stress_check": {
+    "trades": 50,
+    "pf": 1.033287365067288,
+    "win_rate": 0.26,
+    "net_usd": 700.0,
+    "avg_usd": 14.0,
+    "max_dd_usd": 5763.0,
+    "payoff": 2.9408948082684354
+  },
+  "bootstrap_check": {
+    "pf_interval_95": [
+      0.3871063888898624,
+      2.025107205249236
+    ],
+    "net_interval_95": [
+      -13760.35,
+      18112.724999999984
+    ],
+    "note": "Conditional on selected rule; not adjusted for 40 trials or prior research."
+  },
+  "remove_best_five_check": {
+    "trades": 45,
+    "pf": 0.430384362920283,
+    "win_rate": 0.17777777777777778,
+    "net_usd": -11715.0,
+    "avg_usd": -260.3333333333333,
+    "max_dd_usd": 13840.5,
+    "payoff": 1.9905276785063089
+  },
+  "tick_all": {
+    "trades": 131,
+    "pf": 1.1629846957545436,
+    "win_rate": 0.29770992366412213,
+    "net_usd": 8860.5,
+    "avg_usd": 67.63740458015268,
+    "max_dd_usd": 8975.0,
+    "payoff": 2.743451077164564
+  },
+  "stress_all": {
+    "trades": 131,
+    "pf": 1.1321378391036496,
+    "win_rate": 0.29770992366412213,
+    "net_usd": 7335.5,
+    "avg_usd": 55.99618320610687,
+    "max_dd_usd": 9237.5,
+    "payoff": 2.670684133270148
+  },
+  "bootstrap_all": {
+    "pf_interval_95": [
+      0.706071501100308,
+      1.7638740195512956
+    ],
+    "net_interval_95": [
+      -17367.55,
+      37581.34999999998
+    ],
+    "note": "Conditional on selected rule; not adjusted for 40 trials or prior research."
+  },
+  "remove_best_five_all": {
+    "trades": 126,
+    "pf": 0.8888602751821058,
+    "win_rate": 0.2698412698412698,
+    "net_usd": -6042.0,
+    "avg_usd": -47.95238095238095,
+    "max_dd_usd": 9312.0,
+    "payoff": 2.405151332845698
+  },
+  "months": {
+    "2025-12": {
+      "trades": 17,
+      "pf": 0.6233495482974287,
+      "win_rate": 0.17647058823529413,
+      "net_usd": -2439.0,
+      "avg_usd": -143.47058823529412,
+      "max_dd_usd": 2439.0,
+      "payoff": 2.908964558721334
+    },
+    "2026-01": {
+      "trades": 15,
+      "pf": 1.3625787687833253,
+      "win_rate": 0.3333333333333333,
+      "net_usd": 1870.0,
+      "avg_usd": 124.66666666666667,
+      "max_dd_usd": 3040.5,
+      "payoff": 2.7251575375666506
+    },
+    "2026-02": {
+      "trades": 13,
+      "pf": 0.404365794214263,
+      "win_rate": 0.15384615384615385,
+      "net_usd": -5621.0,
+      "avg_usd": -432.38461538461536,
+      "max_dd_usd": 6487.0,
+      "payoff": 2.2240118681784464
+    },
+    "2026-03": {
+      "trades": 21,
+      "pf": 1.983275143597252,
+      "win_rate": 0.42857142857142855,
+      "net_usd": 8730.5,
+      "avg_usd": 415.73809523809524,
+      "max_dd_usd": 3928.0,
+      "payoff": 2.6443668581296693
+    },
+    "2026-04": {
+      "trades": 15,
+      "pf": 2.320644406911784,
+      "win_rate": 0.4666666666666667,
+      "net_usd": 5082.5,
+      "avg_usd": 338.8333333333333,
+      "max_dd_usd": 2622.5,
+      "payoff": 2.65216503647061
+    },
+    "2026-05": {
+      "trades": 19,
+      "pf": 1.4272409778812574,
+      "win_rate": 0.3684210526315789,
+      "net_usd": 2202.0,
+      "avg_usd": 115.89473684210526,
+      "max_dd_usd": 2014.5,
+      "payoff": 2.4466988192250128
+    },
+    "2026-06": {
+      "trades": 16,
+      "pf": 1.2730984885421746,
+      "win_rate": 0.25,
+      "net_usd": 2240.5,
+      "avg_usd": 140.03125,
+      "max_dd_usd": 4139.5,
+      "payoff": 3.819295465626524
+    },
+    "2026-07": {
+      "trades": 15,
+      "pf": 0.5553860026357772,
+      "win_rate": 0.13333333333333333,
+      "net_usd": -3205.0,
+      "avg_usd": -213.66666666666666,
+      "max_dd_usd": 5600.5,
+      "payoff": 3.610009017132552
+    }
+  }
+}

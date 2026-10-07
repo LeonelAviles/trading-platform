@@ -480,6 +480,81 @@ def get_session_levels(symbol: str, d: date, or_minutes: int = 15, ib_minutes: i
     }
 
 
+def _transition_summary(items: list[dict], outcome_key: str) -> dict:
+    eligible = [item for item in items if item["priorDirection"] != "unchanged" and item[outcome_key] != "unchanged"]
+    continuations = sum(item["priorDirection"] == item[outcome_key] for item in eligible)
+    reversals = len(eligible) - continuations
+    by_prior = {}
+    for direction in ("up", "down"):
+        subset = [item for item in eligible if item["priorDirection"] == direction]
+        same = sum(item[outcome_key] == direction for item in subset)
+        by_prior[direction] = {
+            "samples": len(subset), "continuations": same, "reversals": len(subset) - same,
+            "continuationRatePct": round(100 * same / len(subset), 2) if subset else None,
+        }
+    return {
+        "samples": len(eligible), "continuations": continuations, "reversals": reversals,
+        "continuationRatePct": round(100 * continuations / len(eligible), 2) if eligible else None,
+        "reversalRatePct": round(100 * reversals / len(eligible), 2) if eligible else None,
+        "byPriorDirection": by_prior,
+    }
+
+
+def _daily_transition_report(sessions: list[dict]) -> dict:
+    observations = []
+    for i in range(2, len(sessions)):
+        older, prior, current = sessions[i - 2], sessions[i - 1], sessions[i]
+
+        def direction(delta):
+            return "up" if delta > 0 else "down" if delta < 0 else "unchanged"
+
+        observations.append({
+            "date": current["date"],
+            "priorDirection": direction(prior["close"] - older["close"]),
+            "closeToCloseDirection": direction(current["close"] - prior["close"]),
+            "rthOpenToCloseDirection": direction(current["close"] - current["open"]),
+        })
+    months = []
+    for month in sorted({item["date"][:7] for item in observations}):
+        subset = [item for item in observations if item["date"].startswith(month)]
+        months.append({"month": month, **_transition_summary(subset, "closeToCloseDirection")})
+    return {
+        "sessions": len(sessions), "transitions": len(observations),
+        "closeToClose": _transition_summary(observations, "closeToCloseDirection"),
+        "rthOpenToClose": _transition_summary(observations, "rthOpenToCloseDirection"),
+        "overTime": months,
+    }
+
+
+def get_daily_direction_stats(symbol: str, date_from: date | None = None, date_to: date | None = None) -> dict:
+    """Prior close-to-close direction versus the following RTH session direction."""
+    bars = get_bars(symbol, "1min")
+    local = bars.copy()
+    local["sessionDate"] = local.index.tz_convert(sess.ET).date
+    local["localTime"] = local.index.tz_convert(sess.ET).time
+    start_t, end_t = sess.parse_hhmm(_ins().session.rth_start), sess.parse_hhmm(_ins().session.rth_end)
+    local = local[(local["localTime"] >= start_t) & (local["localTime"] < end_t)]
+    sessions = []
+    for d, group in local.groupby("sessionDate", sort=True):
+        if date_from and d < date_from or date_to and d > date_to:
+            continue
+        sessions.append({"date": d.isoformat(), "open": float(group["open"].iloc[0]),
+                         "close": float(group["close"].iloc[-1])})
+    report = _daily_transition_report(sessions)
+    return {
+        "symbol": symbol,
+        "dateFrom": sessions[0]["date"] if sessions else None,
+        "dateTo": sessions[-1]["date"] if sessions else None,
+        "definitions": {
+            "priorDirection": "previous RTH close minus the RTH close two completed sessions ago",
+            "closeToCloseOutcome": "current RTH close minus previous RTH close",
+            "rthOpenToCloseOutcome": "current RTH close minus current RTH open",
+            "unchangedSessions": "excluded from continuation/reversal percentages",
+        },
+        **report,
+    }
+
+
 # ----------------------------------------------------------------------------
 # Order book: DOM snapshot from checkpoints, heatmap from the liquidity store
 # ----------------------------------------------------------------------------

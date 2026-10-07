@@ -18,6 +18,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -37,6 +38,7 @@ WORKER_TIMEOUT_S = 3600
 _queue: queue.Queue = queue.Queue()
 _worker_thread: threading.Thread | None = None
 _lock = threading.Lock()
+_recovery_lock = threading.Lock()
 _running: set[str] = set()
 
 
@@ -56,19 +58,40 @@ def _job_dir(job_id: str) -> Path:
     return JOBS_DIR / job_id
 
 
+def _progress_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "progress.json"
+
+
+def _read_progress(job_id: str) -> dict:
+    value = _read_trades_file(_progress_path(job_id))
+    return value if isinstance(value, dict) else {}
+
+
 def _row_to_job(row: Backtest, with_trades: bool = False) -> dict:
     m = dict(row.metrics_json or {})
+    progress_doc = _read_progress(row.id)
+    progress = {k: v for k, v in progress_doc.items() if k != "liveTrades"}
+    message = row.message
+    if row.status == "running" and progress:
+        message = (f"{progress.get('sessionsCompleted', 0)}/{progress.get('sessionsTotal', '?')} sessions · "
+                   f"{progress.get('tradeCount', 0)} trades · {progress.get('percent', 0):g}%")
     job = {
         "id": row.id, "createdAt": row.created_at, "finishedAt": row.finished_at,
+        "agentRunId": row.agent_run_id,
         "strategyId": row.strategy_id or m.get("legacyStrategyId"),
         "strategyName": m.get("strategyName"), "symbol": m.get("symbol"), "interval": m.get("interval", "1min"),
-        "status": row.status, "message": row.message, "source": "nautilus",
+        "status": row.status, "message": message, "source": "nautilus",
         "mode": row.mode, "windowKind": row.window_kind, "dateFrom": row.date_from, "dateTo": row.date_to,
         "summary": m.get("summary"),
-        "metrics": {k: v for k, v in m.items() if k not in ("summary", "strategyName", "symbol", "interval", "legacyStrategyId")} or None,
+        "progress": progress or None,
+        "metrics": {k: v for k, v in m.items() if k not in ("summary", "strategyName", "symbol", "interval", "legacyStrategyId")
+                    and not k.startswith("_")} or None,
     }
     if with_trades:
-        job["trades"] = load_trades(row.id, row.trades_path)
+        trades = load_trades(row.id, row.trades_path)
+        if row.status in ("queued", "running") and not trades:
+            trades = [normalize_trade(t) for t in progress_doc.get("liveTrades", [])]
+        job["trades"] = trades
     return job
 
 
@@ -120,12 +143,7 @@ def load_daily_returns(job_id: str) -> list[dict]:
 def list_jobs() -> list[dict]:
     with database.session_scope() as db:
         rows = db.query(Backtest).order_by(Backtest.created_at.desc()).all()
-        out = []
-        for r in rows:
-            if r.status in ("queued", "running") and r.id not in _running:
-                r.status, r.message = "error", "interrupted by backend restart"
-            out.append(_row_to_job(r))
-        return out
+        return [_row_to_job(r) for r in rows]
 
 
 def get_job(job_id: str) -> dict | None:
@@ -222,35 +240,140 @@ def _run_job(job_id: str) -> None:
         row = db.get(Backtest, job_id)
         if row is None:
             return
-        mode, date_from, date_to = row.mode, row.date_from, row.date_to
+        mode, date_from, date_to, agent_run_id = row.mode, row.date_from, row.date_to, row.agent_run_id
         metrics = dict(row.metrics_json or {})
     _set(job_id, status="running", message=f"running NautilusTrader backtest ({mode}, {date_from}..{date_to})")
     out_path = job_dir / "trades.json"
     log_path = job_dir / "worker.log"
     try:
         with open(log_path, "w", encoding="utf-8") as lf:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 [sys.executable, "-m", "engine.backtest_worker", str(job_dir / "strategy.json"), date_from, date_to, mode, str(out_path)],
                 cwd=str(BACKEND_DIR), stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                timeout=WORKER_TIMEOUT_S, text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"},
+                text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"},
             )
+            metrics["_workerPid"] = proc.pid
+            _set(job_id, metrics_json=metrics)
+            try:
+                proc.wait(timeout=WORKER_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise
         if proc.returncode != 0 or not out_path.exists():
             tail = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-4:]
             raise RuntimeError("backtest failed: " + " ".join(tail) if tail else "backtest failed — see worker.log")
-        result = json.loads(out_path.read_text(encoding="utf-8"))
-        trades = result["trades"]
-        stats = analytics.compute(trades, result.get("dailyReturns"), float(metrics.get("accountSize") or STARTING_EQUITY))
-        metrics.update({
-            "summary": result["summary"], "meta": result.get("meta"), "analytics": stats,
-            **{k: stats[k] for k in ("trades", "netPnl", "winRate", "profitFactor", "expectancyR", "maxDrawdownPct", "sharpe", "sortino", "commission")},
-        })
-        _set(job_id, status="done", message=None, metrics_json=metrics, finished_at=utc_now())
-        _attach_verdict(job_id)
+        _finalize_result(job_id)
     except Exception as e:
         _set(job_id, status="error", message=str(e), finished_at=utc_now())
     finally:
         with _lock:
             _running.discard(job_id)
+        if agent_run_id:
+            from research_agent import workflow
+            workflow.job_finished(agent_run_id, job_id)
+
+
+def _result_is_complete(job_id: str) -> bool:
+    data = _read_trades_file(_job_dir(job_id) / "trades.json")
+    return isinstance(data.get("trades"), list) and isinstance(data.get("summary"), dict)
+
+
+def _finalize_result(job_id: str) -> None:
+    """Persist an already-written worker artifact. Safe to call after reload."""
+    with database.session_scope() as db:
+        row = db.get(Backtest, job_id)
+        if row is None:
+            return
+        metrics = dict(row.metrics_json or {})
+    result = _read_trades_file(_job_dir(job_id) / "trades.json")
+    if not isinstance(result.get("trades"), list) or not isinstance(result.get("summary"), dict):
+        raise RuntimeError("backtest result is incomplete")
+    stats = analytics.compute(result["trades"], result.get("dailyReturns"),
+                              float(metrics.get("accountSize") or STARTING_EQUITY))
+    metrics.pop("_workerPid", None)
+    metrics.update({
+        "summary": result["summary"], "meta": result.get("meta"), "analytics": stats,
+        **{k: stats[k] for k in ("trades", "netPnl", "winRate", "profitFactor", "expectancyR", "maxDrawdownPct", "sharpe", "sortino", "commission")},
+    })
+    _set(job_id, status="done", message=None, metrics_json=metrics, finished_at=utc_now())
+    _attach_verdict(job_id)
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _monitor_recovered(job_id: str, pid: int, agent_run_id: str | None) -> None:
+    """Adopt a worker subprocess orphaned by a development hot reload."""
+    try:
+        deadline = time.monotonic() + WORKER_TIMEOUT_S
+        while _pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(1)
+        if _result_is_complete(job_id):
+            _finalize_result(job_id)
+            if agent_run_id:
+                from research_agent import workflow
+                workflow.job_finished(agent_run_id, job_id)
+        else:
+            _set(job_id, status="queued", message="resuming after backend restart")
+    finally:
+        with _lock:
+            _running.discard(job_id)
+    # The adopted process was the queue owner. Only now may another durable
+    # job start; recovery also retries this job when no artifact was produced.
+    recover_pending_jobs()
+
+
+def recover_pending_jobs() -> dict:
+    """Recover durable jobs after a process restart or development hot reload."""
+    with _recovery_lock:
+        with database.session_scope() as db:
+            rows = db.query(Backtest).filter(Backtest.status.in_(("running", "queued"))).all()
+            pending = sorted(rows, key=lambda r: (r.created_at, {"is": 0, "wf1": 1, "wf2": 2, "wf3": 3, "oos": 4}.get(r.window_kind, 5)))
+            snapshots = [(r.id, r.status, dict(r.metrics_json or {}), r.agent_run_id) for r in pending]
+
+        recovered = resumed = adopted = 0
+        live_owner = False
+        queued_ids: list[str] = []
+        for job_id, status, metrics, agent_run_id in snapshots:
+            if status == "running" and _result_is_complete(job_id):
+                _finalize_result(job_id)
+                if agent_run_id:
+                    from research_agent import workflow
+                    workflow.job_finished(agent_run_id, job_id)
+                with _lock:
+                    _running.discard(job_id)
+                recovered += 1
+                continue
+            worker_pid = metrics.get("_workerPid")
+            if status == "running" and (job_id in _running or _pid_alive(worker_pid)):
+                live_owner = True
+                if job_id not in _running:
+                    with _lock:
+                        _running.add(job_id)
+                    threading.Thread(target=_monitor_recovered, args=(job_id, int(worker_pid), agent_run_id), daemon=True,
+                                     name=f"backtest-recovery-{job_id}").start()
+                    adopted += 1
+                continue
+            if status == "running":
+                _set(job_id, status="queued", message="resuming after backend restart")
+            if job_id not in _running:
+                queued_ids.append(job_id)
+
+        # A worker inherited from the old API process still owns the single
+        # execution slot. Its monitor will call recovery again when it exits.
+        if not live_owner:
+            for job_id in queued_ids:
+                start(job_id)
+                resumed += 1
+        return {"recovered": recovered, "resumed": resumed, "adopted": adopted}
 
 
 def _attach_verdict(job_id: str) -> None:

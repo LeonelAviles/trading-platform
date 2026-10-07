@@ -52,7 +52,8 @@ def windows(root: str) -> dict[str, tuple[str, str]]:
                 out[f"wf{k}"] = (block[0], block[-1])
     if oos_dates:
         out["oos"] = (oos_dates[0], oos_dates[-1])
-    out["full"] = (is_dates[0], (oos_dates or is_dates)[-1])
+    all_dates = sorted(set(is_dates + oos_dates))
+    out["full"] = (all_dates[0], all_dates[-1])
     return out
 
 

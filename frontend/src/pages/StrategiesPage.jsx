@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createBacktest, createValidation, fetchBacktests, fetchStrategies } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
 import { describeExpr } from '../spec/describe';
-import { Card, EmptyState, PageHeader, StatusChip } from '../components/ui';
+import { Card, EmptyState, PageHeader, StatTile, StatusChip } from '../components/ui';
 import { fmtWhen } from '../format';
 
 const STATUSES = ['draft', 'testing', 'candidate', 'forward_test', 'live', 'rejected', 'retired'];
@@ -17,16 +17,22 @@ export default function StrategiesPage() {
   const [backtests, setBacktests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || '');
   const [busy, setBusy] = useState('');
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
-    const [s, b] = await Promise.all([fetchStrategies().catch(() => []), fetchBacktests().catch(() => [])]);
-    setStrategies(s);
-    setBacktests(b);
-    setLoading(false);
+    try {
+      const [s, b] = await Promise.all([fetchStrategies(), fetchBacktests()]);
+      setStrategies(s);
+      setBacktests(b);
+      setError('');
+    } catch (e) {
+      setError(e.message || 'Could not load strategies');
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => { refresh(); const id = setInterval(refresh, 10000); return () => clearInterval(id); }, [refresh]);
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(''), 4000); return () => clearTimeout(t); }, [toast]);
@@ -76,45 +82,52 @@ export default function StrategiesPage() {
   }
 
   return (
-    <div className="page">
+    <div className="page workspace-page strategies-page">
       {leadingSlot && createPortal(<div className="hdr-title">Strategies</div>, leadingSlot)}
       <div className="page-scroll"><div className="page-inner">
         <PageHeader
+          eyebrow="Research inventory"
           title="Strategies"
-          subtitle="Every strategy is a Spec v2 document: instrument, entry trigger, filters, stop, target, sizing. Strategies are written on disk; this page only reads them."
+          subtitle="Review, validate, and launch every systematic trading idea from one place."
           actions={<Link className="btn" to="/backtests">All backtests</Link>}
         />
         {error && <div className="review-error">{error}</div>}
 
-        <Card>
+        <div className="list-summary">
+          <StatTile label="Total strategies" value={strategies.length} sub="Across all research lines" />
+          <StatTile label="Candidates" value={strategies.filter((s) => s.status === 'candidate').length} sub="Ready for closer review" tone="good" />
+          <StatTile label="Validating" value={backtests.filter((b) => ['queued', 'running'].includes(b.status)).length} sub="Runs currently active" />
+        </div>
+
+        <Card title="Strategy library" sub="Filter the inventory, then open a strategy for its full evidence trail." className="list-card">
           <div className="toolbar-row">
-            <input type="search" placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg><input type="search" placeholder="Search strategies" value={q} onChange={(e) => setQ(e.target.value)} /></div>
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">All statuses</option>
               {STATUSES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
             </select>
-            <span className="inline-note">{rows.length} of {strategies.length}</span>
+            <span className="toolbar-count">{rows.length} of {strategies.length}</span>
           </div>
           {loading ? <div className="review-card-empty">Loading…</div> : rows.length === 0 ? (
             <EmptyState title={strategies.length ? 'Nothing matches' : 'No strategies yet'}
               text={strategies.length ? 'Try another filter.' : 'Add a spec on disk and it will show up here.'} />
           ) : (
             <div className="table-wrap">
-              <table className="data-table">
+              <table className="data-table mobile-cards">
                 <thead>
                   <tr><th>Name</th><th>Market</th><th>Status</th><th>Entry</th><th>Validation</th><th className="num">Runs</th><th>Last run</th><th /></tr>
                 </thead>
                 <tbody>
                   {rows.map(({ s, runs, latestIs, running, last }) => (
                     <tr key={s.id}>
-                      <td><Link className="row-link" to={`/strategies/${s.id}`}>{s.name || 'Untitled'}</Link><div className="inline-note">{s.lineage?.parentId ? 'variant' : 'root'}</div></td>
-                      <td>{s.instrument?.symbol} · {s.timeframes?.primary} · <span className={`review-dir ${s.direction}`}>{s.direction}</span></td>
-                      <td><StatusChip status={s.status} /></td>
-                      <td className="inline-note" title={describeExpr(s.entry?.trigger)}>{describeExpr(s.entry?.trigger)?.slice(0, 48)}</td>
-                      <td>{latestIs ? <><StatusChip status={latestIs.metrics.verdict.status} kind="verdict" /> <span className="inline-note">{latestIs.summary?.trades} trades · PF {latestIs.metrics.profitFactor ?? '—'}</span></> : <span className="inline-note">not validated</span>}</td>
-                      <td className="num">{runs.length}{running ? <span className="inline-note"> · {running} running</span> : ''}</td>
-                      <td className="inline-note nowrap">{last ? <Link to={`/review/${last.id}`}>{fmtWhen(last.createdAt)}</Link> : '—'}</td>
-                      <td className="actions">
+                      <td data-label="Strategy"><Link className="row-link" to={`/strategies/${s.id}`}>{s.name || 'Untitled'}</Link><div className="inline-note">{s.lineage?.parentId ? 'variant' : 'root'}</div></td>
+                      <td data-label="Market">{s.instrument?.symbol} · {s.timeframes?.primary} · <span className={`review-dir ${s.direction}`}>{s.direction}</span></td>
+                      <td data-label="Status"><StatusChip status={s.status} /></td>
+                      <td data-label="Entry" className="inline-note" title={describeExpr(s.entry?.trigger)}>{describeExpr(s.entry?.trigger)?.slice(0, 48)}</td>
+                      <td data-label="Validation">{latestIs ? <><StatusChip status={latestIs.metrics.verdict.status} kind="verdict" /> <span className="inline-note">{latestIs.summary?.trades} trades · PF {latestIs.metrics.profitFactor ?? '—'}</span></> : <span className="inline-note">not validated</span>}</td>
+                      <td data-label="Runs" className="num">{runs.length}{running ? <span className="inline-note"> · {running} running</span> : ''}</td>
+                      <td data-label="Last run" className="inline-note nowrap">{last ? <Link to={`/review/${last.id}`}>{fmtWhen(last.createdAt)}</Link> : '—'}</td>
+                      <td className="actions" data-label="Actions">
                         <button className="btn btn-sm" disabled={busy === s.id} onClick={() => validate(s.id)}>Validate</button>
                         <button className="btn btn-sm btn-primary" disabled={busy === s.id} onClick={() => run(s.id)}>{busy === s.id ? '…' : 'Run backtest'}</button>
                       </td>

@@ -154,6 +154,22 @@ def test_coverage(ingested):
     assert cov["replayCache"] == []
 
 
+def test_daily_direction_transition_statistics():
+    sessions = [
+        {"date": "2026-01-02", "open": 99.0, "close": 100.0},
+        {"date": "2026-01-05", "open": 100.0, "close": 102.0},
+        {"date": "2026-01-06", "open": 103.0, "close": 104.0},  # continues prior up
+        {"date": "2026-01-07", "open": 103.0, "close": 101.0},  # reverses prior up
+        {"date": "2026-01-08", "open": 101.0, "close": 99.0},   # continues prior down
+    ]
+    report = data_store._daily_transition_report(sessions)
+    assert report["transitions"] == 3
+    assert report["closeToClose"]["continuations"] == 2
+    assert report["closeToClose"]["reversals"] == 1
+    assert report["closeToClose"]["continuationRatePct"] == pytest.approx(66.67)
+    assert report["rthOpenToClose"]["samples"] == 3
+
+
 def test_multi_root_nq_and_es(tmp_path):
     """Roots come from symbols, not folders: an NQ day next to an ES day
     yields both continuous tickers, each resolving to its own front month."""
