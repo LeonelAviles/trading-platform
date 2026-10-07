@@ -19,10 +19,13 @@ from tests.test_spec_validation import ORB
 @pytest.fixture
 def setup(agent_db, monkeypatch, tmp_path):
     context = {"windows": {"is": ["2026-04-01", "2026-04-30"], "wf1": ["2026-04-15", "2026-04-30"]},
+               "inSampleSessions": [f"2026-04-{day:02}" for day in range(1, 31)],
                "splitsSha256": "synthetic-splits", "manifestSha256": None, "frontMonthSha256": "synthetic-map",
                "engineConfig": "synthetic config", "inventory": {"bars": [{"path": "synthetic"}], "ticks": []},
                "identityPolicy": "metadata_inventory_not_immutable_snapshot", "entrySnapshots": "unavailable"}
     monkeypatch.setattr(memory, "dataset_context", lambda: copy.deepcopy(context))
+    monkeypatch.setattr(memory.validation, "windows", lambda _: context["windows"])
+    monkeypatch.setattr(memory.validation, "_splits", lambda _: {"inSample": [f"2026-04-{day:02}" for day in range(1, 31)]})
     monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path / "jobs")
     started = []
     def dispatch(jid):
@@ -36,7 +39,9 @@ def setup(agent_db, monkeypatch, tmp_path):
     monkeypatch.setattr(jobs, "start", dispatch)
     strategy = spec.normalize(ORB)
     strategy["execution"]["mode"] = "bars"
+    strategy["exit"]["stop"].update(type="ticks", value=20, structure=None)  # explicit supported synthetic fixture
     strategy["risk"].update(weeklyLossLimitPct=0, maxTradesPerDay=1, stopAfterConsecutiveLosses=1)
+    strategy["risk"]["passCriteria"]["minWalkForwardWindowsPositive"] = 1  # explicit fixture policy for its one WF window
     thread = service.create_thread()["id"]
     plan = {"windows": ["is", "wf1"], "objective": "Synthetic software fixture",
             "comparison": "descriptive", "uncertaintyPolicy": "unresolved; descriptive only",
@@ -247,7 +252,11 @@ def test_technical_failure_is_blocked_not_no_edge(setup, monkeypatch):
 def test_automatic_resume_is_read_only_and_does_not_force_conclusion(setup):
     p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
     with database.session_scope() as db:
-        db.get(AgentRun, q["runId"]).status = "analyzing"
+        run = db.get(AgentRun, q["runId"])
+        run.status = "analyzing"
+        state = copy.deepcopy(run.state_json)
+        state["candidates"][-1]["status"] = "complete"
+        run.state_json = state
     context = {"thread_id": setup.thread, "run_id": q["runId"], "automatic_analysis": True}
     for name in ("run_validation", "save_strategy", "propose_experiment", "conclude_research"):
         with pytest.raises(ValueError, match="read-only"):
@@ -273,7 +282,7 @@ def test_note_ingestion_short_passages_and_immutable_repository_versions(agent_d
 
 def artifact(setup, trades, kind="is"):
     with database.session_scope() as db:
-        row = Backtest(mode="bars", window_kind=kind, status="done", metrics_json={"symbol": "ES1!"})
+        row = Backtest(mode="bars", window_kind=kind, date_from="2026-04-01", date_to="2026-04-30", status="done", metrics_json={"symbol": "ES1!"})
         db.add(row); db.flush()
         jid = row.id
     path = jobs._job_dir(jid)
@@ -442,3 +451,219 @@ def test_dataset_context_labels_absence_and_tracks_engine_code(tmp_path, monkeyp
     assert first["entrySnapshots"] == "unavailable"
     source.write_text("# synthetic version two")
     assert memory.dataset_context()["engineCodeSha256"] != first["engineCodeSha256"]
+
+
+def test_plan_cannot_omit_explicitly_required_walk_forward_evidence(setup):
+    setup.strategy["risk"]["passCriteria"]["minWalkForwardWindowsPositive"] = 2
+    p = proposal(setup, plan={**setup.plan, "windows": ["is"]})
+    assert p["status"] == "draft"
+    assert any("cannot satisfy minWalkForwardWindowsPositive=2" in blocker for blocker in p["blockers"])
+    with pytest.raises(memory.ResearchConflict, match="not executable"):
+        approve(p)
+    assert counts() == (0, 0, 0, 0)
+    # Even selecting the sole available WF window cannot meet the explicit two-window criterion.
+    assert proposal(setup)["status"] == "draft"
+    setup.context["windows"]["wf2"] = ["2026-04-20", "2026-04-30"]
+    complete = proposal(setup, plan={**setup.plan, "windows": ["is", "wf1", "wf2"]})
+    assert complete["blockers"] == []
+
+
+def test_recovery_reconstructs_verdict_after_analysis_reservation_crash(setup, monkeypatch):
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    with database.session_scope() as db:
+        for job in db.query(Backtest).all():
+            job.status = "done"
+        # Simulate process death immediately after the reservation transaction.
+        db.get(AgentRun, q["runId"]).status = "analyzing"
+    monkeypatch.setattr(workflow, "_report_summary", lambda _: ({"verdict": {"status": "fail", "score": 0.5}}, {}))
+    resumed = []
+    def resume(run_id):
+        run = workflow.get(run_id)
+        assert run["candidates"][-1]["status"] == "complete"
+        assert run["candidates"][-1]["verdict"]["status"] == "fail"
+        resumed.append(run_id)
+        return True
+    monkeypatch.setattr(workflow, "_start_resume", resume)
+    assert workflow.recover_pending_runs() == 1 and resumed == [q["runId"]]
+    before = workflow.get(q["runId"])
+    assert workflow.complete_batch(q["runId"]) is None
+    assert workflow.get(q["runId"]) == before  # counters/events are not applied twice
+    raw = copy.deepcopy(setup.strategy)
+    raw["exit"]["target"]["value"] = 2.5
+    raw["lineage"] = {"parentId": q["strategyId"], "trialIndex": 1,
+                      "changedVariable": "exit.target.value", "rationale": "Synthetic next reviewed proposal"}
+    child = proposal(setup, strategy=raw, parent_id=p["id"]); approve(child)
+    assert memory.enqueue(child["id"], setup.thread)["strategyId"] != q["strategyId"]
+
+
+@pytest.mark.parametrize("effective,alias,value,declared", [
+    ("risk.riskPerTradePct", "sizing.value", 0.75, "risk.riskPerTradePct"),
+    ("sizing.maxContracts", "risk.maxContracts", 3, "sizing.maxContracts"),
+    ("constraints.maxTradesPerDay", "risk.maxTradesPerDay", 2, "constraints.maxTradesPerDay"),
+    ("constraints.stopAfterConsecutiveLosses", "risk.stopAfterConsecutiveLosses", 2, "constraints.stopAfterConsecutiveLosses"),
+])
+def test_one_logical_risk_change_keeps_exact_approved_aliases(setup, effective, alias, value, declared):
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    with database.session_scope() as db:
+        run = db.get(AgentRun, q["runId"])
+        run.status = "awaiting_approval"
+        state = copy.deepcopy(run.state_json)
+        state["candidates"][-1]["status"] = "complete"
+        run.state_json = state
+    raw = copy.deepcopy(setup.strategy)
+    for path in (effective, alias):
+        section, key = path.split(".")
+        raw[section][key] = value
+    raw["lineage"] = {"parentId": q["strategyId"], "trialIndex": 1,
+                      "changedVariable": declared, "rationale": "One reviewed logical risk choice"}
+    # A different executable choice in addition to the aliases remains forbidden.
+    invalid = copy.deepcopy(raw)
+    invalid["exit"]["target"]["value"] = 3.0
+    bad = proposal(setup, strategy=invalid, parent_id=p["id"]); approve(bad)
+    with pytest.raises(memory.ResearchConflict, match="exactly one changed variable"):
+        memory.enqueue(bad["id"], setup.thread)
+    child = proposal(setup, strategy=raw, parent_id=p["id"]); approve(child)
+    queued = memory.enqueue(child["id"], setup.thread)
+    saved = strategy_store.get_strategy(queued["strategyId"])
+    for path in (effective, alias):
+        section, key = path.split(".")
+        assert saved[section][key] == value
+    assert memory.get(child["id"], setup.thread)["document"]["strategy"] == child["document"]["strategy"]
+
+
+@pytest.mark.parametrize("mutation", ["job_dates", "trade_date", "timestamp", "daily_returns", "missing_dates"])
+def test_mislabeled_holdout_evidence_is_blocked_everywhere(setup, mutation):
+    sid = strategy_store.save_strategy(setup.strategy)["id"]
+    trade = {"pnlUsd": 42, "sessionDate": "2026-04-01"}
+    jid = artifact(setup, [trade])
+    path = jobs._job_dir(jid) / "trades.json"
+    payload = json.loads(path.read_text())
+    with database.session_scope() as db:
+        row = db.get(Backtest, jid)
+        row.strategy_id = sid
+        row.metrics_json = {**row.metrics_json, "netPnl": 42, "trades": 1}
+        if mutation == "job_dates":
+            row.date_from, row.date_to = "2026-05-01", "2026-05-31"
+        if mutation == "missing_dates":
+            row.date_from = None
+    if mutation == "trade_date":
+        payload["trades"][0]["sessionDate"] = "2026-05-01"
+    if mutation == "timestamp":
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        payload["trades"][0]["entryTime"] = datetime(2026, 5, 1, 10, tzinfo=ZoneInfo("America/New_York")).timestamp()
+    if mutation == "daily_returns":
+        payload["dailyReturns"] = [{"date": "2026-05-01", "returnPct": 42}]
+    path.write_text(json.dumps(payload))
+    for read in (lambda: evidence.trade_evidence(jid, 0, 10),
+                 lambda: evidence.compare_groups(jid, {}, {}, None),
+                 lambda: evidence.stability([jid], []),
+                 lambda: tools.execute("get_validation", {"strategy_id": sid})):
+        with pytest.raises(ValueError, match="scope|permitted"):
+            read()
+    result, _ = tools.execute("list_backtest_jobs", {"strategy_id": sid, "limit": 20})
+    assert result["jobs"][0]["metrics"] is None and result["jobs"][0]["evidenceUnavailable"]
+
+
+def test_approved_evidence_uses_pinned_sessions_after_split_changes(setup, monkeypatch):
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    jid = next(item["jobId"] for item in q["evidence"] if item["window"] == "is")
+    with database.session_scope() as db:
+        db.get(Backtest, jid).status = "done"
+    (jobs._job_dir(jid) / "trades.json").write_text(json.dumps({"trades": [{"pnlUsd": 1, "sessionDate": "2026-04-01"}]}))
+    monkeypatch.setattr(memory.validation, "_splits", lambda _: {"inSample": ["2026-06-01"]})
+    assert evidence.trade_evidence(jid, 0, 10)["total"] == 1
+
+
+@pytest.mark.parametrize("field,value", [("stop", {"type": "structure", "structure": "swing_low"}),
+                                          ("target", {"type": "level", "level": "vwap"})])
+def test_implicit_exit_fallbacks_are_not_approved(setup, field, value):
+    raw = copy.deepcopy(setup.strategy)
+    raw["exit"][field].update(value)
+    assert any("structure/level exits are unsupported" in e for e in executable_errors(raw))
+
+
+@pytest.mark.parametrize("name,params", [("opening_range_high", {"minutes": None}),
+                                         ("sma", {"period": 0}), ("sma", {"period": -1}),
+                                         ("sma", {"period": None}), ("sma", {"period": "20"}),
+                                         ("ema", {"period": None})])
+def test_primitive_parameters_must_be_executable_choices(setup, name, params):
+    raw = copy.deepcopy(setup.strategy)
+    raw["entry"]["trigger"] = {"op": "gt", "args": [{"field": "close"}, {"ind": name, "params": params}]}
+    assert executable_errors(raw)
+
+
+@pytest.mark.parametrize("mode,override,allowed", [("ticks", -1, False), ("ticks", 3, False),
+                                                   ("ticks", 0, True), ("ticks", 1, True), ("bars", -1, False)])
+def test_exact_slippage_approvals_match_worker_support(setup, mode, override, allowed):
+    raw = copy.deepcopy(setup.strategy)
+    raw["execution"].update(mode=mode, slippageTicksOverride=override)
+    assert (not executable_errors(raw)) == allowed
+
+
+def test_null_slippage_and_source_assertions_are_in_exact_snapshot(setup):
+    source = knowledge.ingest_text(title="Selected source", content="Attributed synthetic research passage.", kind="selected_source",
+                                   source_url="https://example.test/source", author="User-asserted author", license_name="User-asserted license")
+    chunk = knowledge.search("Attributed synthetic")[0]
+    exact = knowledge.passage(chunk["id"])
+    assert exact["provenance"]["author"] == "User-asserted author"
+    assert exact["provenance"]["license"] == "User-asserted license"
+    p = memory.propose(setup.thread, "Synthetic proposal", setup.strategy, setup.plan, [], [chunk["id"]])
+    assertions = p["document"]["passages"][0]["provenance"]
+    assert assertions["author"] == exact["provenance"]["author"] and assertions["license"] == exact["provenance"]["license"]
+    assert "fullText" not in assertions
+    effective = p["document"]["effectiveExecution"]
+    assert effective["requestedSlippageTicksOverride"] is None and effective["slippageSource"] == "engineConfig"
+    assert effective["slippageTicks"] == 1  # actual committed configuration, not a new policy
+    assert source["revision"] == exact["revision"]
+
+
+def test_list_diff_rejects_two_independent_filter_changes(setup):
+    setup.strategy["filters"] = [{"op": "gt", "args": [{"field": "close"}, 100]},
+                                 {"op": "gt", "args": [{"field": "volume"}, 10]}]
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    with database.session_scope() as db:
+        run = db.get(AgentRun, q["runId"])
+        run.status = "awaiting_approval"
+        state = copy.deepcopy(run.state_json)
+        state["candidates"][-1]["status"] = "complete"
+        run.state_json = state
+    raw = copy.deepcopy(setup.strategy)
+    raw["filters"][0]["args"][1] = 101
+    raw["filters"][1]["args"][1] = 20
+    raw["lineage"] = {"parentId": q["strategyId"], "trialIndex": 1, "changedVariable": "filters", "rationale": "Synthetic edits"}
+    child = proposal(setup, strategy=raw, parent_id=p["id"]); approve(child)
+    with pytest.raises(memory.ResearchConflict, match="exactly one changed variable"):
+        memory.enqueue(child["id"], setup.thread)
+    raw["filters"][1]["args"][1] = 10
+    raw["lineage"]["changedVariable"] = "filters[0].args[1]"
+    child = proposal(setup, strategy=raw, parent_id=p["id"]); approve(child)
+    assert memory.enqueue(child["id"], setup.thread)["strategyId"] != q["strategyId"]
+
+
+def test_research_report_reuses_verified_artifacts_without_unchecked_reads(setup, monkeypatch):
+    sid = strategy_store.save_strategy(setup.strategy)["id"]
+    jid = artifact(setup, [{"pnlUsd": 42, "sessionDate": "2026-04-01"}])
+    with database.session_scope() as db:
+        row = db.get(Backtest, jid)
+        row.strategy_id = sid
+        row.metrics_json = {**row.metrics_json, "netPnl": 42, "trades": 1}
+    monkeypatch.setattr(jobs, "load_trades", lambda *_: pytest.fail("unverified reread"))
+    monkeypatch.setattr(jobs, "load_daily_returns", lambda *_: pytest.fail("unverified reread"))
+    monkeypatch.setattr(memory.validation.mc, "run_all", lambda *_: {"bootstrap": {"maxDrawdownPct": {"p95": 0}}})
+    report, _ = tools.execute("get_validation", {"strategy_id": sid})
+    assert report["inSample"]["netPnl"] == 42 and report["oosHidden"] is True
+
+
+def test_null_tick_slippage_rejects_unsupported_effective_config(setup, monkeypatch, tmp_path):
+    from research_agent import readiness
+    import yaml
+    config = yaml.safe_load(readiness.CONFIG_PATH.read_text())
+    config["costs"]["slippage_ticks_market"] = 3
+    path = tmp_path / "instruments.yaml"
+    path.write_text(yaml.safe_dump(config))
+    monkeypatch.setattr(readiness, "CONFIG_PATH", path)
+    raw = copy.deepcopy(setup.strategy)
+    raw["execution"].update(mode="ticks", slippageTicksOverride=None)
+    assert readiness.effective_execution(raw)["slippageTicks"] == 3
+    assert any("ticks supports only 0 or 1" in error for error in readiness.executable_errors(raw))

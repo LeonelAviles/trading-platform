@@ -45,3 +45,24 @@ def test_user_overrides_and_oos_and_dsr_gate():
     merged = vd.with_defaults(risk)
     assert merged["accountSize"] == 100000 and merged["passCriteria"]["minTradesInSample"] == 50
     assert merged["passCriteria"]["maxDrawdownPct"] == 10
+
+
+def test_missing_required_evidence_is_untestable_not_pass():
+    base = {"inSample": _is(), "monteCarlo": {"bootstrap": {"maxDrawdownPct": {"p95": 9}}}}
+    for windows in ([], [{"netPnl": 100}], [{"netPnl": 100}, {"netPnl": None}]):
+        result = vd.evaluate({**base, "walkForward": windows}, {"passCriteria": {"minWalkForwardWindowsPositive": 2}})
+        assert result.untestable and not result.passes and result.status == "untestable"
+        assert any("unavailable required evidence: walk-forward" in failure for failure in result.failures)
+    # Zero explicitly removes the requirement; no new policy is substituted.
+    assert vd.evaluate(base, {"passCriteria": {"minWalkForwardWindowsPositive": 0}}).passes
+
+
+def test_missing_required_metric_or_uncertainty_cannot_pass():
+    base = {"inSample": _is(), "walkForward": [{"netPnl": 100}, {"netPnl": 50}]}
+    result = vd.evaluate(base, None)
+    assert result.untestable and not result.passes
+    assert any("Monte Carlo" in failure for failure in result.failures)
+    complete = {**base, "monteCarlo": {"bootstrap": {"maxDrawdownPct": {"p95": 9}}}}
+    for field in ("profitFactor", "expectancyR", "maxDrawdownPct"):
+        result = vd.evaluate({**complete, "inSample": _is(**{field: None})}, None)
+        assert result.untestable and not result.passes

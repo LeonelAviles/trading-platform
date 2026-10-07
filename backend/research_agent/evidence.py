@@ -5,14 +5,14 @@ import hashlib
 import json
 import math
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import numpy as np
 
 import database
-from engine import jobs
-from models import Backtest, ResearchProposal
+from engine import jobs, validation
+from models import Backtest, ResearchEvidence, ResearchProposal
 
 ALLOWED_WINDOWS = {"is", "wf1", "wf2", "wf3"}
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -20,15 +20,57 @@ MAX_TRADES = 100_000
 MAX_BOOTSTRAP_DRAWS = 2_000_000
 
 
-def _artifact(job_id: str) -> tuple[dict, list[dict], str]:
+def permitted_sessions(meta: dict) -> set[str]:
+    """Verify actual job bounds, never trust the caller-supplied window label."""
+    kind = meta.get("windowKind")
+    if kind not in ALLOWED_WINDOWS or meta.get("symbol") != "ES1!":
+        raise ValueError("research scope requires ES1! IS/WF evidence; OOS/full are unavailable")
+    with database.session_scope() as db:
+        proposal = (db.query(ResearchProposal).join(ResearchEvidence, ResearchEvidence.proposal_id == ResearchProposal.id)
+                    .filter(ResearchEvidence.job_id == meta["id"]).one_or_none())
+        if proposal:
+            dataset = proposal.document_json["dataset"]
+            windows, sessions = dataset.get("windows", {}), dataset.get("inSampleSessions", [])
+        else:
+            windows = validation.windows("ES")
+            sessions = (validation._splits("ES") or {}).get("inSample", [])
+    try:
+        start, end = date.fromisoformat(meta["dateFrom"]), date.fromisoformat(meta["dateTo"])
+        low, high = (date.fromisoformat(d) for d in windows[kind])
+        allowed = {date.fromisoformat(d).isoformat() for d in sessions if start <= date.fromisoformat(d) <= end}
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("research evidence date scope is unverifiable") from exc
+    if not allowed or start > end or start < low or end > high:
+        raise ValueError("research evidence dates are outside the permitted frozen IS/WF scope")
+    return allowed
+
+
+def _verify_artifact_sessions(data: dict, allowed: set[str]) -> None:
+    for trade in data["trades"]:
+        session = trade.get("sessionDate")
+        if session not in allowed:
+            raise ValueError("trade session is missing or outside permitted research scope")
+        for key in ("entryTime", "exitTime"):
+            if trade.get(key) is not None:
+                try:
+                    day = datetime.fromtimestamp(trade[key], ZoneInfo("America/New_York")).date().isoformat()
+                except (ValueError, OverflowError, OSError, TypeError) as exc:
+                    raise ValueError("trade timestamp scope is unverifiable") from exc
+                if day != session or day not in allowed:
+                    raise ValueError("trade timestamp conflicts with permitted research session")
+    daily = data.get("dailyReturns", [])
+    if not isinstance(daily, list) or any(not isinstance(row, dict) or row.get("date") not in allowed for row in daily):
+        raise ValueError("daily-return evidence is outside permitted research scope")
+
+
+def verified_artifact(job_id: str) -> tuple[dict, dict, str]:
     with database.session_scope() as db:
         row = db.get(Backtest, job_id)
         if not row or row.status != "done" or row.window_kind not in ALLOWED_WINDOWS:
             raise ValueError("evidence requires a completed IS/WF job; OOS/full are unavailable to research")
         meta = jobs._row_to_job(row)
         path = row.trades_path
-    if meta.get("symbol") != "ES1!":
-        raise ValueError("research evidence currently supports ES1! only")
+    allowed = permitted_sessions(meta)
     from pathlib import Path
     artifact = Path(path) if path else jobs._job_dir(job_id) / "trades.json"
     if not artifact.is_absolute():
@@ -43,8 +85,14 @@ def _artifact(job_id: str) -> tuple[dict, list[dict], str]:
         raise ValueError("trade evidence unavailable: malformed artifact")
     if len(data["trades"]) > MAX_TRADES or any(not isinstance(t, dict) for t in data["trades"]):
         raise ValueError("trade evidence must contain at most 100,000 trade objects")
+    _verify_artifact_sessions(data, allowed)
     # Do not normalize legacy records here: that invents zero MAE/MFE and fees.
-    return meta, data["trades"], hashlib.sha256(raw).hexdigest()
+    return meta, data, hashlib.sha256(raw).hexdigest()
+
+
+def _artifact(job_id: str) -> tuple[dict, list[dict], str]:
+    meta, data, artifact_hash = verified_artifact(job_id)
+    return meta, data["trades"], artifact_hash
 
 
 def trade_evidence(job_id: str, offset: int, limit: int) -> dict:

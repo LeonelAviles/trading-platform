@@ -84,7 +84,16 @@ def report(strategy_id: str, mode: str | None = None, risk: dict | None = None, 
         rows = q.order_by(Backtest.created_at.desc()).all()
         latest: dict[str, Backtest] = {}
         for r in rows:
-            latest.setdefault(r.window_kind, r)
+            if include_oos or r.window_kind in {"is", "wf1", "wf2", "wf3"}:
+                latest.setdefault(r.window_kind, r)
+        verified = {}
+        if not include_oos:
+            # A manually created job can be labeled IS while requesting OOS
+            # dates. Vet the selected artifacts and reuse those exact bytes for
+            # uncertainty calculations; never reopen an unverified trade file.
+            from research_agent import evidence
+            for row in latest.values():
+                _, verified[row.id], _ = evidence.verified_artifact(row.id)
         picked = {k: {"id": r.id, "metrics": dict(r.metrics_json or {}), "dateFrom": r.date_from, "dateTo": r.date_to,
                       "mode": r.mode, "createdAt": r.created_at} for k, r in latest.items()}
 
@@ -97,11 +106,12 @@ def report(strategy_id: str, mode: str | None = None, risk: dict | None = None, 
     oos_m = metrics("oos") if include_oos else None
     monte = deflated = None
     if picked.get("is"):
-        trades = jobs.load_trades(picked["is"]["id"])
+        verified_is = verified.get(picked["is"]["id"])
+        trades = verified_is["trades"] if verified_is is not None else jobs.load_trades(picked["is"]["id"])
         pnls = [t["pnlUsd"] for t in trades]
         account = float((risk or {}).get("accountSize") or (is_m or {}).get("accountSize") or 100_000)
         monte = mc.run_all(pnls, account) if pnls else None
-        daily = jobs.load_daily_returns(picked["is"]["id"])
+        daily = verified_is.get("dailyReturns", []) if verified_is is not None else jobs.load_daily_returns(picked["is"]["id"])
         if daily:
             deflated = dsr_mod.deflated_sharpe([d["returnPct"] / 100 for d in daily], trials=max(1, trial_index))
     job = {"inSample": is_m, "walkForward": wf, "outOfSample": oos_m, "monteCarlo": monte, "deflatedSharpe": deflated}

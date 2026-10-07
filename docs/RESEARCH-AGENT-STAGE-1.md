@@ -43,8 +43,14 @@ not add authentication or multi-tenant isolation).
    nonzero `weeklyLossLimitPct`, non-null `weeklyTargetPct`, `vol_scaled`, and
    more than one concurrent position block execution. Explicitly disabling an
    unsupported control requires the user's choice; the agent must not choose it.
-   Duplicated risk/sizing/constraint settings must agree. Opening-range exits
-   require an unambiguous explicit OR length in the referenced primitives.
+   Duplicated risk/sizing/constraint settings must agree.
+   Structural stops and level targets currently block exact-approved execution:
+   their worker fallback distances and implicit swing lookbacks are unsupported.
+   Primitive lookbacks/counts must be positive, applicable size/distance parameters
+   nonnegative, and numeric choices finite and correctly typed; null is accepted
+   only for a documented optional price parameter. Tick slippage supports only
+   0 or 1; a null override resolves to the configuration captured in
+   `document.effectiveExecution`, which also states commission per side.
    Inference via a deflated-Sharpe threshold is blocked while total search trials
    are unknown; no default significance policy is chosen.
 
@@ -74,9 +80,18 @@ not add authentication or multi-tenant isolation).
    Proposal status `queued` records consumed approval; individual `evidence`
    statuses and the workflow describe completion/failure.
 
+The selected test windows must be sufficient for the explicitly supplied
+`minWalkForwardWindowsPositive`; no missing window is counted as passed. Required
+but unavailable report metrics produce `untestable`, never pass/champion.
+
 Every approved child is a new strategy version, links its parent proposal, and
-must specify one changed executable field, matching `lineage.changedVariable`,
-`lineage.parentId`, incremented `trialIndex`, and a rationale. Prior proposals,
+must specify one logical changed executable choice, matching `lineage.changedVariable`,
+`lineage.parentId`, incremented `trialIndex`, and a rationale. Synchronized aliases
+count as one choice with canonical paths `risk.riskPerTradePct` (alias sizing.value
+for fixed risk), `sizing.maxContracts`, `constraints.maxTradesPerDay`, and
+`constraints.stopAfterConsecutiveLosses`. Exact approved snapshots retain both
+fields. Array changes recurse to indexed paths such as `filters[0].args[1]`;
+changing multiple independent array parameters remains forbidden. Prior proposals,
 rejection reasons, exact job IDs and strategy snapshots remain available. The
 controller enforces the existing five-change / three-non-improvement budget.
 Automatic completion analysis is read-only and waits for user review. Technical
@@ -95,7 +110,9 @@ across API processes. One transaction creates the immutable version, workflow,
 all job rows and evidence links. Files are staged before commit and cleaned on
 rollback; no worker is dispatched before commit. A crash before commit may leave
 an unreferenced job directory, never a runnable database row. A crash after commit
-is recovered by the existing durable job recovery. Identical queue requests do
+is recovered by the existing durable job recovery. If a crash follows analysis
+reservation but precedes verdict persistence, recovery reconstructs the candidate
+from its completed jobs before resuming; counters and events are applied once. Identical queue requests do
 not dispatch twice. Worker input verification rejects changed approved strategy
 artifacts or changed dataset/config inventories before launching Nautilus. Legacy
 agent jobs without a proposal are rejected at this worker boundary too; an upgrade
@@ -109,7 +126,8 @@ owner. A dispatch failure after commit leaves a recoverable queued batch.
 Normal startup runs Alembic to head. Stop old backend workers before upgrading;
 this is a code/migration deliverable, not an instruction to deploy. Back up the
 metadata DB before any downgrade. Downgrading removes the new audit tables and
-loses their history; old strategies/jobs remain. No market-data migration occurs.
+loses their history; old strategies/jobs remain. No market-data migration occurs. Any pre-release proposal lacking pinned session
+membership cannot provide verifiable research evidence and needs a new proposal.
 
 ## Selected-source ingestion and citations
 
@@ -135,7 +153,11 @@ concept-to-concept knowledge graph construction.
   trades (1–200 per page). The HTTP counterpart is
   `GET /api/agent/evidence/{jobId}/trades?offset=0&limit=50`. Missing legacy fields
   remain null. Every entry snapshot is explicitly unavailable; an `entryContextId`
-  alone is not snapshot evidence. OOS/full jobs are refused.
+  alone is not snapshot evidence. OOS/full jobs are refused. IS/WF labels alone
+  are insufficient: actual requested dates, trade sessions/timestamps and daily
+  return dates must fit permitted frozen ranges/session membership. Research
+  validation reports and job-list metrics use the same gate. Unverifiable legacy
+  dates fail closed; approved batches use their pinned session membership.
 - `compare_trade_groups` selects by direction, exit reason, regime, session range
   or entry hour (ET) and reports sample sizes, overlap, PnL and R observations.
   Optional uncertainty requires an explicit policy with `method` equal to
@@ -159,7 +181,7 @@ heuristics; no multiplicity-adjusted significance is claimed.
 
 ## Bounded coverage and verification
 
-Dataset identity includes split/manifest/front-month hashes, engine source hash and configuration
+Dataset identity includes frozen in-sample session membership, split/manifest/front-month hashes, engine source hash and configuration
 and a file-size/mtime inventory of ES derived partitions. It is **not an immutable
 market-data snapshot** or full content hash of market files, does not verify every
 requested session's quality, and cannot prevent writes during a running worker.
@@ -181,3 +203,9 @@ history, and removal of the obsolete non-atomic child-queue implementation.
 Migration upgrade/downgrade/upgrade preserves legacy rows without synthesizing
 approvals. The single-worker and metadata-only identity limitations above remain
 explicit rather than being presented as distributed leases or data snapshots.
+
+Independent review regressions additionally cover missing required WF/metric
+evidence, interrupted analysis reconstruction, canonical risk aliases and nested
+array diffs, mislabeled holdout artifacts across every research read path,
+implicit exit fallbacks, primitive parameter domains, effective slippage, and
+source-author/license assertions in passage retrieval and approval snapshots.

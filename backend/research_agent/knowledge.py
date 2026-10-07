@@ -321,6 +321,13 @@ def ingest_text(*, title: str, content: str, kind: str, source_url: str | None,
                 "kind": kind, "trust": "untrusted_user_supplied_reference"}
 
 
+def source_provenance(db, source_id: str) -> dict:
+    """Return source assertions without duplicating the submitted full text."""
+    root = (db.query(KnowledgeNode).filter(KnowledgeNode.source_id == source_id,
+            KnowledgeNode.kind.in_(("repository", "user_note", "selected_source"))).one_or_none())
+    return {k: v for k, v in (root.properties_json or {}).items() if k != "fullText"} if root else {}
+
+
 def passage(chunk_id: str) -> dict:
     with database.session_scope() as db:
         chunk = db.get(KnowledgeChunk, chunk_id)
@@ -331,5 +338,6 @@ def passage(chunk_id: str) -> dict:
         return {"id": chunk.id, "content": chunk.content, "contentHash": chunk.content_hash,
                 "position": chunk.position, "sourceId": source.id, "source": source.name,
                 "revision": source.revision, "sourceUrl": source.url or None,
-                "path": chunk.path, "heading": chunk.heading, "provenance": node.properties_json,
+                "path": chunk.path, "heading": chunk.heading,
+                "provenance": {**source_provenance(db, source.id), **(node.properties_json or {})},
                 "trust": "untrusted_reference", "snapshotUrl": f"/api/agent/knowledge/passages/{chunk.id}"}

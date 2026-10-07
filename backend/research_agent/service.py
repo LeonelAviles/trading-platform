@@ -349,6 +349,8 @@ def continue_workflow(run_id: str, *, client=None) -> dict:
     if not run or run["status"] != "analyzing":
         raise ValueError("workflow is not awaiting analysis")
     current = run["candidates"][-1]
+    if current.get("status") != "complete":
+        raise ValueError("workflow candidate evidence must be recorded before analysis")
     verdict = current.get("verdict") or {}
     must_stop = workflow.should_stop(run)
     action = ("Report a historically passing candidate without claiming significance." if verdict.get("status") == "pass"

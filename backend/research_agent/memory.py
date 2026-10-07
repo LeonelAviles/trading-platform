@@ -19,8 +19,8 @@ from engine import jobs, spec, validation
 from market.paths import get_paths
 from models import (AgentRun, AgentThread, Backtest, KnowledgeChunk, ResearchDecision,
                     ResearchEvidence, ResearchProposal, Strategy, KnowledgeSource, new_id, utc_now)
-from research_agent import workflow
-from research_agent.readiness import executable_errors
+from research_agent import knowledge, workflow
+from research_agent.readiness import executable_errors, effective_execution
 
 
 class ResearchConflict(ValueError):
@@ -44,6 +44,7 @@ def dataset_context() -> dict:
         ]
     return {
         "windows": {k: list(v) for k, v in validation.windows("ES").items() if k in {"is", "wf1", "wf2", "wf3"}},
+        "inSampleSessions": list((validation._splits("ES") or {}).get("inSample", [])),
         "splitsSha256": file_hash(paths.splits), "manifestSha256": file_hash(paths.manifest),
         "frontMonthSha256": file_hash(paths.front_month),
         "engineConfig": CONFIG_PATH.read_text(),
@@ -72,9 +73,18 @@ def plan_errors(plan: dict, strategy: dict, dataset: dict) -> list[str]:
     for kind in selected:
         if kind not in dataset["windows"]:
             errors.append(f"testPlan.windows: {kind} unavailable or outside IS/WF scope")
+    risk = strategy.get("risk") if isinstance(strategy.get("risk"), dict) else {}
+    criteria = risk.get("passCriteria") if isinstance(risk.get("passCriteria"), dict) else {}
+    required_wf = criteria.get("minWalkForwardWindowsPositive")
+    if required_wf is not None:
+        if type(required_wf) is not int or required_wf < 0:
+            errors.append("risk.passCriteria.minWalkForwardWindowsPositive must be an explicit nonnegative integer")
+        elif sum(kind in {"wf1", "wf2", "wf3"} and kind in dataset["windows"] for kind in selected) < required_wf:
+            errors.append(f"testPlan.windows cannot satisfy minWalkForwardWindowsPositive={required_wf}; select sufficient available WF windows or review the criterion in a new proposal")
     if not dataset["splitsSha256"] or not dataset["frontMonthSha256"]:
         errors.append("dataset unavailable: frozen splits and front-month mapping required")
-    mode = (strategy.get("execution") or {}).get("mode")
+    execution = strategy.get("execution") if isinstance(strategy.get("execution"), dict) else {}
+    mode = execution.get("mode")
     for tier in ("bars", "ticks") if mode == "ticks" else ("bars",):
         if not dataset["inventory"][tier]:
             errors.append(f"dataset unavailable: no ES {tier} partitions")
@@ -146,9 +156,10 @@ def propose(thread_id: str, hypothesis: str, strategy: dict, test_plan: dict,
             if not chunk:
                 raise ValueError(f"passage {pid} unavailable")
             source = db.get(KnowledgeSource, chunk.source_id)
-            passages.append({"sourceRevision": source.revision, "sourceUrl": source.url, "sourceName": source.name, "id": pid, "sourceId": chunk.source_id, "contentHash": chunk.content_hash,
+            passages.append({"provenance": knowledge.source_provenance(db, source.id), "sourceRevision": source.revision, "sourceUrl": source.url, "sourceName": source.name, "id": pid, "sourceId": chunk.source_id, "contentHash": chunk.content_hash,
                              "content": chunk.content, "path": chunk.path, "heading": chunk.heading})
         document = {"hypothesis": hypothesis, "strategy": raw, "testPlan": test_plan,
+                    "effectiveExecution": effective_execution(raw),
                     "concepts": concepts, "passages": passages, "dataset": dataset,
                     "scope": "ES historical research only"}
         row = ResearchProposal(id=new_id(), thread_id=thread_id, parent_id=parent_id,

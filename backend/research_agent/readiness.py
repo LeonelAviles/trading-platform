@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import math
 
+import yaml
+
 from pydantic import BaseModel
+from config.instruments import CONFIG_PATH
 
 from engine import expr, spec
 from engine.primitives.base import get_class
@@ -13,8 +16,22 @@ from engine.primitives.base import get_class
 DESCRIPTIVE = {"id", "name", "description", "origin", "lineage", "status", "meta"}
 
 
+def effective_execution(document: dict) -> dict:
+    execution = document.get("execution") if isinstance(document.get("execution"), dict) else {}
+    config = yaml.safe_load(CONFIG_PATH.read_text())
+    override = execution.get("slippageTicksOverride")
+    slippage = config["costs"]["slippage_ticks_market"] if override is None else override
+    return {"mode": execution.get("mode"), "requestedSlippageTicksOverride": override,
+            "slippageTicks": slippage, "slippageSource": "engineConfig" if override is None else "explicit_override",
+            "commissionPerSide": config["roots"]["ES"]["commission_per_side"],
+            "tickSlippageSupport": "0 or 1 only; magnitude above one is not implemented"}
+
+
 def executable_errors(document: dict) -> list[str]:
-    errors = spec.validate_spec(document)
+    try:
+        errors = spec.validate_spec(document)
+    except (TypeError, ValueError, KeyError, OverflowError, ZeroDivisionError) as exc:
+        return [f"invalid executable parameter: {exc}"]
     if errors:
         return errors
     model = spec.StrategySpec.model_validate(document)
@@ -38,8 +55,14 @@ def executable_errors(document: dict) -> list[str]:
         errors.append("research currently supports ES1! only")
     if model.execution.mode not in {"bars", "ticks"}:
         errors.append("L3 research approval is deferred; supported modes are bars and ticks")
+    effective = effective_execution(document)
+    slippage = effective["slippageTicks"]
+    if type(slippage) is not int or slippage < 0 or (model.execution.mode == "ticks" and slippage not in {0, 1}):
+        errors.append("execution.slippageTicksOverride/effective config: require nonnegative integer; ticks supports only 0 or 1")
     if model.execution.mode == "bars" and spec.required_mode(document) != "bars":
         errors.append("execution.mode: these rules require ticks")
+    if model.exit.stop.type == "structure" or model.exit.target.type == "level":
+        errors.append("structure/level exits are unsupported for exact-approved research: the worker can substitute fallback distances and swing lookbacks are implicit; keep the draft unresolved")
     if model.risk.passCriteria.minDeflatedSharpeProb is not None:
         errors.append("risk.passCriteria.minDeflatedSharpeProb: inferential threshold unsupported while total search trials are unknown")
     if model.risk.accountSize <= 0 or model.risk.riskPerTradePct <= 0 or model.risk.maxContracts < 1:
@@ -65,7 +88,6 @@ def executable_errors(document: dict) -> list[str]:
         errors.append("risk/constraint limits must be nonnegative (zero disables supported limits)")
     # Primitive defaults otherwise escape Pydantic's field-presence checks.
     expressions = [model.entry.trigger, *model.filters, *(s.when for s in model.entry.sequence)]
-    or_lengths = set()
     for expression in expressions:
         for node in expr.walk(expression):
             if isinstance(node, (float, int)) and not math.isfinite(node):
@@ -76,12 +98,25 @@ def executable_errors(document: dict) -> list[str]:
                     errors.append(f"expression contains ignored/unsupported fields: {sorted(set(node) - allowed)}")
         for name, params, _tf in expr.referenced_primitives(expression):
             cls = get_class(name)
-            if name in {"opening_range_high", "opening_range_low"} and "minutes" in params:
-                or_lengths.add(params["minutes"])
-            for key in cls.params:
+            for key, descriptor in cls.params.items():
+                value = params.get(key)
+                label = f"{name}.params.{key}"
                 if key not in params:
-                    errors.append(f"{name}.params.{key}: explicit choice required")
-    if model.exit.stop.structure in {"or_low", "or_high"} or model.exit.target.level in {"or_low", "or_high"}:
-        if len(or_lengths) != 1:
-            errors.append("opening-range exits require one unambiguous explicit opening_range_* minutes parameter")
+                    errors.append(f"{label}: explicit choice required")
+                    continue
+                if value is None:
+                    if not (descriptor.type == "price" and descriptor.default is None and not descriptor.required):
+                        errors.append(f"{label}: null is not an executable parameter choice")
+                    continue
+                if descriptor.type == "int" and type(value) is not int:
+                    errors.append(f"{label}: must be an explicit integer")
+                    continue
+                if descriptor.type in {"int", "float", "price"}:
+                    if type(value) not in {int, float} or not math.isfinite(value):
+                        errors.append(f"{label}: finite numeric value required")
+                        continue
+                    if key in {"period", "n", "minutes", "count", "within_bars", "levels", "ratio", "stdev"} and value <= 0:
+                        errors.append(f"{label}: must be positive")
+                    if key in {"ticks", "within_ticks", "max_range_ticks", "min_volume", "min_size", "tail_max"} and value < 0:
+                        errors.append(f"{label}: must be nonnegative")
     return errors

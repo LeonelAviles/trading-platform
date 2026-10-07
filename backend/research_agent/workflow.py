@@ -103,7 +103,17 @@ def start(thread_id: str, strategy: dict, jobs: list[dict]) -> dict:
 
 def _core(spec: dict) -> dict:
     ignored = {"id", "name", "description", "origin", "lineage", "status", "createdAt", "updatedAt"}
-    return {k: copy.deepcopy(v) for k, v in spec.items() if k not in ignored}
+    core = {k: copy.deepcopy(v) for k, v in spec.items() if k not in ignored}
+    # These schema aliases express one worker choice. Canonicalize only when
+    # both explicitly agree; never hide a conflicting field from revision checks.
+    risk, sizing, constraints = core.get("risk", {}), core.get("sizing", {}), core.get("constraints", {})
+    for key, effective in (("maxContracts", sizing), ("maxTradesPerDay", constraints),
+                           ("stopAfterConsecutiveLosses", constraints)):
+        if key in risk and key in effective and risk[key] == effective[key]:
+            risk.pop(key)
+    if sizing.get("type") == "fixed_risk" and "value" in sizing and sizing["value"] == risk.get("riskPerTradePct"):
+        sizing.pop("value")
+    return core
 
 
 def _diff_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
@@ -115,6 +125,15 @@ def _diff_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
                 paths.append(path)
             else:
                 paths.extend(_diff_paths(left[key], right[key], path))
+        return paths
+    if isinstance(left, list) and isinstance(right, list):
+        paths = []
+        for index in range(max(len(left), len(right))):
+            path = f"{prefix}[{index}]"
+            if index >= len(left) or index >= len(right):
+                paths.append(path)
+            else:
+                paths.extend(_diff_paths(left[index], right[index], path))
         return paths
     if left != right:
         return [prefix]
@@ -166,12 +185,14 @@ def complete_batch(run_id: str) -> dict | None:
         from research_agent.memory import _write_reservation
         _write_reservation(db)
         row = db.get(AgentRun, run_id)
-        if row is None or row.status != "running":
+        if row is None or row.status not in {"running", "analyzing"}:
             return None
         related = db.query(Backtest).filter(Backtest.agent_run_id == run_id).all()
         state = dict(row.state_json or {})
         current = next((c for c in reversed(state.get("candidates", [])) if c["strategyId"] == state.get("currentStrategyId")), None)
-        current_ids = set((current or {}).get("jobIds", []))
+        if not current or current.get("status") != "running":
+            return None  # already recorded; never count the same result twice
+        current_ids = set(current.get("jobIds", []))
         batch = [job for job in related if job.id in current_ids]
         if not batch or any(job.status not in TERMINAL for job in batch):
             return None
@@ -196,13 +217,16 @@ def complete_batch(run_id: str) -> dict | None:
         report, metrics, verdict = {}, {}, {"status": "technical_error", "untestable": True, "score": None, "failures": [str(exc)]}
 
     with database.session_scope() as db:
+        _write_reservation(db)
         row = db.get(AgentRun, run_id)
-        state = dict(row.state_json or {})
-        candidates = list(state.get("candidates", []))
+        state = copy.deepcopy(row.state_json or {})
+        candidates = state.get("candidates", [])
         candidate = next(c for c in reversed(candidates) if c["strategyId"] == strategy_id)
+        if state.get("currentStrategyId") != strategy_id or candidate.get("status") != "running":
+            return None  # another recovery already applied this result
         technical_failure = (verdict or {}).get("untestable") or (verdict or {}).get("status") == "technical_error"
         candidate["status"] = "blocked" if technical_failure else "complete"
-        if technical_failure:
+        if technical_failure and row.status == "analyzing":
             row.status = "blocked"
         candidate["verdict"] = verdict
         candidate["metrics"] = metrics
@@ -349,11 +373,13 @@ def recover_pending_runs() -> int:
         pending = [(row.id, row.status) for row in rows]
 
     resumed = 0
-    for run_id, status in pending:
-        if status == "running":
-            run = complete_batch(run_id)
-            if not run or run["status"] != "analyzing":
-                continue
+    for run_id, _status in pending:
+        # An analyzing reservation can survive a crash before its verdict is
+        # committed. Reconstruct it from the exact completed jobs before asking
+        # the model to interpret anything. complete_batch is idempotent.
+        run = complete_batch(run_id) or get(run_id)
+        if not run or run["status"] != "analyzing" or not run["candidates"] or run["candidates"][-1].get("status") != "complete":
+            continue
         if _start_resume(run_id):
             resumed += 1
     return resumed

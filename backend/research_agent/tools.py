@@ -341,7 +341,18 @@ def execute(name: str, arguments: dict, context: dict | None = None) -> tuple[ob
             metrics = r.get("metrics") or {}
             entry["metrics"] = {k: metrics[k] for k in ("trades", "netPnl", "winRate", "profitFactor",
                                                         "expectancyR", "maxDrawdownPct") if k in metrics} or None
-            if r.get("windowKind") == "oos":
+            scope_error = None
+            if r.get("windowKind") in evidence.ALLOWED_WINDOWS:
+                try:
+                    if r.get("status") == "done":
+                        evidence._artifact(r["id"])
+                    else:
+                        evidence.permitted_sessions(r)
+                except ValueError as exc:
+                    scope_error = str(exc)
+            if scope_error:
+                entry.update(message=None, progress=None, metrics=None, evidenceUnavailable=scope_error)
+            if r.get("windowKind") not in evidence.ALLOWED_WINDOWS:
                 # Defense in depth: a research conversation never sees OOS outcomes.
                 entry.update(message=None, progress=None, metrics=None, oosHidden=True)
             out.append(entry)
