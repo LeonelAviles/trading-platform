@@ -83,6 +83,11 @@ def save_strategy(doc: dict, *, strategy_id: str | None = None) -> dict:
     norm["id"] = sid
     with database.session_scope() as db:
         row = db.get(Strategy, sid)
+        if row is not None and row.origin_type == "agent":
+            old_core = {k: v for k, v in row.spec_json.items() if k not in {"status"}}
+            new_core = {k: v for k, v in norm.items() if k not in {"status"}}
+            if old_core != new_core:
+                raise StrategyError("agent strategy versions are immutable; create a new proposal")
         if row is None:
             row = Strategy(id=sid, created_at=_now())
             db.add(row)

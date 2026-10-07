@@ -1,4 +1,5 @@
 import builtins
+import copy
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -168,7 +169,7 @@ def test_workflow_only_accepts_passing_champion(agent_db):
     run = workflow.start(thread["id"], root, jobs)
     with database.session_scope() as db:
         row = db.get(AgentRun, run["id"])
-        state = dict(row.state_json)
+        state = copy.deepcopy(row.state_json)
         state["candidates"][0]["verdict"] = {"status": "fail", "score": 0.5}
         row.state_json = state
         row.status = "analyzing"

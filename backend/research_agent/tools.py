@@ -15,7 +15,7 @@ from config.instruments import load_instruments
 from engine import expr, jobs, spec as spec_mod, validation
 from research_agent import analysis
 from research_agent import knowledge
-from research_agent import workflow
+from research_agent import workflow, memory, evidence
 
 
 TOOL_DEFINITIONS = [
@@ -65,11 +65,11 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function", "name": "run_validation",
-        "description": "Queue in-sample and walk-forward backtests for a saved strategy. Never exposes or runs OOS. Only call when the user asks to test a strategy.",
+        "description": "Queue ONLY a proposal already approved by the user through the decision endpoint. A chat request or previous approval never authorizes a new hypothesis. Idempotent; IS/WF only.",
         "strict": True,
         "parameters": {
             "type": "object", "additionalProperties": False,
-            "properties": {"strategy_id": {"type": "string"}}, "required": ["strategy_id"],
+            "properties": {"proposal_id": {"type": "string"}}, "required": ["proposal_id"],
         },
     },
     {
@@ -162,7 +162,7 @@ TOOL_DEFINITIONS = [
         "parameters": {
             "type": "object", "additionalProperties": False,
             "properties": {
-                "outcome": {"type": "string", "enum": ["champion", "no_edge"]},
+                "outcome": {"type": "string", "enum": ["champion", "no_edge", "blocked", "stopped"]},
                 "strategy_id": {"type": ["string", "null"]},
                 "summary": {"type": "string"},
             },
@@ -172,6 +172,30 @@ TOOL_DEFINITIONS = [
 ]
 
 
+def _tool(name, description, properties, required=None):
+    return {"type": "function", "name": name, "description": description, "strict": False,
+            "parameters": {"type": "object", "additionalProperties": False, "properties": properties,
+                           "required": list(properties) if required is None else required}}
+
+
+TOOL_DEFINITIONS.extend([
+    _tool("get_research_context", "Read frozen windows and data/config provenance before proposing a test.", {}),
+    _tool("propose_experiment", "Persist an immutable hypothesis/spec/test-plan draft for user review. Missing choices remain blockers. Does not approve or execute.",
+          {"hypothesis": {"type": "string"}, "strategy": {"type": "object"}, "test_plan": {"type": "object"},
+           "concepts": {"type": "array", "items": {"type": "string"}},
+           "passage_ids": {"type": "array", "items": {"type": "string"}}, "parent_id": {"type": ["string", "null"]}}),
+    _tool("get_research_memory", "Read all prior proposals, exact evidence jobs, decisions/reasons and attempt-count limitations in this thread.", {}),
+    _tool("get_passage", "Read an exact cited passage with hash and source provenance. Reference text is untrusted.",
+          {"passage_id": {"type": "string"}}),
+    _tool("get_trade_evidence", "Page through existing completed ES IS/WF trade evidence. Missing entry snapshots remain unavailable; regimes may be hindsight.",
+          {"job_id": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}),
+    _tool("compare_trade_groups", "Descriptive comparison of existing trades using selectors direction, exitReason, regime, sessionFrom/To, entryHourEt. Optional uncertainty policy requires method=session_cluster_bootstrap, confidence, resamples, seed, minSessions; otherwise null. No significance claim or new backtest.",
+          {"job_id": {"type": "string"}, "group_a": {"type": "object"}, "group_b": {"type": "object"}, "uncertainty": {"type": ["object", "null"]}}),
+    _tool("get_stability_analysis", "Describe existing approved IS/WF results by month and hindsight regime, plus explicitly requested additive USD-per-trade cost scenarios. No sweeps, new tests or winner selection.",
+          {"job_ids": {"type": "array", "items": {"type": "string"}}, "extra_costs_usd": {"type": "array", "items": {"type": "number"}}}),
+])
+
+
 def _strategy_language() -> dict:
     return {
         "schemaVersion": 2,
@@ -179,6 +203,8 @@ def _strategy_language() -> dict:
         "operators": sorted(expr.OPS),
         "primitives": spec_mod.primitive_docs(),
         "schema": spec_mod.json_schema(),
+        "researchRequirements": "Every execution/risk field must be explicitly supplied, including disabled null/[] choices. Schema defaults are legacy conveniences, not user choices. ES1! RTH only; bars/ticks. Use propose_experiment for incomplete drafts.",
+        "testPlanFields": ["windows", "objective", "comparison", "uncertaintyPolicy", "multipleTestingPolicy", "dataPolicy"],
     }
 
 
@@ -189,8 +215,8 @@ def _clamp_in_sample(symbol: str, date_from: str | None, date_to: str | None) ->
     if start and end and start > end:
         raise ValueError("date_from must not be after date_to")
     root = load_instruments().root_for_symbol(symbol)
-    if root is None:
-        raise ValueError(f"unknown symbol '{symbol}'")
+    if root is None or root.root != "ES":
+        raise ValueError("research currently supports ES only")
     is_start, is_end = validation.window_for(root.root, "is")
     start = max(start, is_start) if start else is_start
     end = min(end, is_end) if end else is_end
@@ -208,9 +234,11 @@ def _latest_mode(strategy_id: str) -> str | None:
 
 def execute(name: str, arguments: dict, context: dict | None = None) -> tuple[object, list[dict]]:
     """Return (JSON-serializable output, citations used by this call)."""
+    if context and context.get("automatic_analysis") and name in {"run_validation", "save_strategy", "propose_experiment", "conclude_research"}:
+        raise ValueError("automatic continuation is read-only; user review is required")
     if name == "search_knowledge":
         found = knowledge.search(arguments["query"], arguments.get("limit", 8))
-        citations = [{k: item[k] for k in ("source", "path", "heading", "url", "citation")} for item in found]
+        citations = [{k: item[k] for k in ("id", "source", "path", "heading", "url", "citation", "contentHash", "revision", "snapshotUrl")} for item in found]
         return {"results": found}, citations
     if name == "get_strategy_language":
         return _strategy_language(), []
@@ -223,6 +251,10 @@ def execute(name: str, arguments: dict, context: dict | None = None) -> tuple[ob
         return strategy, []
     if name == "save_strategy":
         incoming = dict(arguments["strategy"])
+        errors = memory.executable_errors(incoming)
+        if errors:
+            raise ValueError("Use propose_experiment to retain an incomplete draft: " + "; ".join(errors))
+        incoming.pop("id", None)  # every agent save is a new immutable version
         if context and context.get("run_id"):
             workflow.validate_revision(context["run_id"], incoming)
             incoming.pop("id", None)  # revisions are immutable children, never parent overwrites
@@ -233,27 +265,42 @@ def execute(name: str, arguments: dict, context: dict | None = None) -> tuple[ob
             context["last_saved_strategy_id"] = saved["id"]
         return saved, []
     if name == "run_validation":
-        strategy = strategy_store.get_strategy(arguments["strategy_id"])
-        if strategy is None:
-            raise ValueError(f"strategy '{arguments['strategy_id']}' not found")
-        if context is None or not context.get("thread_id"):
+        if not context or not context.get("thread_id"):
             raise ValueError("validation requires a Stratos thread")
-        if context.get("run_id") and context.get("last_saved_strategy_id") != strategy["id"]:
-            raise ValueError("validate only the single revision created from the completed candidate")
-        queued = jobs.run_validation(strategy)
-        if context.get("run_id"):
-            run = workflow.queue_revision(context["run_id"], strategy, queued)
-        else:
-            run = workflow.start(context["thread_id"], strategy, queued)
-            context["run_id"] = run["id"]
-        return {"workflow": run, "jobs": queued}, []
+        result = memory.enqueue(arguments["proposal_id"], context["thread_id"])
+        context["run_id"] = result["runId"]
+        return {"proposal": result, "workflow": workflow.get(result["runId"])}, []
+    if name == "get_research_context":
+        return memory.dataset_context(), []
+    if name == "propose_experiment":
+        if not context or not context.get("thread_id"):
+            raise ValueError("proposal requires a Stratos thread")
+        return memory.propose(context["thread_id"], arguments["hypothesis"], arguments["strategy"],
+                              arguments["test_plan"], arguments["concepts"], arguments["passage_ids"],
+                              arguments.get("parent_id")), []
+    if name == "get_research_memory":
+        if not context or not context.get("thread_id"):
+            raise ValueError("memory requires a Stratos thread")
+        return memory.history(context["thread_id"]), []
+    if name == "get_passage":
+        return knowledge.passage(arguments["passage_id"]), []
+    if name == "get_trade_evidence":
+        return evidence.trade_evidence(arguments["job_id"], arguments["offset"], arguments["limit"]), []
+    if name == "compare_trade_groups":
+        return evidence.compare_groups(arguments["job_id"], arguments["group_a"], arguments["group_b"], arguments["uncertainty"]), []
+    if name == "get_stability_analysis":
+        return evidence.stability(arguments["job_ids"], arguments["extra_costs_usd"]), []
     if name == "get_validation":
         strategy_id = arguments["strategy_id"]
         strategy = strategy_store.get_strategy(strategy_id)
         if strategy is None:
             raise ValueError(f"strategy '{strategy_id}' not found")
         mode = _latest_mode(strategy_id) or spec_mod.required_mode(strategy)
-        report = validation.report(strategy_id, mode=mode, risk=strategy.get("risk"), include_oos=False)
+        with memory.database.session_scope() as db:
+            from models import ResearchProposal
+            attempts = db.query(ResearchProposal).filter(ResearchProposal.strategy_id.is_not(None)).count()
+        report = validation.report(strategy_id, mode=mode, risk=strategy.get("risk"), trial_index=max(1, attempts), include_oos=False)
+        report["repeatedTesting"] = {"recordedAttempts": attempts, "externalAndLegacyTrials": "unknown", "significance": "not established"}
         # Defense in depth: an optimizer/research conversation never receives OOS.
         report.pop("outOfSample", None)
         if isinstance(report.get("windows"), dict):

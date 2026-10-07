@@ -139,7 +139,7 @@ def _node(db, source_id: str, kind: str, key: str, title: str, properties: dict 
 
 
 def ingest_repository(*, root: Path, name: str, url: str, revision: str, license_name: str | None) -> dict:
-    """Replace one source atomically and rebuild its provenance graph + FTS."""
+    """Add a pinned version atomically; retain prior passages and their IDs."""
     root = root.resolve()
     if not root.is_dir():
         raise ValueError(f"repository directory does not exist: {root}")
@@ -157,11 +157,7 @@ def ingest_repository(*, root: Path, name: str, url: str, revision: str, license
     with database.session_scope() as db:
         old = db.query(KnowledgeSource).filter(KnowledgeSource.name == name).one_or_none()
         if old:
-            db.execute(text("""
-                DELETE FROM knowledge_chunks_fts
-                WHERE chunk_id IN (SELECT id FROM knowledge_chunks WHERE source_id = :source_id)
-            """), {"source_id": old.id})
-            db.delete(old)
+            old.name = f"{old.name[:190]}@{old.revision[:12]} [{old.id}]"
             db.flush()
 
         source = KnowledgeSource(
@@ -233,10 +229,11 @@ def search(query: str, limit: int = 8) -> list[dict]:
     tokens = _match_tokens(query)
     sql = text("""
         SELECT c.id, s.name AS source_name, s.url, s.revision, c.path, c.heading,
-               c.position, c.content, bm25(knowledge_chunks_fts, 0.0, 4.0, 2.0, 1.0) AS rank
+               c.position, c.content, c.content_hash, n.properties_json, bm25(knowledge_chunks_fts, 0.0, 4.0, 2.0, 1.0) AS rank
         FROM knowledge_chunks_fts
         JOIN knowledge_chunks c ON c.id = knowledge_chunks_fts.chunk_id
         JOIN knowledge_sources s ON s.id = c.source_id
+        JOIN knowledge_nodes n ON n.id = c.node_id
         WHERE knowledge_chunks_fts MATCH :match
         ORDER BY rank
         LIMIT :limit
@@ -255,11 +252,15 @@ def search(query: str, limit: int = 8) -> list[dict]:
         source_url = f"{row['url'].rstrip('/')}/blob/{quote(row['revision'], safe='')}/{quote(row['path'])}"
         if anchor:
             source_url += f"#{anchor}"
+        properties = json.loads(row["properties_json"]) if isinstance(row["properties_json"], str) else (row["properties_json"] or {})
+        if properties.get("kind") in {"user_note", "selected_source"}:
+            source_url = f"/api/agent/knowledge/passages/{row['id']}"
         results.append({
             "id": row["id"], "source": row["source_name"], "path": row["path"],
             "heading": row["heading"], "position": row["position"], "url": source_url,
-            "citation": f"[{row['source_name']}:{row['path']} — {row['heading']}]",
-            "content": row["content"],
+            "citation": f"[{row['source_name']}:{row['path']} — {row['heading']} | {row['id']}]",
+            "content": row["content"], "contentHash": row["content_hash"], "revision": row["revision"],
+            "trust": "untrusted_reference", "snapshotUrl": f"/api/agent/knowledge/passages/{row['id']}",
         })
     return results
 
@@ -269,3 +270,66 @@ def graph_summary() -> dict:
         counts = dict(db.execute(text("SELECT kind, COUNT(*) FROM knowledge_nodes GROUP BY kind")).all())
         edges = dict(db.execute(text("SELECT predicate, COUNT(*) FROM knowledge_edges GROUP BY predicate")).all())
     return {"nodes": counts, "edges": edges}
+
+
+def ingest_text(*, title: str, content: str, kind: str, source_url: str | None,
+                author: str | None, license_name: str | None) -> dict:
+    """Ingest only text explicitly supplied by the user; never fetch a URL.
+
+    Each submission is an immutable source version. Short notes are preserved.
+    Selection/ownership is user asserted, not an endorsement or license check.
+    """
+    from urllib.parse import urlparse
+
+    if kind not in {"user_note", "selected_source"}:
+        raise ValueError("kind must be user_note or selected_source")
+    if not title.strip() or not content.strip():
+        raise ValueError("title and content are required")
+    if len(content.encode()) > MAX_TEXT_BYTES:
+        raise ValueError("text exceeds the 2 MB ingestion limit")
+    if source_url and urlparse(source_url).scheme not in {"https", "http"}:
+        raise ValueError("source_url must be an http(s) attribution URL")
+    if kind == "selected_source" and not source_url:
+        raise ValueError("selected source requires an attribution URL")
+    sid = new_id()
+    revision = hashlib.sha256(content.encode()).hexdigest()
+    # Submission IDs avoid conflating revisions, equal titles, or user notes
+    # with an existing curated repository's name.
+    name = f"{title.strip()[:220]} [{sid}]"
+    path = "submission.txt"
+    with database.session_scope() as db:
+        source = KnowledgeSource(id=sid, name=name, url=source_url or "", revision=revision,
+                                 license=license_name, status="ready", document_count=1, chunk_count=0)
+        db.add(source)
+        db.flush()
+        root = _node(db, sid, kind, "submission", title, {
+            "kind": kind, "author": author, "sourceUrl": source_url, "submittedAt": utc_now(),
+            "trust": "untrusted_user_supplied_reference", "revision": revision,
+            "license": license_name, "fullText": content,
+        })
+        for position, piece in enumerate(_split_large(content)):
+            node = _node(db, sid, "section", f"passage:{position}", title,
+                         {"kind": kind, "position": position, "sourceUrl": source_url})
+            db.add(KnowledgeEdge(from_node_id=root.id, predicate="HAS_SECTION", to_node_id=node.id))
+            chunk_id = new_id()
+            db.add(KnowledgeChunk(id=chunk_id, source_id=sid, node_id=node.id, path=path, heading=title,
+                                 content=piece, content_hash=hashlib.sha256(piece.encode()).hexdigest(), position=position))
+            db.execute(text("INSERT INTO knowledge_chunks_fts(chunk_id,title,path,content) VALUES (:id,:title,:path,:content)"),
+                       {"id": chunk_id, "title": title, "path": path, "content": piece})
+            source.chunk_count += 1
+        return {"id": sid, "name": name, "revision": revision, "chunks": source.chunk_count,
+                "kind": kind, "trust": "untrusted_user_supplied_reference"}
+
+
+def passage(chunk_id: str) -> dict:
+    with database.session_scope() as db:
+        chunk = db.get(KnowledgeChunk, chunk_id)
+        if not chunk:
+            raise ValueError("passage unavailable")
+        source = db.get(KnowledgeSource, chunk.source_id)
+        node = db.get(KnowledgeNode, chunk.node_id)
+        return {"id": chunk.id, "content": chunk.content, "contentHash": chunk.content_hash,
+                "position": chunk.position, "sourceId": source.id, "source": source.name,
+                "revision": source.revision, "sourceUrl": source.url or None,
+                "path": chunk.path, "heading": chunk.heading, "provenance": node.properties_json,
+                "trust": "untrusted_reference", "snapshotUrl": f"/api/agent/knowledge/passages/{chunk.id}"}

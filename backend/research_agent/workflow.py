@@ -9,7 +9,7 @@ from typing import Any
 import database
 import strategy_store
 from engine import spec as spec_mod, validation
-from models import AgentRun, Backtest, new_id, utc_now
+from models import AgentRun, Backtest, ResearchProposal, new_id, utc_now
 
 MAX_CHANGES = 5
 MAX_NON_IMPROVEMENTS = 3
@@ -125,7 +125,7 @@ def validate_revision(run_id: str, incoming: dict) -> None:
     run = get(run_id)
     if not run or run["status"] != "analyzing":
         raise ValueError("wait for the current Nautilus validation before creating another strategy")
-    if run["changeCount"] >= MAX_CHANGES:
+    if should_stop(run):
         raise ValueError("the five-change research budget is exhausted; conclude the research")
     current = strategy_store.get_strategy(run["currentStrategyId"])
     lineage = incoming.get("lineage") or {}
@@ -173,9 +173,10 @@ def _report_summary(strategy_id: str) -> tuple[dict, dict]:
         latest_is = (db.query(Backtest).filter(Backtest.strategy_id == strategy_id, Backtest.window_kind == "is")
                      .order_by(Backtest.created_at.desc()).first())
         mode = latest_is.mode if latest_is else spec_mod.required_mode(strategy)
+        attempts = db.query(ResearchProposal).filter(ResearchProposal.strategy_id.is_not(None)).count()
     report = validation.report(
         strategy_id, mode=mode, risk=strategy.get("risk"),
-        trial_index=max(1, int((strategy.get("lineage") or {}).get("trialIndex") or 1)),
+        trial_index=max(1, attempts),
         include_oos=False,
     )
     is_ = report.get("inSample") or {}
@@ -188,6 +189,8 @@ def _report_summary(strategy_id: str) -> tuple[dict, dict]:
 def complete_batch(run_id: str) -> dict | None:
     """Atomically record a finished candidate and reserve its analysis turn."""
     with database.session_scope() as db:
+        from research_agent.memory import _write_reservation
+        _write_reservation(db)
         row = db.get(AgentRun, run_id)
         if row is None or row.status != "running":
             return None
@@ -205,20 +208,28 @@ def complete_batch(run_id: str) -> dict | None:
     run = get(run_id)
     strategy_id = run["currentStrategyId"]
     try:
-        report, metrics = _report_summary(strategy_id)
-        verdict = report.get("verdict")
         if batch_errors:
-            verdict = {"status": "fail", "passes": False, "untestable": False,
-                       "score": 0, "failures": batch_errors}
+            report, metrics = {}, {}
+            verdict = {"status": "technical_error", "passes": False, "untestable": True,
+                       "score": None, "failures": batch_errors}
+        else:
+            report, metrics = _report_summary(strategy_id)
+            verdict = report.get("verdict")
+            if not verdict:
+                verdict = {"status": "technical_error", "untestable": True, "score": None,
+                           "failures": ["validation report unavailable"]}
     except Exception as exc:
-        report, metrics, verdict = {}, {}, {"status": "fail", "score": 0, "failures": [str(exc)]}
+        report, metrics, verdict = {}, {}, {"status": "technical_error", "untestable": True, "score": None, "failures": [str(exc)]}
 
     with database.session_scope() as db:
         row = db.get(AgentRun, run_id)
         state = dict(row.state_json or {})
         candidates = list(state.get("candidates", []))
         candidate = next(c for c in reversed(candidates) if c["strategyId"] == strategy_id)
-        candidate["status"] = "complete"
+        technical_failure = (verdict or {}).get("untestable") or (verdict or {}).get("status") == "technical_error"
+        candidate["status"] = "blocked" if technical_failure else "complete"
+        if technical_failure:
+            row.status = "blocked"
         candidate["verdict"] = verdict
         candidate["metrics"] = metrics
         jobs_by_id = {job.id: job for job in db.query(Backtest).filter(Backtest.agent_run_id == run_id).all()}
@@ -226,11 +237,11 @@ def complete_batch(run_id: str) -> dict | None:
                               "message": jobs_by_id[j["id"]].message} for j in candidate["jobs"]]
         score = float((verdict or {}).get("score") or 0)
         improved = score > float(state.get("bestScore", -1))
-        if improved:
+        if improved and not technical_failure:
             state["bestScore"] = score
             state["bestStrategyId"] = strategy_id
             state["consecutiveNonImprovements"] = 0
-        else:
+        elif not technical_failure:
             state["consecutiveNonImprovements"] = int(state.get("consecutiveNonImprovements", 0)) + 1
         state["candidates"] = candidates
         events = list(state.get("events", []))
@@ -245,15 +256,17 @@ def complete_batch(run_id: str) -> dict | None:
 
 
 def conclude(run_id: str, outcome: str, summary: str, strategy_id: str | None = None) -> dict:
-    if outcome not in {"champion", "no_edge"}:
-        raise ValueError("outcome must be champion or no_edge")
+    if outcome not in {"champion", "no_edge", "blocked", "stopped"}:
+        raise ValueError("invalid research outcome")
     with database.session_scope() as db:
         row = db.get(AgentRun, run_id)
         if row is None:
             raise ValueError("research workflow not found")
-        if row.status != "analyzing":
+        if row.status not in {"analyzing", "awaiting_approval", "blocked"}:
             raise ValueError("wait for Nautilus to finish before concluding the research")
         state = dict(row.state_json or {})
+        if outcome == "no_edge" and any(c.get("status") == "blocked" or (c.get("verdict") or {}).get("untestable") or not c.get("verdict") for c in state.get("candidates", [])):
+            raise ValueError("unavailable/technical evidence cannot support a no-edge conclusion")
         winner = strategy_id or state.get("bestStrategyId")
         if outcome == "champion":
             allowed = {c["strategyId"] for c in state.get("candidates", []) if (c.get("verdict") or {}).get("status") == "pass"}
@@ -262,15 +275,15 @@ def conclude(run_id: str, outcome: str, summary: str, strategy_id: str | None = 
         answer = {"outcome": outcome, "strategyId": winner if outcome == "champion" else None,
                   "summary": summary, "at": utc_now()}
         row.answer_json = answer
-        row.status = "done" if outcome == "champion" else "budget_exhausted"
+        row.status = {"champion": "done", "no_edge": "budget_exhausted", "blocked": "blocked", "stopped": "stopped"}[outcome]
         events = list(state.get("events", []))
-        events.append(_event("conclusion", "Profitable candidate retained" if outcome == "champion" else "I couldn't find an edge", summary))
+        events.append(_event("conclusion", "Validation candidate retained" if outcome == "champion" else outcome.replace("_", " "), summary))
         state["events"] = events
         row.state_json = state
         row.updated_at = utc_now()
     if outcome == "champion":
         strategy_store.set_status(winner, "candidate")
-    else:
+    elif outcome == "no_edge":
         for candidate in get(run_id)["candidates"]:
             strategy_store.set_status(candidate["strategyId"], "rejected")
     return get(run_id)
@@ -318,7 +331,7 @@ def job_finished(run_id: str | None, job_id: str) -> None:
         return
     _record_window_result(run_id, job_id)
     run = complete_batch(run_id)
-    if not run:
+    if not run or run["status"] != "analyzing":
         return
 
     _start_resume(run_id)
@@ -365,7 +378,7 @@ def recover_pending_runs() -> int:
     for run_id, status in pending:
         if status == "running":
             run = complete_batch(run_id)
-            if not run:
+            if not run or run["status"] != "analyzing":
                 continue
         if _start_resume(run_id):
             resumed += 1
