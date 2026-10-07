@@ -39,6 +39,12 @@ not add authentication or multi-tenant isolation).
    proposal includes every execution/risk field and primitive parameter, even
    disabled `null`/`[]` options. Existing schema defaults are legacy conveniences,
    not evidence of user choices. Overnight sessions and L3 are unsupported here.
+   The worker does not implement weekly controls or volatility-scaled sizing:
+   nonzero `weeklyLossLimitPct`, non-null `weeklyTargetPct`, `vol_scaled`, and
+   more than one concurrent position block execution. Explicitly disabling an
+   unsupported control requires the user's choice; the agent must not choose it.
+   Duplicated risk/sizing/constraint settings must agree. Opening-range exits
+   require an unambiguous explicit OR length in the referenced primitives.
    Inference via a deflated-Sharpe threshold is blocked while total search trials
    are unknown; no default significance policy is chosen.
 
@@ -63,7 +69,7 @@ not add authentication or multi-tenant isolation).
    it never grants another attempt. Stale dataset/config or workflow state returns
    409 with no jobs created. A changed input needs a fresh proposal and approval.
    UI can navigate to `GET .../workflow`'s `chartJobId` after queue success.
-6. `GET .../proposals`, `GET .../proposals/{id}` and `GET .../workflow` expose
+6. `GET .../proposals?limit=20&offset=0` (newest first, max 100), `GET .../proposals/{id}` and `GET .../workflow` expose
    history and progress. The thread endpoint also includes a `research` field.
    Proposal status `queued` records consumed approval; individual `evidence`
    statuses and the workflow describe completion/failure.
@@ -91,7 +97,9 @@ rollback; no worker is dispatched before commit. A crash before commit may leave
 an unreferenced job directory, never a runnable database row. A crash after commit
 is recovered by the existing durable job recovery. Identical queue requests do
 not dispatch twice. Worker input verification rejects changed approved strategy
-artifacts or changed dataset/config inventories before launching Nautilus.
+artifacts or changed dataset/config inventories before launching Nautilus. Legacy
+agent jobs without a proposal are rejected at this worker boundary too; an upgrade
+does not silently grant approval to old queued work.
 
 The existing worker dispatcher is designed for **one API/worker process**. The
 approval transaction is cross-process safe; this does not turn the existing
@@ -134,6 +142,8 @@ concept-to-concept knowledge graph construction.
   `session_cluster_bootstrap`, `confidence`, `resamples` (100–10,000), `seed`, and
   `minSessions` (at least 2). It resamples paired sessions to preserve intraday and
   group-overlap dependence. Missing evidence or too few sessions yields unavailable.
+  Analysis is bounded to 32 MiB / 100,000 trades per artifact and 2,000,000 total
+  bootstrap session draws; larger requests return explicit errors, not truncation.
   Sessions are assumed exchangeable; inter-session dependence and selection bias
   are not corrected. Intervals are descriptive, not proof of significance.
 - `get_stability_analysis(job_ids, extra_costs_usd)` describes existing results by
@@ -149,7 +159,7 @@ heuristics; no multiplicity-adjusted significance is claimed.
 
 ## Bounded coverage and verification
 
-Dataset identity includes split/manifest/front-month hashes, engine configuration
+Dataset identity includes split/manifest/front-month hashes, engine source hash and configuration
 and a file-size/mtime inventory of ES derived partitions. It is **not an immutable
 market-data snapshot** or full content hash of market files, does not verify every
 requested session's quality, and cannot prevent writes during a running worker.
@@ -161,3 +171,13 @@ and elaborate GraphRAG are deferred explicitly.
 Software checks use disposable databases, supplied-text fixtures and synthetic
 trades/bars. No real-data research experiment or market backtest was run for this
 change. See the PR for final focused/aggregate results and baseline failures.
+
+## Post-opening review
+
+Review fixes cover legacy-job approval bypass on recovery, the interval between
+analysis reservation and recorded evidence, explicit worker-policy compatibility,
+analysis/input resource bounds, retained-evidence delete errors (409), paginated
+history, and removal of the obsolete non-atomic child-queue implementation.
+Migration upgrade/downgrade/upgrade preserves legacy rows without synthesizing
+approvals. The single-worker and metadata-only identity limitations above remain
+explicit rather than being presented as distributed leases or data snapshots.

@@ -19,7 +19,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 import database
@@ -161,6 +161,9 @@ def delete_job(job_id: str) -> bool:
         row = db.get(Backtest, job_id)
         if row is None:
             return False
+        from models import ResearchEvidence
+        if db.query(ResearchEvidence).filter_by(job_id=job_id).first():
+            raise ValueError("approved research evidence is retained; deletion is not supported")
         db.delete(row)
     shutil.rmtree(_job_dir(job_id), ignore_errors=True)
     return True

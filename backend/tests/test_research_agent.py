@@ -1,11 +1,9 @@
 import builtins
 import copy
 from datetime import date
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.orm import sessionmaker
 
 import database
 from research_agent import knowledge, service, workflow
@@ -15,23 +13,6 @@ from models import AgentRun, Backtest
 from tests.test_spec_validation import ORB
 
 
-@pytest.fixture()
-def agent_db(tmp_path, monkeypatch):
-    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'agent.db'}")
-    database.init_db(eng)
-    monkeypatch.setattr(database, "engine", eng)
-    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=eng, autoflush=False, future=True))
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "README.md").write_text(
-        "# Reliable Research\n\nUse walk-forward validation to preserve time order and estimate stability.\n\n"
-        "## Costs\n\nInclude commission and slippage before accepting a trading strategy.\n",
-        encoding="utf-8",
-    )
-    (repo / "example.py").write_text("# this is a Python comment\ndef score():\n    return 'deflated sharpe'\n", encoding="utf-8")
-    knowledge.ingest_repository(root=repo, name="test-research", url="https://example.test/repo", revision="abc123", license_name="MIT")
-    yield repo
-    eng.dispose()
 
 
 def test_ingest_search_and_graph(agent_db):

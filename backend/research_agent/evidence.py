@@ -15,6 +15,9 @@ from engine import jobs
 from models import Backtest, ResearchProposal
 
 ALLOWED_WINDOWS = {"is", "wf1", "wf2", "wf3"}
+MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+MAX_TRADES = 100_000
+MAX_BOOTSTRAP_DRAWS = 2_000_000
 
 
 def _artifact(job_id: str) -> tuple[dict, list[dict], str]:
@@ -32,10 +35,14 @@ def _artifact(job_id: str) -> tuple[dict, list[dict], str]:
         artifact = jobs.REPO_ROOT / artifact
     if not artifact.is_file():
         raise ValueError("trade artifact unavailable; an absent file is not zero trades")
+    if artifact.stat().st_size > MAX_ARTIFACT_BYTES:
+        raise ValueError("trade artifact exceeds the 32 MiB research analysis limit")
     raw = artifact.read_bytes()
     data = json.loads(raw)
     if not isinstance(data.get("trades"), list):
         raise ValueError("trade evidence unavailable: malformed artifact")
+    if len(data["trades"]) > MAX_TRADES or any(not isinstance(t, dict) for t in data["trades"]):
+        raise ValueError("trade evidence must contain at most 100,000 trade objects")
     # Do not normalize legacy records here: that invents zero MAE/MFE and fees.
     return meta, data["trades"], hashlib.sha256(raw).hexdigest()
 
@@ -47,7 +54,8 @@ def trade_evidence(job_id: str, offset: int, limit: int) -> dict:
     fields = ("id", "direction", "contracts", "entryTime", "entryPrice", "exitTime", "exitPrice", "stopPrice",
               "targetPrice", "exitReason", "pnlUsd", "r", "commissionUsd", "slippageTicks", "mae", "mfe",
               "barsHeld", "sessionDate", "regimeTags", "entryContextId")
-    return {"job": job, "artifactSha256": artifact_hash, "total": len(trades), "offset": offset,
+    metadata = {k: job.get(k) for k in ("id", "strategyId", "windowKind", "dateFrom", "dateTo", "mode", "status", "symbol")}
+    return {"job": metadata, "artifactSha256": artifact_hash, "total": len(trades), "offset": offset,
             "trades": [{**{k: t.get(k) for k in fields},
                         "missingFields": [k for k in fields if k not in t or t[k] is None],
                         "entrySnapshot": {"status": "unavailable", "reason": "snapshot retrieval/capture is not implemented"}}
@@ -121,6 +129,8 @@ def compare_groups(job_id: str, group_a: dict, group_b: dict, uncertainty: dict 
         result["uncertainty"] = {"status": "unavailable", "reason": "missing session or PnL evidence", "policy": uncertainty}
         return result
     sessions = sorted({t["sessionDate"] for t in a + b})
+    if count * len(sessions) > MAX_BOOTSTRAP_DRAWS:
+        raise ValueError("bootstrap exceeds 2,000,000 session draws; explicitly choose fewer resamples or a narrower group")
     if min(len({t["sessionDate"] for t in group}) for group in (a, b)) < minimum:
         result["uncertainty"] = {"status": "unavailable", "reason": "insufficient sessions under requested policy", "policy": uncertainty}
         return result

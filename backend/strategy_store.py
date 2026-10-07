@@ -118,6 +118,9 @@ def delete_strategy(strategy_id: str) -> bool:
         row = db.get(Strategy, strategy_id)
         if row is None:
             return False
+        from models import ResearchProposal
+        if db.query(ResearchProposal).filter_by(strategy_id=strategy_id).first():
+            raise StrategyError("approved research strategy versions are retained; deletion is not supported")
         db.delete(row)
         return True
 

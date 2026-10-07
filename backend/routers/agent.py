@@ -2,11 +2,13 @@
 
 import json
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from research_agent import service
+from research_agent import evidence, knowledge, memory, service
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -81,9 +83,6 @@ def chat_stream(body: ChatRequest):
 
 
 # Explicit user-control endpoints: intentionally absent from model tools.
-from typing import Literal
-from pydantic import ConfigDict
-from research_agent import evidence, knowledge, memory
 
 
 class ProposalRequest(BaseModel):
@@ -128,8 +127,8 @@ def research_context():
 
 
 @router.get("/threads/{thread_id}/proposals")
-def proposals(thread_id: str):
-    return memory.history(thread_id)
+def proposals(thread_id: str, limit: int = 20, offset: int = 0):
+    return _research_call(memory.history, thread_id, limit, offset)
 
 
 @router.post("/threads/{thread_id}/proposals")

@@ -47,6 +47,8 @@ def dataset_context() -> dict:
         "splitsSha256": file_hash(paths.splits), "manifestSha256": file_hash(paths.manifest),
         "frontMonthSha256": file_hash(paths.front_month),
         "engineConfig": CONFIG_PATH.read_text(),
+        "engineCodeSha256": digest({str(p.relative_to(jobs.BACKEND_DIR)): file_hash(p)
+                                     for p in sorted((jobs.BACKEND_DIR / "engine").rglob("*.py"))}),
         "inventory": inventory,
         "identityPolicy": "metadata_inventory_not_immutable_snapshot",
         "rawDataQuality": "unverified", "entrySnapshots": "unavailable",
@@ -81,10 +83,10 @@ def plan_errors(plan: dict, strategy: dict, dataset: dict) -> list[str]:
 
 def _public(db, row) -> dict:
     decision = db.query(ResearchDecision).filter_by(proposal_id=row.id).one_or_none()
-    links = db.query(ResearchEvidence).filter_by(proposal_id=row.id).all()
+    linked_jobs = (db.query(Backtest).join(ResearchEvidence, ResearchEvidence.job_id == Backtest.id)
+                   .filter(ResearchEvidence.proposal_id == row.id).order_by(Backtest.window_kind).all())
     evidence = []
-    for link in links:
-        job = db.get(Backtest, link.job_id)
+    for job in linked_jobs:
         evidence.append({"jobId": job.id, "window": job.window_kind, "status": job.status,
                          "message": job.message, "dateFrom": job.date_from, "dateTo": job.date_to})
     return {"id": row.id, "threadId": row.thread_id, "parentId": row.parent_id, "digest": row.digest,
@@ -102,13 +104,17 @@ def get(proposal_id: str, thread_id: str) -> dict:
         return _public(db, row)
 
 
-def history(thread_id: str) -> dict:
+def history(thread_id: str, limit: int = 20, offset: int = 0) -> dict:
+    if not 1 <= limit <= 100 or offset < 0:
+        raise ValueError("history limit must be 1..100 and offset nonnegative")
     with database.session_scope() as db:
-        rows = db.query(ResearchProposal).filter_by(thread_id=thread_id).order_by(ResearchProposal.created_at, ResearchProposal.id).all()
+        query = db.query(ResearchProposal).filter_by(thread_id=thread_id)
+        total = query.count()
+        rows = query.order_by(ResearchProposal.created_at.desc(), ResearchProposal.id).offset(offset).limit(limit).all()
         proposals = [_public(db, r) for r in rows]
         # Global lower bound: splitting one search across conversations must not reset the counter.
         attempts = db.query(ResearchProposal).filter(ResearchProposal.strategy_id.is_not(None)).count()
-    return {"proposals": proposals, "recordedAttempts": attempts, "trialCountScope": "all recorded research proposals",
+    return {"proposals": proposals, "total": total, "offset": offset, "limit": limit, "recordedAttempts": attempts, "trialCountScope": "all recorded research proposals",
             "externalAndLegacyTrials": "unknown", "significance": "not established"}
 
 
@@ -118,6 +124,10 @@ def propose(thread_id: str, hypothesis: str, strategy: dict, test_plan: dict,
         raise ValueError("hypothesis is required")
     if not isinstance(strategy, dict) or not isinstance(test_plan, dict):
         raise ValueError("strategy and testPlan must be objects")
+    if len(json.dumps({"hypothesis": hypothesis, "strategy": strategy, "testPlan": test_plan}, allow_nan=False).encode()) > 256_000:
+        raise ValueError("proposal input exceeds 256 KB")
+    if len(concepts) > 100 or any(not isinstance(c, str) or len(c) > 500 for c in concepts) or len(passage_ids) > 100:
+        raise ValueError("at most 100 concepts (500 characters each) and passages are supported")
     raw = copy.deepcopy(strategy)
     for field in ("id", "createdAt", "updatedAt", "status", "origin"):
         raw.pop(field, None)
@@ -221,6 +231,9 @@ def enqueue(proposal_id: str, thread_id: str) -> dict:
             strategy["origin"] = {"type": "agent", "sourceId": row.id}
             if active:
                 state = copy.deepcopy(active.state_json)
+                current_candidate = (state.get("candidates") or [{}])[-1]
+                if current_candidate.get("status") not in {"complete", "blocked"}:
+                    raise ResearchConflict("wait for the completed candidate evidence to be recorded")
                 if int(state.get("changeCount", 0)) >= workflow.MAX_CHANGES or int(state.get("consecutiveNonImprovements", 0)) >= workflow.MAX_NON_IMPROVEMENTS:
                     raise ResearchConflict("research stopping budget reached")
                 parent = db.get(ResearchProposal, row.parent_id) if row.parent_id else None
@@ -257,7 +270,8 @@ def enqueue(proposal_id: str, thread_id: str) -> dict:
                 job_dir.mkdir(parents=True, exist_ok=False)
                 (job_dir / "strategy.json").write_text(json.dumps(strategy, indent=2))
                 start, end = current_data["windows"][kind]
-                date.fromisoformat(start); date.fromisoformat(end)
+                date.fromisoformat(start)
+                date.fromisoformat(end)
                 job = Backtest(id=job_id, strategy_id=strategy["id"], agent_run_id=run.id,
                                mode=strategy["execution"]["mode"], window_kind=kind, date_from=start, date_to=end,
                                status="queued", message="user-approved research",
@@ -294,6 +308,10 @@ def verify_job_inputs(job_id: str, strategy: dict) -> None:
         job = db.get(Backtest, job_id)
         pid = (job.metrics_json or {}).get("researchProposalId")
         if not pid:
+            from models import Strategy
+            saved = db.get(Strategy, job.strategy_id) if job.strategy_id else None
+            if job.agent_run_id or (saved and saved.origin_type == "agent") or (strategy.get("origin") or {}).get("type") == "agent":
+                raise ResearchConflict("legacy agent job has no exact approval; create and approve a new proposal")
             return
         proposal = db.get(ResearchProposal, pid)
         if digest(strategy) != job.metrics_json["strategyDigest"]:

@@ -13,7 +13,6 @@ from engine import jobs, spec
 from models import AgentRun, Backtest, ResearchDecision, ResearchEvidence, ResearchProposal, Strategy
 from research_agent import evidence, knowledge, memory, service, tools, workflow
 from research_agent.readiness import executable_errors
-from tests.test_research_agent import agent_db  # noqa: F401 — fixture
 from tests.test_spec_validation import ORB
 
 
@@ -37,6 +36,7 @@ def setup(agent_db, monkeypatch, tmp_path):
     monkeypatch.setattr(jobs, "start", dispatch)
     strategy = spec.normalize(ORB)
     strategy["execution"]["mode"] = "bars"
+    strategy["risk"].update(weeklyLossLimitPct=0, maxTradesPerDay=1, stopAfterConsecutiveLosses=1)
     thread = service.create_thread()["id"]
     plan = {"windows": ["is", "wf1"], "objective": "Synthetic software fixture",
             "comparison": "descriptive", "uncertaintyPolicy": "unresolved; descriptive only",
@@ -167,7 +167,11 @@ def test_child_is_separate_approval_and_workflow_checked_before_jobs(setup):
         memory.enqueue(child["id"], setup.thread)
     assert counts() == (2, 2, 1, 1)
     with database.session_scope() as db:
-        db.get(AgentRun, q["runId"]).status = "awaiting_approval"
+        run = db.get(AgentRun, q["runId"])
+        run.status = "awaiting_approval"
+        state = copy.deepcopy(run.state_json)
+        state["candidates"][-1]["status"] = "complete"
+        run.state_json = state
     memory.enqueue(child["id"], setup.thread)
     assert counts() == (4, 4, 1, 2)
     assert memory.history(setup.thread)["recordedAttempts"] == 2
@@ -179,7 +183,9 @@ def test_backend_stop_budget_blocks_even_approved_child(setup):
     with database.session_scope() as db:
         run = db.get(AgentRun, q["runId"])
         run.status = "awaiting_approval"
-        run.state_json = {**run.state_json, "consecutiveNonImprovements": 3}
+        state = copy.deepcopy(run.state_json)
+        state["candidates"][-1]["status"] = "complete"
+        run.state_json = {**state, "consecutiveNonImprovements": 3}
     with pytest.raises(memory.ResearchConflict, match="budget"):
         memory.enqueue(child["id"], setup.thread)
     assert counts() == (2, 2, 1, 1)
@@ -331,3 +337,108 @@ def test_http_contract_rejects_forged_decisions_and_ingests_user_text(client, mo
     note = client.post("/api/agent/knowledge/text", json={"title": "Note", "content": "Short note", "kind": "user_note"})
     assert note.status_code == 200
     assert not any(t["name"] in {"approve", "decide_proposal", "ingest_source_text"} for t in tools.TOOL_DEFINITIONS)
+
+
+def test_legacy_agent_recovery_cannot_execute_without_approval(setup):
+    saved = strategy_store.save_strategy({**setup.strategy, "origin": {"type": "agent"}})
+    with database.session_scope() as db:
+        job = Backtest(strategy_id=saved["id"], mode="bars", window_kind="is", status="queued", metrics_json={})
+        db.add(job); db.flush()
+        jid = job.id
+    with pytest.raises(memory.ResearchConflict, match="legacy agent job"):
+        memory.verify_job_inputs(jid, saved)
+
+
+def test_analysis_reservation_is_not_completed_evidence(setup):
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    child = proposal(setup, parent_id=p["id"]); approve(child)
+    with database.session_scope() as db:
+        db.get(AgentRun, q["runId"]).status = "analyzing"
+    with pytest.raises(memory.ResearchConflict, match="evidence to be recorded"):
+        memory.enqueue(child["id"], setup.thread)
+    assert counts() == (2, 2, 1, 1)
+
+
+def test_evidence_retention_returns_explicit_errors(setup):
+    p = proposal(setup); approve(p); q = memory.enqueue(p["id"], setup.thread)
+    with pytest.raises(ValueError, match="retained"):
+        jobs.delete_job(q["evidence"][0]["jobId"])
+    with pytest.raises(strategy_store.StrategyError, match="retained"):
+        strategy_store.delete_strategy(q["strategyId"])
+    assert counts() == (2, 2, 1, 1)
+
+
+def test_analysis_resource_limits_are_explicit(setup, monkeypatch):
+    jid = artifact(setup, [{"pnlUsd": 1, "sessionDate": "2026-04-01"}, {"pnlUsd": -1, "sessionDate": "2026-04-02"}])
+    policy = {"method": "session_cluster_bootstrap", "confidence": 0.9, "resamples": 100, "seed": 7, "minSessions": 2}
+    monkeypatch.setattr(evidence, "MAX_BOOTSTRAP_DRAWS", 100)
+    with pytest.raises(ValueError, match="session draws"):
+        evidence.compare_groups(jid, {}, {}, policy)
+    monkeypatch.setattr(evidence, "MAX_ARTIFACT_BYTES", 1)
+    with pytest.raises(ValueError, match="analysis limit"):
+        evidence.trade_evidence(jid, 0, 10)
+    with pytest.raises(ValueError, match="256 KB"):
+        memory.propose(setup.thread, "x" * 256001, setup.strategy, setup.plan, [], [])
+
+
+@pytest.mark.parametrize("path,value,expected", [
+    ("risk.weeklyLossLimitPct", 5, "weekly risk"),
+    ("constraints.maxConcurrentPositions", 2, "one concurrent"),
+    ("sizing.type", "vol_scaled", "not implemented"),
+    ("risk.maxTradesPerDay", 10, "must agree"),
+])
+def test_unsupported_or_conflicting_worker_policies_block_execution(setup, path, value, expected):
+    raw = copy.deepcopy(setup.strategy)
+    section, key = path.split(".")
+    raw[section][key] = value
+    assert any(expected in err for err in executable_errors(raw))
+
+
+def test_migration_round_trip_preserves_legacy_rows(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import text
+
+    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'migration.db'}")
+    cfg = Config(str(database.BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(database.BACKEND_DIR / "alembic"))
+    cfg.attributes["connection_engine"] = eng
+    command.upgrade(cfg, "d4e6f8a0b2c3")
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO agent_threads(id,title,created_at,updated_at) VALUES ('legacy','Legacy','2026','2026')"))
+    command.upgrade(cfg, "head")
+    with eng.connect() as conn:
+        assert conn.scalar(text("SELECT title FROM agent_threads WHERE id='legacy'")) == "Legacy"
+        assert conn.scalar(text("SELECT count(*) FROM research_decisions")) == 0
+    command.downgrade(cfg, "d4e6f8a0b2c3")
+    command.upgrade(cfg, "head")
+    with eng.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM agent_threads")) == 1
+    eng.dispose()
+
+
+def test_ignored_expression_fields_and_history_pagination(setup):
+    raw = copy.deepcopy(setup.strategy)
+    raw["entry"]["trigger"]["unimplementedFilter"] = True
+    assert any("ignored/unsupported" in e for e in executable_errors(raw))
+    proposal(setup)
+    proposal(setup)
+    result = memory.history(setup.thread, limit=1)
+    assert result["total"] == 2 and len(result["proposals"]) == 1
+    assert memory.history(setup.thread, limit=1, offset=1)["proposals"][0]["id"] != result["proposals"][0]["id"]
+
+
+def test_dataset_context_labels_absence_and_tracks_engine_code(tmp_path, monkeypatch):
+    from market.paths import Paths
+    monkeypatch.setattr(memory, "get_paths", lambda: Paths(tmp_path / "data", tmp_path / "raw"))
+    monkeypatch.setattr(memory.validation, "windows", lambda _: {})
+    monkeypatch.setattr(jobs, "BACKEND_DIR", tmp_path / "backend")
+    engine = jobs.BACKEND_DIR / "engine"
+    engine.mkdir(parents=True)
+    source = engine / "worker.py"
+    source.write_text("# synthetic version one")
+    first = memory.dataset_context()
+    assert first["splitsSha256"] is None and first["inventory"]["bars"] == []
+    assert first["entrySnapshots"] == "unavailable"
+    source.write_text("# synthetic version two")
+    assert memory.dataset_context()["engineCodeSha256"] != first["engineCodeSha256"]

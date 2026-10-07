@@ -141,32 +141,6 @@ def validate_revision(run_id: str, incoming: dict) -> None:
         raise ValueError("a revision requires a lineage rationale based on the completed result")
 
 
-def queue_revision(run_id: str, strategy: dict, jobs: list[dict]) -> dict:
-    with database.session_scope() as db:
-        row = db.get(AgentRun, run_id)
-        if row is None or row.status != "analyzing":
-            raise ValueError("the workflow is not ready for another candidate")
-        state = dict(row.state_json or {})
-        candidates = list(state.get("candidates", []))
-        candidates.append(_candidate(strategy, jobs))
-        state.update({"currentStrategyId": strategy["id"], "chartJobId": jobs[0]["id"],
-                      "changeCount": int(state.get("changeCount", 0)) + 1, "candidates": candidates})
-        events = list(state.get("events", []))
-        lin = strategy.get("lineage") or {}
-        events.append(_event("revision", f"Changed {lin.get('changedVariable')}", lin.get("rationale") or ""))
-        events.append(_event("queued", "Nautilus validation queued", f"{len(jobs)} evidence windows for {strategy.get('name')}."))
-        state["events"] = events
-        row.state_json = state
-        row.status = "running"
-        row.updated_at = utc_now()
-        for job in jobs:
-            backtest = db.get(Backtest, job["id"])
-            if backtest:
-                backtest.agent_run_id = run_id
-    strategy_store.set_status(strategy["id"], "testing")
-    return get(run_id)
-
-
 def _report_summary(strategy_id: str) -> tuple[dict, dict]:
     strategy = strategy_store.get_strategy(strategy_id)
     with database.session_scope() as db:
