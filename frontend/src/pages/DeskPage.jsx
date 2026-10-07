@@ -1,233 +1,546 @@
-import { useCallback, useContext, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
-import { fetchDesk, strategyPackageUrl } from '../api';
-import { HeaderSlotContext } from '../headerSlot';
-import { PageHeader, StatTile } from '../components/ui';
+import { useContext, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  fetchBacktests,
+  fetchDesk,
+  fetchStrategies,
+  strategyPackageUrl,
+} from "../api";
+import { HeaderSlotContext } from "../headerSlot";
+import { researchHref, useResearchSelection } from "../researchSelection";
+import { describeSpec } from "../spec/describe";
+import {
+  cohortLabel,
+  cohorts,
+  isES,
+  leaders,
+  metrics,
+  money,
+  number,
+  orderedRuns,
+} from "../desk/model";
+import RunPreview from "../desk/RunPreview";
+import ResearchRail from "../desk/ResearchRail";
 
-function pct(v) { return v == null ? '—' : `${Number(v).toFixed(1)}%`; }
-function num(v, d = 2) { return v == null ? '—' : Number(v).toFixed(d); }
-function mb(bytes) { return `${(bytes / 1e6).toFixed(0)} MB`; }
-
-function flattenTree(node) {
-  if (!node) return [];
-  return [node, ...(node.children || []).flatMap(flattenTree)];
-}
-
-function ResearchSummary({ lineage }) {
-  const versions = flattenTree(lineage.tree);
-  const candidate = versions.find((node) => node.status === 'candidate')
-    || versions.find((node) => node.id === lineage.champion)
-    || lineage.tree;
-  const verdict = candidate?.verdict;
-  const trades = verdict?.trades || 0;
-  const minimum = Number((verdict?.failures?.[0] || '').match(/minimum (\d+)/)?.[1]) || 100;
-  const progress = Math.min(100, (trades / minimum) * 100);
-  const family = lineage.name?.split(' — ')[0] || 'Strategy idea';
-
+function MetricLeader({ title, run, value, description, onSelect }) {
   return (
-    <article className="desk-research-summary">
-      <header>
-        <div><span>Strategy idea</span><strong>{family}</strong></div>
-        <span className={`desk-research-state ${verdict?.status || 'pending'}`}>{verdict?.untestable ? 'Needs more history' : verdict?.status === 'pass' ? 'Passed checks' : verdict?.status || 'Not tested'}</span>
-      </header>
-      <div className="desk-research-metrics">
-        <div><span>Versions compared</span><strong>{lineage.nodes}</strong></div>
-        <div><span>Profit per $1 lost</span><strong>{verdict?.profitFactor != null ? `$${verdict.profitFactor.toFixed(2)}` : '—'}</strong></div>
-        <div><span>Average result per trade</span><strong>{verdict?.expectancyR != null ? `${verdict.expectancyR > 0 ? '+' : ''}${verdict.expectancyR.toFixed(2)} × risk` : '—'}</strong></div>
-      </div>
-      <div className="desk-evidence-progress">
-        <div><span>Evidence collected</span><strong>{trades} of {minimum} trades</strong></div>
-        <div className="desk-evidence-track"><span style={{ width: `${progress}%` }} /></div>
-        <p>{trades < minimum ? `The platform needs at least ${minimum - trades} more qualifying trades before it can make a reliable decision.` : 'There is enough trade history for the platform to apply its validation checks.'}</p>
-      </div>
-      <Link to={`/strategies/${candidate.id}?tab=lineage`} className="desk-research-link">Open this strategy’s experiment history <span>→</span></Link>
-    </article>
-  );
-}
-
-function Tile({ title, sub, children, extra, className = '' }) {
-  return (
-    <section className={`review-card desk-tile ${className}`}>
-      <header className="review-card-head">
-        <div>
-          <div className="review-card-name">{title}</div>
-          {sub && <div className="review-card-sub">{sub}</div>}
-        </div>
-        {extra}
-      </header>
-      {children}
+    <section className="terminal-leader">
+      <div className="terminal-eyebrow">{title}</div>
+      {run ? (
+        <>
+          <button
+            className="terminal-leader-name"
+            onClick={() => onSelect(run.strategyId, run.id)}
+          >
+            {run.strategyName || run.strategyId}
+          </button>
+          <strong className="terminal-leader-value">{value}</strong>
+          <p>
+            {description} · {metrics(run).trades} trades
+          </p>
+        </>
+      ) : (
+        <>
+          <h2>No eligible result</h2>
+          <strong className="terminal-leader-value muted">—</strong>
+          <p>Choose a recorded window and minimum trade count.</p>
+        </>
+      )}
     </section>
   );
 }
 
-function CandidateCard({ c }) {
-  const v = c.verdict;
-  return (
-    <li className="desk-candidate">
-      <div className="desk-candidate-head">
-        <div className="desk-candidate-identity">
-          <span className="desk-candidate-symbol">{c.symbol || 'ES'}</span>
-          <div>
-            <Link to={`/strategies/${c.id}`} className="desk-candidate-name">{c.name}</Link>
-            <div className="desk-candidate-badges">
-              <span className={`review-chip status-${c.status}`}>{c.status}</span>
-              {v && <span className={`review-chip verdict ${v.status}`} title={(v.failures || []).join('\n')}>{v.status}</span>}
-            </div>
-          </div>
-        </div>
-        <Link to={`/strategies/${c.id}`} className="desk-open-link">Open dossier <span>→</span></Link>
-      </div>
-      <div className="desk-candidate-stats">
-        <div><span>Profit factor</span><b>{num(c.inSample?.profitFactor)}</b></div>
-        <div><span>Expectancy</span><b>{c.inSample?.expectancyR != null ? `${Number(c.inSample.expectancyR).toFixed(2)} R` : '—'}</b></div>
-        <div><span>IS trades</span><b>{c.inSample?.trades ?? '—'}</b></div>
-        <div><span>MC drawdown 95</span><b>{pct(c.monteCarloDd95Pct)}</b></div>
-        <div><span>WF positive</span><b>{c.walkForwardPositive}/{c.walkForwardWindows}</b></div>
-      </div>
-      {c.regimeNotes?.length > 0 && <div className="desk-candidate-regimes muted">{c.regimeNotes.join(' · ')}</div>}
-      <div className="desk-candidate-actions">
-        <a className="desk-package-link" href={strategyPackageUrl(c.id)} download>Download evidence package</a>
-      </div>
-    </li>
-  );
-}
-
-// `/` — the desk (PLATFORM-SPEC.md Phase 7): what is worth trading, what is
-// being tested, and what data is on disk. One read of /api/desk; refreshes every 20 s while open.
 export default function DeskPage() {
-  const navigate = useNavigate();
   const { leading: leadingSlot } = useContext(HeaderSlotContext);
-  const [desk, setDesk] = useState(null);
-  const [error, setError] = useState('');
-
-  const refresh = useCallback(async () => {
-    try {
-      setDesk(await fetchDesk());
-      setError('');
-    } catch (e) {
-      setError(e.message || 'Could not load the desk');
-    }
-  }, []);
+  const { selection, select } = useResearchSelection();
+  const [params, setParams] = useSearchParams();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 20000);
-    return () => clearInterval(t);
+    let cancelled = false;
+    let timer;
+    async function load() {
+      try {
+        const [strategies, runs, desk] = await Promise.all([
+          fetchStrategies(),
+          fetchBacktests(),
+          fetchDesk().catch((e) => ({ coverage: { error: e.message } })),
+        ]);
+        if (!cancelled) {
+          setData({ strategies, runs: orderedRuns(runs), desk });
+          setError("");
+        }
+      } catch (e) {
+        if (!cancelled)
+          setError(e.message || "The research desk could not be loaded.");
+      } finally {
+        if (!cancelled) timer = setTimeout(load, 20000);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [refresh]);
-
-  const cov = desk?.coverage || {};
-  const roots = cov.roots || {};
-  const testing = desk?.testing || {};
-
+  const strategies = useMemo(
+    () => (data?.strategies || []).filter(isES),
+    [data],
+  );
+  const runs = data?.runs || [];
+  const requestedStrategy = params.get("strategy") || selection.strategyId;
+  const strategy =
+    strategies.find((s) => s.id === requestedStrategy) ||
+    (!requestedStrategy ? strategies[0] : null);
+  const strategyRuns = runs.filter((r) => r.strategyId === strategy?.id);
+  const requestedRun =
+    params.get("run") ||
+    (selection.strategyId === strategy?.id ? selection.runId : null);
+  const run =
+    strategyRuns.find((r) => r.id === requestedRun) ||
+    (!requestedRun ? strategyRuns[0] : null);
+  const context = {
+    strategyId: strategy?.id,
+    runId: run?.id,
+    name: strategy?.name,
+  };
+  useEffect(() => {
+    if (strategy)
+      select({ strategyId: strategy.id, runId: run?.id, name: strategy.name });
+  }, [strategy, run?.id, select]);
+  const availableCohorts = useMemo(
+    () => cohorts(data?.runs || [], strategies),
+    [data, strategies],
+  );
+  const cohort = params.get("cohort") || availableCohorts[0]?.key || "";
+  const minimumTrades = Math.max(
+    1,
+    Math.min(100000, Number.parseInt(params.get("minTrades"), 10) || 100),
+  );
+  const winners = leaders(strategies, runs, cohort, minimumTrades);
+  const allHistory = params.get("history") === "1";
+  const rows = strategies.filter(
+    (s) => allHistory || !["rejected", "retired"].includes(s.status),
+  );
+  const tab = ["execution", "rules", "runs"].includes(params.get("view"))
+    ? params.get("view")
+    : "execution";
+  const activeRuns = runs.filter(
+    (r) =>
+      ["queued", "preparing", "running"].includes(r.status) &&
+      strategies.some((s) => s.id === r.strategyId),
+  );
+  const coverage = data?.desk?.coverage;
+  const es = coverage?.roots?.ES;
+  function update(patch, replace = false) {
+    const next = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null || value === "") next.delete(key);
+      else next.set(key, value);
+    }
+    setParams(next, { replace });
+  }
+  function choose(strategyId, runId) {
+    const s = strategies.find((item) => item.id === strategyId);
+    const r = runId || runs.find((item) => item.strategyId === strategyId)?.id;
+    select({ strategyId, runId: r, name: s?.name });
+    update({ strategy: strategyId, run: r, view: "execution" });
+  }
+  function resetSelection() {
+    select({});
+    update({ strategy: null, run: null });
+  }
   return (
-    <div className="page workspace-page desk-page">
-      {leadingSlot && createPortal(<div className="hdr-title">Desk</div>, leadingSlot)}
-      <div className="page-scroll"><div className="page-inner wide">
-        <PageHeader
-          eyebrow="Research operations"
-          title="Trading desk"
-          subtitle="A live view of strategy readiness, active validation, and market-data health."
-        />
-        {desk && (
-          <div className="stat-row">
-            <StatTile label="Strategies" value={desk.strategies.total} sub={Object.entries(desk.strategies.byStatus).map(([k, n]) => `${n} ${k.replace('_', ' ')}`).join(' · ') || 'none yet'} to="/strategies" />
-            <StatTile label="Candidates" value={desk.candidates.length} sub={desk.candidates.length ? 'promoted for review' : 'none promoted yet'} tone={desk.candidates.length ? 'good' : ''} to="/strategies?status=candidate" />
-            <StatTile label="Testing now" value={testing.backtests?.length || 0} sub={`${testing.backtests?.length || 0} backtest${testing.backtests?.length === 1 ? '' : 's'} running`} to="/backtests" />
-            <StatTile label="Sessions on disk" value={Object.values(roots).reduce((a, r) => a + (r.sessions || 0), 0)} sub={Object.entries(roots).map(([k, r]) => `${k} ${r.first?.slice(5)} → ${r.last?.slice(5)}`).join(' · ') || 'no data'} to="/settings" />
-          </div>
-        )}
-        {error && <div className="review-error">{error}</div>}
-        {!desk && !error && <div className="review-empty">Loading…</div>}
-
-        {desk && (
-          <div className="desk-grid">
-            <Tile
-              title="Candidates"
-              sub={`${desk.candidates.length} promoted for review · ${desk.strategies.total} total strategies`}
-              className="desk-tile-candidates"
-            >
-              {desk.candidates.length === 0 ? (
-                <div className="review-card-empty">Nothing at candidate status yet. A strategy becomes a candidate when its validation passes — or when you set it so on its page.</div>
-              ) : (
-                <ul className="desk-candidates">
-                  {desk.candidates.map((c) => <CandidateCard key={c.id} c={c} />)}
-                </ul>
-              )}
-            </Tile>
-
-            <Tile title="Testing now" sub={`${testing.backtests?.length || 0} active backtest${testing.backtests?.length === 1 ? '' : 's'}`} className="desk-tile-testing">
-              {testing.backtests?.length === 0 && (
-                <div className="desk-testing-idle">
-                  <div className="desk-queue-clear"><span />Compute queue clear</div>
-                  <div className="desk-recent-label">Recent completions</div>
-                  <ul className="review-run-list">
-                    {(testing.recentBacktests || []).slice(0, 4).map((b) => (
-                      <li key={b.id} className="review-run">
-                        <button className="review-run-open" onClick={() => navigate(`/review/${b.id}`)}>
-                          <span className="review-run-tf">{(b.windowKind || 'full').toUpperCase()}</span>
-                          <span className="desk-recent-name">{b.strategyName || b.strategyId}</span>
-                          <span className={`desk-recent-pnl ${(b.summary?.totalPnl || 0) >= 0 ? 'pos' : 'neg'}`}>{b.summary ? `${b.summary.totalPnl >= 0 ? '+' : ''}$${Number(b.summary.totalPnl).toLocaleString()}` : 'Done'}</span>
-                        </button>
-                      </li>
+    <div className="page terminal-desk">
+      <div className="terminal-scroll">
+        <div className="terminal-content">
+          {leadingSlot &&
+            createPortal(
+              <span className="hdr-title">Research desk</span>,
+              leadingSlot,
+            )}
+          <header className="terminal-page-heading">
+            <div>
+              <div className="terminal-eyebrow">Evidence before conviction</div>
+              <h1>Strategy desk</h1>
+              <p>Find your strongest ideas. Keep every experiment.</p>
+            </div>
+            <div className="terminal-heading-actions">
+              <button onClick={() => update({ history: "1" })}>
+                All history
+              </button>
+              <Link
+                className="terminal-primary"
+                to={researchHref("/agent", context)}
+              >
+                Research chat →
+              </Link>
+            </div>
+          </header>
+          {error && (
+            <div className="terminal-notice" role="alert">
+              {data
+                ? "Refresh failed; showing previously loaded results. "
+                : ""}
+              {error}{" "}
+              <button onClick={() => setRefresh((n) => n + 1)}>Retry</button>
+            </div>
+          )}
+          {!data && !error && (
+            <div className="terminal-loading" role="status">
+              Loading strategies and recorded runs…
+            </div>
+          )}
+          {data && (
+            <>
+              <div className="terminal-comparison">
+                <label>
+                  Compare recorded runs{" "}
+                  <select
+                    aria-label="Comparison window"
+                    value={cohort}
+                    onChange={(e) => update({ cohort: e.target.value })}
+                  >
+                    <option value="">No recorded window</option>
+                    {availableCohorts.map((c) => (
+                      <option value={c.key} key={c.key}>
+                        {c.label}
+                      </option>
                     ))}
-                  </ul>
-                </div>
-              )}
-              {testing.backtests?.length > 0 && (
-                <ul className="review-run-list">
-                  {testing.backtests.map((b) => (
-                    <li key={b.id} className="review-run">
-                      <button className="review-run-open" onClick={() => navigate(`/review/${b.id}`)}>
-                        <span className="review-run-tf">{b.strategyName || b.strategyId}</span>
-                        <span className="review-chip window">{(b.windowKind || 'full').toUpperCase()}</span>
-                        <span className="review-chip mode">{b.mode}</span>
-                        <span className="review-run-stats"><span className="review-running">{b.status}{b.message ? ` — ${b.message}` : ''}</span></span>
+                  </select>
+                </label>
+                <label>
+                  Minimum trades{" "}
+                  <input
+                    aria-label="Minimum trades for leaders"
+                    type="number"
+                    min="1"
+                    max="100000"
+                    value={minimumTrades}
+                    onChange={(e) =>
+                      update(
+                        {
+                          minTrades: Math.max(
+                            1,
+                            Math.min(100000, Number(e.target.value) || 1),
+                          ),
+                        },
+                        true,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <div className="terminal-comparison-note">
+                ES only · Latest completed run per strategy in this window ·{" "}
+                {winners.eligible} eligible · Recorded sizing, risk and costs
+                may differ
+              </div>
+              <section
+                className="terminal-leaders"
+                aria-label="Category leaders"
+              >
+                <section className="terminal-leader terminal-prop">
+                  <div className="terminal-eyebrow">Prop suitability</div>
+                  <h2>Not assessed</h2>
+                  <strong className="terminal-leader-value muted">—</strong>
+                  <p>
+                    No firm-specific eligibility or risk rules are available.
+                  </p>
+                </section>
+                <MetricLeader
+                  title="Profitability"
+                  run={winners.profitability}
+                  value={money(metrics(winners.profitability).netPnl)}
+                  description="Highest recorded net P&L"
+                  onSelect={choose}
+                />
+                <MetricLeader
+                  title="Win rate"
+                  run={winners.winRate}
+                  value={number(metrics(winners.winRate).winRate, 1, "%")}
+                  description="Highest recorded win rate"
+                  onSelect={choose}
+                />
+              </section>
+              <div className="terminal-workspace">
+                <div className="terminal-main-column">
+                  <section className="terminal-panel">
+                    <header className="terminal-panel-head">
+                      <h2>
+                        Strategies{" "}
+                        <span className="terminal-count">{rows.length}</span>
+                      </h2>
+                      <div className="terminal-tabs">
+                        <button
+                          className={!allHistory ? "active" : ""}
+                          aria-pressed={!allHistory}
+                          onClick={() => update({ history: null })}
+                        >
+                          Shortlist
+                        </button>
+                        <button
+                          className={allHistory ? "active" : ""}
+                          aria-pressed={allHistory}
+                          onClick={() => update({ history: "1" })}
+                        >
+                          All history {strategies.length}
+                        </button>
+                      </div>
+                    </header>
+                    {rows.length ? (
+                      <div
+                        className="terminal-table-scroll"
+                        tabIndex="0"
+                        role="region"
+                        aria-label="Strategy results, scroll for more columns"
+                      >
+                        <table className="terminal-table">
+                          <thead>
+                            <tr>
+                              <th>Strategy / latest run</th>
+                              <th>Net P&amp;L</th>
+                              <th>Win rate</th>
+                              <th>PF</th>
+                              <th>Max DD</th>
+                              <th>State</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((s) => {
+                              const latest = runs.find(
+                                (r) => r.strategyId === s.id,
+                              );
+                              const m =
+                                latest?.status === "done"
+                                  ? metrics(latest)
+                                  : metrics(null);
+                              return (
+                                <tr
+                                  key={s.id}
+                                  className={
+                                    strategy?.id === s.id ? "selected" : ""
+                                  }
+                                >
+                                  <td>
+                                    <button
+                                      className="terminal-row-select"
+                                      aria-pressed={strategy?.id === s.id}
+                                      onClick={() => choose(s.id)}
+                                    >
+                                      <strong>{s.name}</strong>
+                                      <small>
+                                        {latest
+                                          ? `${latest.windowKind?.toUpperCase() || "Window unknown"} · ${latest.status} · ${latest.dateFrom || "—"} → ${latest.dateTo || "—"}`
+                                          : "No recorded run"}
+                                      </small>
+                                    </button>
+                                  </td>
+                                  <td>{money(m.netPnl)}</td>
+                                  <td>{number(m.winRate, 1, "%")}</td>
+                                  <td>{number(m.profitFactor)}</td>
+                                  <td>{number(m.maxDrawdownPct, 1, "%")}</td>
+                                  <td>
+                                    <span className="terminal-state">
+                                      {s.status?.replaceAll("_", " ") ||
+                                        "Unspecified"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="terminal-empty">
+                        <h3>
+                          {strategies.length
+                            ? "No shortlisted strategies"
+                            : "No ES strategies yet"}
+                        </h3>
+                        <p>
+                          {strategies.length
+                            ? "Rejected and retired strategies remain in All history."
+                            : "Your saved ES strategies will appear here. Research starts in chat."}
+                        </p>
+                        {strategies.length > 0 && (
+                          <button onClick={() => update({ history: "1" })}>
+                            Show all history
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <div className="terminal-table-note">
+                      Shortlist excludes rejected and retired strategies. Full
+                      history remains saved.
+                      <Link to="/strategies">Strategy library →</Link>
+                    </div>
+                  </section>
+                  {requestedStrategy && !strategy && (
+                    <div className="terminal-notice" role="status">
+                      The selected strategy is unavailable or outside this ES
+                      desk.{" "}
+                      <button onClick={resetSelection}>
+                        Select an available strategy
                       </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Tile>
-
-            <Tile title="Market data" sub="The historical information available for backtesting" className="desk-tile-data">
-              {cov.error && <div className="review-error">{cov.error}</div>}
-              {Object.keys(roots).length === 0 ? (
-                <div className="review-card-empty">No ingested data — drop Databento files under market-data/ and run <code>make ingest</code>.</div>
-              ) : (
-                <div className="desk-market-list">
-                  {Object.entries(roots).map(([root, r]) => {
-                    const ready = r.sessions > 0 && r.rawFiles > 0 && r.archived === r.rawFiles;
-                    return (
-                      <article className="desk-market-summary" key={root}>
-                        <div className="desk-market-head">
-                          <span className="desk-market-symbol">{root}</span>
-                          <div><strong>{root} historical data is available</strong><span>{r.sessions} trading sessions · {r.first} through {r.last}</span></div>
-                          <span className={`desk-data-ready ${ready ? '' : 'warning'}`}><i />{ready ? 'Ready' : 'Check data'}</span>
+                    </div>
+                  )}
+                  {strategy && (
+                    <section className="terminal-panel terminal-selected">
+                      <header className="terminal-panel-head">
+                        <h2>
+                          <span className="terminal-symbol">ES</span>
+                          {strategy.name}
+                        </h2>
+                        <div className="terminal-tabs">
+                          {["execution", "rules", "runs"].map((name) => (
+                            <button
+                              key={name}
+                              className={tab === name ? "active" : ""}
+                              aria-pressed={tab === name}
+                              onClick={() => update({ view: name })}
+                            >
+                              {name === "execution"
+                                ? "Execution"
+                                : name === "rules"
+                                  ? "Rules"
+                                  : "Runs"}
+                            </button>
+                          ))}
                         </div>
-                        <div className="desk-market-facts">
-                          <div><span>Trading days</span><strong>{r.sessions}</strong></div>
-                          <div><span>Original files saved</span><strong>{r.archived} of {r.rawFiles}</strong></div>
-                          <div><span>Fast replay ready</span><strong>{(cov.replayCache || []).filter((c) => c.root === root).length} days</strong></div>
-                          <div><span>Storage used</span><strong>{mb(Object.values(cov.sizes || {}).reduce((a, b) => a + (b || 0), 0))}</strong></div>
+                      </header>
+                      <div className="terminal-selected-context">
+                        <label>
+                          Selected run{" "}
+                          <select
+                            aria-label="Selected run"
+                            value={run?.id || ""}
+                            onChange={(e) =>
+                              choose(strategy.id, e.target.value)
+                            }
+                          >
+                            <option value="" disabled>
+                              {strategyRuns.length
+                                ? "Choose an available run"
+                                : "No recorded runs"}
+                            </option>
+                            {strategyRuns.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.id} ·{" "}
+                                {r.windowKind?.toUpperCase() ||
+                                  "Unknown window"}{" "}
+                                · {r.mode} · {r.status}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <Link
+                          to={`/strategies/${encodeURIComponent(strategy.id)}`}
+                          className="terminal-text-link"
+                        >
+                          Open dossier →
+                        </Link>
+                      </div>
+                      {requestedRun && !run && (
+                        <div className="terminal-notice" role="status">
+                          The selected run is unavailable for this strategy.
+                          Choose another recorded run.
                         </div>
-                      </article>
-                    );
-                  })}
+                      )}
+                      {tab === "execution" &&
+                        (run ? (
+                          <RunPreview key={run.id} run={run} />
+                        ) : (
+                          <div className="terminal-empty">
+                            Select a recorded run to inspect its fills. No
+                            example results are substituted.
+                          </div>
+                        ))}
+                      {tab === "rules" && (
+                        <div className="terminal-rules">
+                          <div className="terminal-eyebrow">
+                            Current saved strategy specification
+                          </div>
+                          <p className="terminal-small">
+                            These are the current saved rules, not a
+                            reconstructed entry-time snapshot.
+                          </p>
+                          {describeSpec(strategy).map((line, i) => (
+                            <p key={i}>
+                              <span>{String(i + 1).padStart(2, "0")}</span>
+                              {line}
+                            </p>
+                          ))}
+                          <Link
+                            to={`/strategies/${encodeURIComponent(strategy.id)}?tab=spec`}
+                            className="terminal-text-link"
+                          >
+                            Full specification →
+                          </Link>
+                          <a
+                            href={strategyPackageUrl(strategy.id)}
+                            className="terminal-text-link"
+                            download
+                          >
+                            Download evidence package
+                          </a>
+                        </div>
+                      )}
+                      {tab === "runs" && (
+                        <div className="terminal-run-history">
+                          {strategyRuns.length ? (
+                            strategyRuns.map((r) => (
+                              <button
+                                key={r.id}
+                                onClick={() => choose(strategy.id, r.id)}
+                              >
+                                <strong>{r.id}</strong>
+                                <span>
+                                  {cohortLabel(r)} · {r.status}
+                                </span>
+                                <span>
+                                  {r.status === "done"
+                                    ? money(metrics(r).netPnl)
+                                    : "—"}
+                                </span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="terminal-empty">
+                              No recorded runs for this strategy.
+                            </div>
+                          )}
+                          <Link
+                            className="terminal-text-link"
+                            to={`/strategies/${encodeURIComponent(strategy.id)}?tab=lineage`}
+                          >
+                            Experiment lineage →
+                          </Link>
+                        </div>
+                      )}
+                    </section>
+                  )}
                 </div>
-              )}
-              <Link to="/settings" className="desk-card-link">View and manage market data <span>→</span></Link>
-            </Tile>
-
-            <Tile title="Strategy experiments" sub="Which ideas were tested and whether there is enough evidence" className="desk-tile-lineage">
-              {desk.lineage.length === 0 ? (
-                <div className="review-card-empty">No strategy experiments yet.</div>
-              ) : desk.lineage.map((l) => (
-                <ResearchSummary key={l.rootId} lineage={l} />
-              ))}
-            </Tile>
-          </div>
-        )}
-      </div></div>
+                <ResearchRail selection={context} activeRuns={activeRuns} />
+              </div>
+              <footer className="terminal-data-footer">
+                <div>
+                  <span className="terminal-symbol">ES</span> Historical MBO ·{" "}
+                  {coverage?.error
+                    ? `Coverage unavailable: ${coverage.error}`
+                    : es
+                      ? `${es.sessions} sessions · ${es.first} → ${es.last}`
+                      : "No ingested ES sessions reported"}
+                </div>
+                <Link to="/settings">Market data details →</Link>
+              </footer>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
