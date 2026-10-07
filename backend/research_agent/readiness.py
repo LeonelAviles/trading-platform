@@ -24,7 +24,7 @@ def effective_execution(document: dict) -> dict:
     return {"mode": execution.get("mode"), "requestedSlippageTicksOverride": override,
             "slippageTicks": slippage, "slippageSource": "engineConfig" if override is None else "explicit_override",
             "commissionPerSide": config["roots"]["ES"]["commission_per_side"],
-            "tickSlippageSupport": "0 or 1 only; magnitude above one is not implemented"}
+            "slippageSupport": "bars and ticks: 0 or 1 only; larger entry-fill magnitudes are not implemented"}
 
 
 def executable_errors(document: dict) -> list[str]:
@@ -57,8 +57,8 @@ def executable_errors(document: dict) -> list[str]:
         errors.append("L3 research approval is deferred; supported modes are bars and ticks")
     effective = effective_execution(document)
     slippage = effective["slippageTicks"]
-    if type(slippage) is not int or slippage < 0 or (model.execution.mode == "ticks" and slippage not in {0, 1}):
-        errors.append("execution.slippageTicksOverride/effective config: require nonnegative integer; ticks supports only 0 or 1")
+    if type(slippage) is not int or slippage not in {0, 1}:
+        errors.append("execution.slippageTicksOverride/effective config: bars and ticks support only integer 0 or 1")
     if model.execution.mode == "bars" and spec.required_mode(document) != "bars":
         errors.append("execution.mode: these rules require ticks")
     if model.exit.stop.type == "structure" or model.exit.target.type == "level":

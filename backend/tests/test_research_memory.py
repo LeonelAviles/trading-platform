@@ -594,7 +594,8 @@ def test_primitive_parameters_must_be_executable_choices(setup, name, params):
 
 
 @pytest.mark.parametrize("mode,override,allowed", [("ticks", -1, False), ("ticks", 3, False),
-                                                   ("ticks", 0, True), ("ticks", 1, True), ("bars", -1, False)])
+                                                   ("ticks", 0, True), ("ticks", 1, True), ("bars", -1, False),
+                                                   ("bars", 3, False), ("bars", 0, True), ("bars", 1, True)])
 def test_exact_slippage_approvals_match_worker_support(setup, mode, override, allowed):
     raw = copy.deepcopy(setup.strategy)
     raw["execution"].update(mode=mode, slippageTicksOverride=override)
@@ -655,7 +656,8 @@ def test_research_report_reuses_verified_artifacts_without_unchecked_reads(setup
     assert report["inSample"]["netPnl"] == 42 and report["oosHidden"] is True
 
 
-def test_null_tick_slippage_rejects_unsupported_effective_config(setup, monkeypatch, tmp_path):
+@pytest.mark.parametrize("mode", ["bars", "ticks"])
+def test_null_slippage_rejects_unsupported_effective_config(setup, monkeypatch, tmp_path, mode):
     from research_agent import readiness
     import yaml
     config = yaml.safe_load(readiness.CONFIG_PATH.read_text())
@@ -664,6 +666,6 @@ def test_null_tick_slippage_rejects_unsupported_effective_config(setup, monkeypa
     path.write_text(yaml.safe_dump(config))
     monkeypatch.setattr(readiness, "CONFIG_PATH", path)
     raw = copy.deepcopy(setup.strategy)
-    raw["execution"].update(mode="ticks", slippageTicksOverride=None)
+    raw["execution"].update(mode=mode, slippageTicksOverride=None)
     assert readiness.effective_execution(raw)["slippageTicks"] == 3
-    assert any("ticks supports only 0 or 1" in error for error in readiness.executable_errors(raw))
+    assert any("bars and ticks support only integer 0 or 1" in error for error in readiness.executable_errors(raw))

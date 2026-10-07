@@ -48,8 +48,8 @@ not add authentication or multi-tenant isolation).
    their worker fallback distances and implicit swing lookbacks are unsupported.
    Primitive lookbacks/counts must be positive, applicable size/distance parameters
    nonnegative, and numeric choices finite and correctly typed; null is accepted
-   only for a documented optional price parameter. Tick slippage supports only
-   0 or 1; a null override resolves to the configuration captured in
+   only for a documented optional price parameter. Both bars and ticks support effective slippage of only
+   0 or 1 (the entry FillModel cannot express larger magnitudes); a null override resolves to the configuration captured in
    `document.effectiveExecution`, which also states commission per side.
    Inference via a deflated-Sharpe threshold is blocked while total search trials
    are unknown; no default significance policy is chosen.
