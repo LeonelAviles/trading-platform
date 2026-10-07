@@ -78,7 +78,7 @@ and asserts that ordinary browsing causes no backend mutations. Approval tests
 exercise only explicit, intercepted decision/queue requests. Its report and screenshots
 cover desktop/mobile rendering, history and run selection, repeated tabs, chat
 and full-chart navigation, loading, empty data, unavailable data, retry, stale
-responses invalid deep links, initial browser Back, approval confirmation/cancel, draft and
+responses, invalid deep links, initial browser Back, approval confirmation/cancel, draft and
 conflict blocks, malformed session storage and missing/corrupt/legacy evidence. Screenshots are labeled as synthetic QA data.
 These checks do not validate live market data or execute a backtest.
 
@@ -96,3 +96,12 @@ existing zero-trade assertions in `tests/test_jobs.py` (lifecycle and validation
 with 173 passing. The backend tree is byte-identical to base
 `28d5e29952bac4861ea7c79d84c5dd1fde0bedf7` (tree
 `8891920cf37769ae2952e3ba3a7d2e442c8229f2`); this PR makes no backend fixes.
+
+Combined-branch verification: both UI commits applied cleanly over backend
+`942f892` in a detached disposable worktree; all 30 research-memory/controller
+checks passed. A real HTTP browser check used those combined branches, a migrated
+temporary SQLite database and synthetic trade artifacts. It confirmed whole
+proposal/digest review, cancel/back without writes, explicit approval then queue,
+and two returned durable job links. Dispatch was replaced with a recorder: zero
+backtests executed. The same check used the real backend candle-open clipping for
+an hourly entry and confirmed raw legacy missing fees/size remained unavailable.

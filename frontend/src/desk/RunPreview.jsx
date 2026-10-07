@@ -126,6 +126,7 @@ export default function RunPreview({ run }) {
   const [offset, setOffset] = useState(0);
   const [evidence, setEvidence] = useState({ loading: true });
   const [evidenceRetry, setEvidenceRetry] = useState(0);
+  const artifactHash = useRef(null);
   useEffect(() => {
     let cancelled = false;
     let timer;
@@ -171,9 +172,19 @@ export default function RunPreview({ run }) {
           !Array.isArray(value.trades) ||
           !Number.isInteger(value.total) ||
           value.total < 0 ||
+          value.offset !== offset ||
+          (value.total > offset && value.trades.length === 0) ||
           !value.artifactSha256
         )
           throw new Error("The trade evidence response is incomplete.");
+        if (
+          artifactHash.current &&
+          artifactHash.current !== value.artifactSha256
+        )
+          throw new Error(
+            "The artifact changed while paging. Reopen this run to review the new artifact from its first page.",
+          );
+        artifactHash.current = value.artifactSha256;
         setEvidence({ data: value });
       })
       .catch((e) => {
@@ -392,7 +403,9 @@ export default function RunPreview({ run }) {
                 </>
               ) : (
                 <div className="terminal-empty">
-                  No trades were recorded in this verified artifact.
+                  {evidence.data?.total === 0
+                    ? "No trades were recorded in this verified artifact."
+                    : "No trades are available on this page. Return to the previous page."}
                 </div>
               )}
             </>

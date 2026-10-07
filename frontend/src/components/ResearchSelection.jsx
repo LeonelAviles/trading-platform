@@ -4,6 +4,7 @@ import { ResearchSelectionContext } from "../researchSelection";
 
 const KEY = "stratos.research.selection";
 function normalize(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) value = {};
   return Object.fromEntries(
     ["strategyId", "runId", "name"].map((key) => [
       key,
