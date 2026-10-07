@@ -98,7 +98,7 @@ export default function Sidebar({ collapsed, onToggle }) {
         aria-label="Main"
       >
         <NavLink
-          to="/"
+          to={destination("/")}
           className="sidebar-brand"
           title="Desk"
           aria-label="Stratos trading desk"
@@ -142,8 +142,14 @@ export default function Sidebar({ collapsed, onToggle }) {
               className="sidebar-item"
               to={`/review/${encodeURIComponent(selection.runId)}`}
               title="Selected execution chart"
+              aria-label="Selected execution chart"
             >
-              <span className="sidebar-label">Selected run</span>
+              <span className="sidebar-icon" aria-hidden="true">
+                {I.backtests}
+              </span>
+              {!collapsed && (
+                <span className="sidebar-label">Selected run</span>
+              )}
             </NavLink>
           )}
           <NavLink

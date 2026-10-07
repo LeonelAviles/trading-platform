@@ -1,10 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { HeaderSlotContext } from "./headerSlot";
 import Sidebar from "./components/Sidebar";
 import ResearchSelection from "./components/ResearchSelection";
 import { researchHref, useResearchSelection } from "./researchSelection";
-import { Link } from "react-router-dom";
 
 const DeskPage = lazy(() => import("./pages/DeskPage"));
 const StrategiesPage = lazy(() => import("./pages/StrategiesPage"));
@@ -30,7 +29,6 @@ function AppShell() {
   const { selection } = useResearchSelection();
   const { pathname } = useLocation();
   const onChart = CHART_ROUTES.some((p) => pathname.startsWith(p));
-  const showRouteBar = true;
   const [pref, setPref] = useState(readPref);
   const collapsed = onChart || pref;
   const [leadingSlot, setLeadingSlot] = useState(null);
@@ -52,16 +50,14 @@ function AppShell() {
         onToggle={() => setPref((p) => (onChart ? false : !p))}
       />
       <div className="app">
-        {showRouteBar && (
-          <header className="app-header">
-            <div className="hdr-leading" ref={setLeadingSlot} />
-            <div className="hdr-slot" ref={setSlot} />
-            <div className="hdr-trailing" ref={setTrailingSlot} />
-            {!onChart && (
-              <div className="terminal-top-scope">ES · Historical research</div>
-            )}
-          </header>
-        )}
+        <header className="app-header">
+          <div className="hdr-leading" ref={setLeadingSlot} />
+          <div className="hdr-slot" ref={setSlot} />
+          <div className="hdr-trailing" ref={setTrailingSlot} />
+          {!onChart && (
+            <div className="terminal-top-scope">ES · Historical research</div>
+          )}
+        </header>
         {pathname === "/agent" && selection.strategyId && (
           <div className="research-context-strip">
             <span>

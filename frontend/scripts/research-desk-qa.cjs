@@ -1,82 +1,306 @@
 // Browser regression checks with synthetic, intercepted API data only.
 // Start Vite separately; this script never contacts a backend or starts a test run.
-const { chromium } = require('playwright');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { chromium } = require("playwright");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
-const base = process.env.UI_QA_URL || 'http://127.0.0.1:5175';
-const output = process.env.UI_QA_OUTPUT || '/tmp/stratos-ui-qa';
-const start = Date.parse('2026-06-12T14:00:00Z') / 1000;
-const strategy = (id, name, status = 'candidate') => ({
-  id, name, status, instrument: { root: 'ES', symbol: 'ES1!' },
-  direction: 'long', timeframes: { primary: '1min' },
-  entry: { trigger: true }, exit: { stop: { type: 'ticks', value: 8 }, target: { type: 'rr', value: 2 } },
-  session: { entryWindow: { start: '09:30', end: '15:30' }, flattenAt: '15:55' },
-  sizing: { type: 'fixed_contracts', value: 1 },
+const base = process.env.UI_QA_URL || "http://127.0.0.1:5175";
+const output = process.env.UI_QA_OUTPUT || "/tmp/stratos-ui-qa";
+const start = Date.parse("2026-06-12T14:00:00Z") / 1000;
+const strategy = (id, name, status = "candidate") => ({
+  id,
+  name,
+  status,
+  instrument: { root: "ES", symbol: "ES1!" },
+  direction: "long",
+  timeframes: { primary: "1min" },
+  entry: { trigger: true },
+  exit: { stop: { type: "ticks", value: 8 }, target: { type: "rr", value: 2 } },
+  session: {
+    entryWindow: { start: "09:30", end: "15:30" },
+    flattenAt: "15:55",
+  },
+  sizing: { type: "fixed_contracts", value: 1 },
 });
-const strategies = [strategy('s1', 'Opening range reclaim'), strategy('s2', 'VWAP mean reversion'), strategy('s3', 'Archived hypothesis', 'rejected')];
+const strategies = [
+  strategy("s1", "Opening range reclaim"),
+  strategy("s2", "VWAP mean reversion"),
+  strategy("s3", "Archived hypothesis", "rejected"),
+];
 const run = (id, strategyId, netPnl, winRate) => ({
-  id, strategyId, strategyName: strategies.find(s => s.id === strategyId).name,
-  createdAt: '2026-06-13T00:00:00Z', status: 'done', source: 'nautilus',
-  dateFrom: '2026-04-01', dateTo: '2026-06-12', windowKind: 'is', mode: 'ticks', symbol: 'ES1!', interval: '1min',
-  metrics: { netPnl, winRate, trades: 150, profitFactor: 1.7, expectancyR: 0.28, maxDrawdownPct: 3.2 },
-  trades: [{ id: `${id}-trade`, direction: 'long', entryTime: start + 612, exitTime: start + 1091, entryPrice: 6002.25, exitPrice: 6005.5, pnlUsd: 156.5, pnl: 156.5, reason: 'target', contracts: 1, commissionUsd: 6, slippageTicks: 1, exitReason: 'target', stopPrice: 6000.25, targetPrice: 6006.25 }],
+  id,
+  strategyId,
+  strategyName: strategies.find((s) => s.id === strategyId).name,
+  createdAt: "2026-06-13T00:00:00Z",
+  status: "done",
+  source: "nautilus",
+  dateFrom: "2026-04-01",
+  dateTo: "2026-06-12",
+  windowKind: "is",
+  mode: "ticks",
+  symbol: "ES1!",
+  interval: "1min",
+  metrics: {
+    netPnl,
+    winRate,
+    trades: 150,
+    profitFactor: 1.7,
+    expectancyR: 0.28,
+    maxDrawdownPct: 3.2,
+  },
+  trades: [
+    {
+      id: `${id}-trade`,
+      direction: "long",
+      entryTime: start + 612,
+      exitTime: start + 1091,
+      entryPrice: 6002.25,
+      exitPrice: 6005.5,
+      pnlUsd: 156.5,
+      pnl: 156.5,
+      reason: "target",
+      contracts: 1,
+      commissionUsd: 6,
+      slippageTicks: 1,
+      exitReason: "target",
+      stopPrice: 6000.25,
+      targetPrice: 6006.25,
+    },
+  ],
 });
-const runs = [run('run-1', 's1', 4260, 57.3), run('run-2', 's2', 3150, 68.4), run('run-old', 's1', -500, 40), run('run-3', 's3', -350, 38)];
-runs[2].createdAt = '2026-06-01T00:00:00Z';
-const bars = Array.from({ length: 60 }, (_, i) => ({ time: start + i * 60, open: 6000 + i * .25, high: 6001 + i * .25, low: 5999 + i * .25, close: 6000.5 + i * .25, volume: 100 + i }));
+const runs = [
+  run("run-1", "s1", 4260, 57.3),
+  run("run-2", "s2", 3150, 68.4),
+  run("run-old", "s1", -500, 40),
+  run("run-3", "s3", -350, 38),
+];
+runs[2].createdAt = "2026-06-01T00:00:00Z";
+const bars = Array.from({ length: 60 }, (_, i) => ({
+  time: start + i * 60,
+  open: 6000 + i * 0.25,
+  high: 6001 + i * 0.25,
+  low: 5999 + i * 0.25,
+  close: 6000.5 + i * 0.25,
+  volume: 100 + i,
+}));
 
 (async () => {
   fs.mkdirSync(output, { recursive: true });
-  const executablePath = process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
-  const browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] });
-  const report = { checks: [], screenshots: [], mutations: [], errors: [] };
+  const executablePath =
+    process.env.CHROMIUM_PATH ||
+    (fs.existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined);
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--no-sandbox"],
+  });
+  const report = {
+    checks: [],
+    screenshots: [],
+    mutations: [],
+    approvedFixtureActions: [],
+    errors: [],
+  };
   async function setup(options = {}) {
-    const context = await browser.newContext({ viewport: options.mobile ? { width: 390, height: 844 } : { width: 1440, height: 1122 } });
-    await context.addInitScript(() => localStorage.setItem('stratos.agent.thread', 'fixture-thread'));
+    const context = await browser.newContext({
+      viewport: options.mobile
+        ? { width: 390, height: 844 }
+        : { width: 1440, height: 1122 },
+    });
+    await context.addInitScript(() =>
+      localStorage.setItem("stratos.agent.thread", "fixture-thread"),
+    );
     const page = await context.newPage();
-    page.on('pageerror', e => report.errors.push(e.stack || e.message));
-    await page.route('**/api/**', async route => {
+    page.on("pageerror", (e) => report.errors.push(e.stack || e.message));
+    let proposal = {
+      id: "proposal-1",
+      threadId: "fixture-thread",
+      digest: "a".repeat(64),
+      status: options.draft ? "draft" : "proposed",
+      blockers: options.draft ? ["Missing explicit stop choice"] : [],
+      decision: null,
+      document: {
+        hypothesis:
+          "Review the opening-range hypothesis <img src=x onerror=alert(1)>",
+        strategy: strategies[0],
+        testPlan: {
+          windows: ["is", "wf1"],
+          objective: "Descriptive comparison",
+          dataPolicy: "metadata_inventory_not_immutable_snapshot",
+        },
+        dataset: { config: { session: "RTH" }, contentImmutable: false },
+        passages: [
+          {
+            text: "<script>window.fixtureXss=true</script>",
+            hash: "source-hash",
+          },
+        ],
+      },
+      evidence: [],
+    };
+    await context.addInitScript((value) => {
+      if (value) sessionStorage.setItem("stratos.research.selection", value);
+    }, options.storage || null);
+    await page.route("**/api/**", async (route) => {
       const request = route.request();
-      if (request.method() !== 'GET') report.mutations.push(`${request.method()} ${request.url()}`);
+      if (request.method() !== "GET") {
+        const item = {
+          method: request.method(),
+          path: new URL(request.url()).pathname,
+          body: request.postDataJSON(),
+        };
+        (options.proposals
+          ? report.approvedFixtureActions
+          : report.mutations
+        ).push(item);
+      }
       const url = new URL(request.url());
       let data = [];
       let status = 200;
-      if (options.delay && url.pathname === '/api/strategies') await new Promise(resolve => setTimeout(resolve, options.delay));
-      if (url.pathname === '/api/strategies') {
+      if (options.delay && url.pathname === "/api/strategies")
+        await new Promise((resolve) => setTimeout(resolve, options.delay));
+      if (url.pathname.includes("/proposals")) {
+        if (!options.proposals) {
+          status = 404;
+          data = { detail: "Not Found" };
+        } else if (request.method() === "POST") {
+          if (options.conflict) {
+            status = 409;
+            data = { detail: "dataset/configuration changed" };
+          } else if (url.pathname.endsWith("/decision")) {
+            const body = request.postDataJSON();
+            assert.equal(body.digest, proposal.digest);
+            assert.ok(body.reason.trim());
+            proposal = {
+              ...proposal,
+              status: body.action === "approve" ? "approved" : body.action,
+              decision: body,
+            };
+            data = proposal;
+          } else if (url.pathname.endsWith("/queue")) {
+            assert.equal(proposal.decision?.action, "approve");
+            proposal = {
+              ...proposal,
+              status: "queued",
+              evidence: [{ jobId: "run-1", window: "is", status: "queued" }],
+            };
+            data = proposal;
+          }
+        } else if (url.pathname.endsWith("/proposals"))
+          data = { proposals: [proposal], total: 1, recordedAttempts: 0 };
+        else data = proposal;
+      } else if (url.pathname.startsWith("/api/agent/evidence/")) {
+        const selectedRun = runs.find(
+          (r) => r.id === url.pathname.split("/")[4],
+        );
+        const raw = options.noTrades
+          ? []
+          : selectedRun.trades.map((t) =>
+              options.legacyMissing
+                ? {
+                    ...t,
+                    commissionUsd: null,
+                    slippageTicks: null,
+                    contracts: null,
+                    missingFields: [
+                      "commissionUsd",
+                      "slippageTicks",
+                      "contracts",
+                    ],
+                  }
+                : t,
+            );
+        data = {
+          job: selectedRun,
+          artifactSha256: "b".repeat(64),
+          total: raw.length,
+          offset: 0,
+          trades: raw,
+          regimeProvenance: "Full-session hindsight; not entry-time evidence",
+        };
+        if (options.missingArtifact) {
+          status = 400;
+          data = {
+            detail:
+              "trade artifact unavailable; an absent file is not zero trades",
+          };
+        }
+        if (options.corruptArtifact) {
+          status = 400;
+          data = { detail: "trade evidence unavailable: malformed artifact" };
+        }
+      } else if (url.pathname === "/api/strategies") {
         data = options.empty ? [] : strategies;
-        if (options.failure) { status = 503; data = { detail: 'Fixture service unavailable' }; }
-      } else if (url.pathname === '/api/backtests') data = options.empty || options.noRuns ? [] : runs;
+        if (options.failure) {
+          status = 503;
+          data = { detail: "Fixture service unavailable" };
+        }
+      } else if (url.pathname === "/api/backtests")
+        data = options.empty || options.noRuns ? [] : runs;
       else if (/^\/api\/backtests\/[^/]+$/.test(url.pathname)) {
-        data = runs.find(r => r.id === url.pathname.split('/').at(-1));
-        if (options.slowRun && data?.id === 'run-1') await new Promise(resolve => setTimeout(resolve, 500));
+        data = runs.find((r) => r.id === url.pathname.split("/").at(-1));
+        if (options.slowRun && data?.id === "run-1")
+          await new Promise((resolve) => setTimeout(resolve, 500));
         if (options.noTrades) data = { ...data, trades: [], metrics: {} };
-      } else if (url.pathname === '/api/ohlcv') {
+      } else if (url.pathname === "/api/ohlcv") {
         data = options.noCandles ? [] : bars;
-        if (options.candleFailure) { status = 503; data = { detail: 'Fixture candles unavailable' }; }
-      } else if (url.pathname === '/api/range') data = { start, end: start + 3600 };
-      else if (url.pathname === '/api/desk') data = { coverage: { roots: { ES: { sessions: 52, first: '2026-04-01', last: '2026-06-12' } } } };
-      else if (url.pathname.startsWith('/api/agent/threads/')) data = { id: 'fixture-thread', messages: [{ id: 'm1', role: 'assistant', content: 'Synthetic QA conversation. Review evidence before testing.' }] };
-      else if (url.pathname === '/api/dom-heatmap') data = { buckets: [], levels: [] };
-      else if (url.pathname === '/api/dom') data = { bids: [], asks: [] };
-      else if (url.pathname === '/api/volume-profile') data = { bins: [] };
-      else if (url.pathname.includes('/validation')) data = { status: 'unavailable' };
-      await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data ?? {}) });
+        if (options.candleFailure) {
+          status = 503;
+          data = { detail: "Fixture candles unavailable" };
+        }
+      } else if (url.pathname === "/api/range")
+        data = { start, end: start + 3600 };
+      else if (url.pathname === "/api/data/coverage")
+        data = {
+          roots: {
+            ES: { sessions: 52, first: "2026-04-01", last: "2026-06-12" },
+          },
+        };
+      else if (url.pathname.startsWith("/api/agent/threads/"))
+        data = {
+          id: "fixture-thread",
+          messages: [
+            {
+              id: "m1",
+              role: "assistant",
+              content:
+                "Synthetic QA conversation. Review evidence before testing.",
+            },
+          ],
+        };
+      else if (url.pathname === "/api/dom-heatmap")
+        data = { buckets: [], levels: [] };
+      else if (url.pathname === "/api/dom") data = { bids: [], asks: [] };
+      else if (url.pathname === "/api/volume-profile") data = { bins: [] };
+      else if (url.pathname.includes("/validation"))
+        data = { status: "unavailable" };
+      await route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(data ?? {}),
+      });
     });
     await page.goto(base);
     return { page, context, options };
   }
-  async function visible(page, text) { await page.getByText(text, { exact: false }).first().waitFor(); }
+  async function visible(page, text) {
+    await page.getByText(text, { exact: false }).first().waitFor();
+  }
   async function selected(page, id) {
-    await page.waitForFunction(value => document.querySelector('[aria-label="Selected run"]')?.value === value, id);
+    await page.waitForFunction(
+      (value) =>
+        document.querySelector('[aria-label="Selected run"]')?.value === value,
+      id,
+    );
   }
   async function snapshot(page, name) {
     // The QA-only banner prevents synthetic fixtures being mistaken for actual results.
     await page.evaluate(() => {
-      const banner = document.createElement('div');
-      banner.textContent = 'UI QA • Synthetic API fixtures';
-      banner.style.cssText = 'position:fixed;top:0;right:0;z-index:9999;background:#f0c583;color:#181c1f;padding:3px 8px;font:10px sans-serif;pointer-events:none';
+      const banner = document.createElement("div");
+      banner.textContent = "UI QA • Synthetic API fixtures";
+      banner.style.cssText =
+        "position:fixed;top:0;right:0;z-index:9999;background:#f0c583;color:#181c1f;padding:3px 8px;font:10px sans-serif;pointer-events:none";
       document.body.append(banner);
     });
     await page.screenshot({ path: path.join(output, name), fullPage: true });
@@ -84,65 +308,148 @@ const bars = Array.from({ length: 60 }, (_, i) => ({ time: start + i * 60, open:
   }
   try {
     const { page, context } = await setup();
-    await page.locator('.terminal-fill-chart canvas').first().waitFor();
-    await visible(page, 'Approval controls unavailable');
-    await selected(page, 'run-1');
-    await snapshot(page, 'research-desk-desktop.png');
+    await page.locator(".terminal-fill-chart canvas").first().waitFor();
+    await visible(page, "Approval controls unavailable");
+    await selected(page, "run-1");
+    // First selection from the initial bare URL must be restorable with Back.
+    await page.waitForURL("**/?strategy=s1&run=run-1");
+    await page
+      .locator(".terminal-table")
+      .getByRole("button", { name: /^VWAP mean reversion/ })
+      .click();
+    await selected(page, "run-2");
+    await page.goBack();
+    await selected(page, "run-1");
+    assert.equal(
+      await page.locator(".terminal-leader-name").count(),
+      0,
+      "No ranking before an explicit comparison choice",
+    );
+    await page.getByLabel("Comparison window").selectOption({ index: 1 });
+    await page.waitForFunction(() =>
+      new URLSearchParams(location.search).has("cohort"),
+    );
+    await page
+      .getByRole("checkbox", { name: /Compare raw recorded results/ })
+      .click();
+    await page.waitForFunction(
+      () => document.querySelector(".terminal-comparison-policy input").checked,
+    );
+    await page.locator(".terminal-leader-name").first().waitFor();
+    await snapshot(page, "research-desk-desktop.png");
     for (let i = 0; i < 3; i++) {
-      await page.getByRole('button', { name: 'Rules', exact: true }).click();
-      await visible(page, 'Current saved strategy specification');
-      await page.getByRole('button', { name: 'Runs', exact: true }).click();
-      await page.getByRole('button', { name: /^run-old/ }).click();
-      await selected(page, 'run-old');
-      await page.getByLabel('Selected run', { exact: true }).selectOption('run-1');
-      await page.getByText('Recorded trade context', { exact: true }).click();
-      await visible(page, 'Not recorded for this trade.');
-      await page.getByText('Recorded trade context', { exact: true }).click();
+      await page.getByRole("button", { name: "Rules", exact: true }).click();
+      await visible(page, "Current saved strategy specification");
+      await page.getByRole("button", { name: "Runs", exact: true }).click();
+      await page.getByRole("button", { name: /^run-old/ }).click();
+      await selected(page, "run-old");
+      await page
+        .getByLabel("Selected run", { exact: true })
+        .selectOption("run-1");
+      await page.getByText("Recorded trade context", { exact: true }).click();
+      await visible(page, "Not recorded for this trade.");
+      await page.getByText("Recorded trade context", { exact: true }).click();
     }
-    await page.getByRole('button', { name: 'All history 3', exact: true }).click();
-    await visible(page, 'Archived hypothesis');
-    await page.getByRole('button', { name: 'Shortlist', exact: true }).click();
-    await page.locator('.terminal-table').getByText('Archived hypothesis').waitFor({ state: 'hidden' });
-    await page.locator('.terminal-leaders').getByRole('button', { name: 'VWAP mean reversion' }).click();
-    await selected(page, 'run-2');
+    await page
+      .getByRole("button", { name: "All history 3", exact: true })
+      .click();
+    await visible(page, "Archived hypothesis");
+    await page.getByRole("button", { name: "Shortlist", exact: true }).click();
+    await page
+      .locator(".terminal-table")
+      .getByText("Archived hypothesis")
+      .waitFor({ state: "hidden" });
+    await page
+      .locator(".terminal-leaders")
+      .getByRole("button", { name: "VWAP mean reversion" })
+      .click();
+    await selected(page, "run-2");
     await page.goBack();
-    await selected(page, 'run-1');
-    await page.getByRole('link', { name: 'Open research chat →', exact: true }).click();
-    await page.getByRole('link', { name: 'Back to desk', exact: true }).waitFor();
+    await selected(page, "run-1");
+    await page
+      .getByRole("link", { name: "Open research chat →", exact: true })
+      .click();
+    await page
+      .getByRole("link", { name: "Back to desk", exact: true })
+      .waitFor();
     assert.match(page.url(), /strategy=s1.*run=run-1/);
-    await page.getByRole('link', { name: 'Back to desk', exact: true }).click();
-    await page.getByRole('link', { name: 'Open full execution chart →', exact: true }).click();
-    await page.waitForURL('**/review/run-1');
-    await page.locator('.review-split canvas').first().waitFor();
-    await page.locator('.review-crumb-name').filter({ hasText: 'Opening range reclaim' }).waitFor();
-    await snapshot(page, 'research-full-chart.png');
+    await page.getByRole("link", { name: "Back to desk", exact: true }).click();
+    await page
+      .getByRole("link", { name: "Open full execution chart →", exact: true })
+      .click();
+    await page.waitForURL("**/review/run-1");
+    await page.locator(".review-split canvas").first().waitFor();
+    await page
+      .locator(".review-crumb-name")
+      .filter({ hasText: "Opening range reclaim" })
+      .waitFor();
+    await snapshot(page, "research-full-chart.png");
     await page.goBack();
-    await page.getByLabel('Selected run', { exact: true }).waitFor();
-    await selected(page, 'run-1');
-    report.checks.push('desktop fills, repeated tabs/context toggles, saved history, leader selection, browser back, chat and full chart navigation');
+    await page.getByLabel("Selected run", { exact: true }).waitFor();
+    await selected(page, "run-1");
+    report.checks.push(
+      "desktop fills, repeated tabs/context toggles, saved history, leader selection, browser back, chat and full chart navigation",
+    );
     await context.close();
 
     const mobile = await setup({ mobile: true });
-    await mobile.page.locator('.terminal-fill-chart canvas').first().waitFor();
-    assert.ok(await mobile.page.getByRole('navigation', { name: 'Mobile research' }).isVisible());
-    assert.ok(await mobile.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    await snapshot(mobile.page, 'research-desk-mobile.png');
-    await mobile.page.getByLabel('Selected run', { exact: true }).selectOption('run-old');
-    await selected(mobile.page, 'run-old');
-    await mobile.page.locator('.terminal-fill-chart').scrollIntoViewIfNeeded();
-    await snapshot(mobile.page, 'research-mobile-fills.png');
-    await mobile.page.getByRole('navigation', { name: 'Mobile research' }).getByRole('link', { name: 'Research chat' }).click();
-    await visible(mobile.page, 'Run run-old');
-    await mobile.page.getByRole('link', { name: 'Back to desk', exact: true }).click();
-    await selected(mobile.page, 'run-old');
-    report.checks.push('390px mobile layout has no page overflow; navigation retains older run');
+    await mobile.page.locator(".terminal-fill-chart canvas").first().waitFor();
+    assert.ok(
+      await mobile.page
+        .getByRole("navigation", { name: "Mobile research" })
+        .isVisible(),
+    );
+    assert.ok(
+      await mobile.page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    await mobile.page
+      .getByLabel("Comparison window")
+      .selectOption({ index: 1 });
+    await mobile.page.waitForFunction(() =>
+      new URLSearchParams(location.search).has("cohort"),
+    );
+    await mobile.page
+      .getByRole("checkbox", { name: /Compare raw recorded results/ })
+      .click();
+    await mobile.page.waitForFunction(
+      () => document.querySelector(".terminal-comparison-policy input").checked,
+    );
+    await snapshot(mobile.page, "research-desk-mobile.png");
+    await mobile.page
+      .getByLabel("Selected run", { exact: true })
+      .selectOption("run-old");
+    await selected(mobile.page, "run-old");
+    await mobile.page.locator(".terminal-fill-chart").scrollIntoViewIfNeeded();
+    await snapshot(mobile.page, "research-mobile-fills.png");
+    await mobile.page
+      .getByRole("navigation", { name: "Mobile research" })
+      .getByRole("link", { name: "Research chat" })
+      .click();
+    await visible(mobile.page, "Run run-old");
+    await mobile.page
+      .getByRole("link", { name: "Back to desk", exact: true })
+      .click();
+    await selected(mobile.page, "run-old");
+    report.checks.push(
+      "390px mobile layout has no page overflow; navigation retains older run",
+    );
     await mobile.context.close();
 
     for (const [options, message] of [
-      [{ empty: true }, 'No ES strategies yet'],
-      [{ noRuns: true }, 'Select a recorded run to inspect its fills.'],
-      [{ noTrades: true }, 'No trades were recorded for this run.'],
-      [{ noCandles: true }, 'No historical candles are available'],
+      [{ empty: true }, "No ES strategies yet"],
+      [{ noRuns: true }, "Select a recorded run to inspect its fills."],
+      [
+        { noTrades: true },
+        "No trades were recorded in this verified artifact.",
+      ],
+      [{ noCandles: true }, "No historical candles are available"],
+      [
+        { missingArtifact: true },
+        "An unavailable artifact is not evidence of zero trades",
+      ],
+      [{ corruptArtifact: true }, "malformed artifact"],
     ]) {
       const view = await setup(options);
       await visible(view.page, message);
@@ -150,40 +457,239 @@ const bars = Array.from({ length: 60 }, (_, i) => ({ time: start + i * 60, open:
       await view.context.close();
     }
     const delayed = await setup({ delay: 1200 });
-    await visible(delayed.page, 'Loading strategies and recorded runs');
-    await delayed.page.getByLabel('Selected run', { exact: true }).waitFor();
-    report.checks.push('loading state resolves');
+    await visible(delayed.page, "Loading strategies and recorded runs");
+    await delayed.page.getByLabel("Selected run", { exact: true }).waitFor();
+    report.checks.push("loading state resolves");
     await delayed.context.close();
 
-    for (const [options, retry] of [[{ failure: true }, 'Retry'], [{ candleFailure: true }, 'Retry candles']]) {
+    for (const [options, retry] of [
+      [{ failure: true }, "Retry"],
+      [{ candleFailure: true }, "Retry candles"],
+    ]) {
       const view = await setup(options);
-      await view.page.getByRole('button', { name: retry, exact: true }).waitFor();
-      options.failure = false; options.candleFailure = false;
-      await view.page.getByRole('button', { name: retry, exact: true }).click();
-      await view.page.locator('.terminal-fill-chart canvas').first().waitFor();
+      await view.page
+        .getByRole("button", { name: retry, exact: true })
+        .waitFor();
+      options.failure = false;
+      options.candleFailure = false;
+      await view.page.getByRole("button", { name: retry, exact: true }).click();
+      await view.page.locator(".terminal-fill-chart canvas").first().waitFor();
       report.checks.push(`${retry} recovers from service failure`);
       await view.context.close();
     }
     const stale = await setup({ slowRun: true });
-    await stale.page.getByLabel('Selected run', { exact: true }).waitFor();
-    await stale.page.locator('.terminal-table').getByRole('button', { name: /^VWAP mean reversion/ }).click();
-    await stale.page.locator('.terminal-fill-chart canvas').first().waitFor();
+    await stale.page.getByLabel("Selected run", { exact: true }).waitFor();
+    await stale.page
+      .locator(".terminal-table")
+      .getByRole("button", { name: /^VWAP mean reversion/ })
+      .click();
+    await stale.page.locator(".terminal-fill-chart canvas").first().waitFor();
     await stale.page.waitForTimeout(650);
-    assert.match(await stale.page.getByRole('link', { name: 'Open full execution chart →' }).getAttribute('href'), /run-2$/);
+    assert.match(
+      await stale.page
+        .getByRole("link", { name: "Open full execution chart →" })
+        .getAttribute("href"),
+      /run-2$/,
+    );
     await stale.page.goto(`${base}/?strategy=s1&run=missing`);
-    await visible(stale.page, 'The selected run is unavailable');
+    await visible(stale.page, "The selected run is unavailable");
     await stale.page.goto(`${base}/?strategy=missing`);
-    await visible(stale.page, 'The selected strategy is unavailable');
-    await stale.page.getByRole('button', { name: 'Select an available strategy' }).click();
-    await stale.page.getByLabel('Selected run', { exact: true }).waitFor();
-    report.checks.push('slow stale responses do not replace selection; missing deep links recover');
+    await visible(stale.page, "The selected strategy is unavailable");
+    await stale.page
+      .getByRole("button", { name: "Select an available strategy" })
+      .click();
+    await stale.page.getByLabel("Selected run", { exact: true }).waitFor();
+    report.checks.push(
+      "slow stale responses do not replace selection; missing deep links recover",
+    );
     await stale.context.close();
-    assert.deepEqual(report.mutations, [], 'Browsing the desk must not mutate backend state');
-    assert.deepEqual(report.errors, [], 'No uncaught browser exceptions');
-    report.checks.push('zero backend mutations and zero uncaught browser errors');
+    const legacy = await setup({ legacyMissing: true });
+    await legacy.page
+      .getByText("Recorded trade context", { exact: true })
+      .click();
+    const details = legacy.page.locator(".terminal-entry-context");
+    assert.equal(
+      await details
+        .locator("div")
+        .filter({ has: legacy.page.getByText("Contracts", { exact: true }) })
+        .locator("dd")
+        .textContent(),
+      "Not recorded",
+    );
+    assert.equal(
+      await details
+        .locator("div")
+        .filter({
+          has: legacy.page.getByText("Commission / slippage", { exact: true }),
+        })
+        .locator("dd")
+        .textContent(),
+      "— / —",
+    );
+    await legacy.context.close();
+    report.checks.push(
+      "missing/corrupt artifacts stay unavailable; legacy missing costs and contracts are not invented",
+    );
+    const corrupt = await setup({
+      storage: JSON.stringify({
+        name: { unsafe: true },
+        strategyId: 123,
+        runId: [],
+      }),
+    });
+    await selected(corrupt.page, "run-1");
+    await corrupt.context.close();
+    report.checks.push("malformed stored selection is ignored");
+
+    for (const action of ["approve", "reject_revise", "reject_stop"]) {
+      const view = await setup({
+        proposals: true,
+        mobile: action === "approve",
+      });
+      await view.page.locator(".terminal-proposal-card").click();
+      const dialog = view.page.getByRole("dialog");
+      await dialog.getByLabel("Complete immutable proposal document").waitFor();
+      assert.ok(
+        (
+          await dialog
+            .getByLabel("Complete immutable proposal document")
+            .textContent()
+        ).includes("metadata_inventory_not_immutable_snapshot"),
+      );
+      assert.equal(
+        await dialog.locator("script, img").count(),
+        0,
+        "Proposal source text must be escaped",
+      );
+      assert.ok(
+        await dialog
+          .getByRole("button", { name: "Approve proposal", exact: true })
+          .isDisabled(),
+      );
+      await dialog
+        .getByLabel("Your review reason")
+        .fill("I reviewed the complete document and explicit choices.");
+      const title = {
+        approve: "Approve proposal",
+        reject_revise: "Reject and revise",
+        reject_stop: "Reject and stop",
+      }[action];
+      const before = report.approvedFixtureActions.length;
+      await dialog.getByRole("button", { name: title, exact: true }).click();
+      await dialog.getByRole("button", { name: "Back to review" }).click();
+      assert.equal(report.approvedFixtureActions.length, before);
+      await dialog.getByRole("button", { name: title, exact: true }).click();
+      if (action === "approve")
+        await snapshot(view.page, "research-mobile-confirmation.png");
+      await dialog
+        .getByRole("button", { name: `Confirm: ${title}`, exact: true })
+        .click();
+      await dialog
+        .getByText(`Recorded decision: ${action}`, { exact: true })
+        .waitFor();
+      assert.equal(report.approvedFixtureActions.length, before + 1);
+      if (action === "approve") {
+        await dialog
+          .getByRole("button", { name: "Queue approved test", exact: true })
+          .click();
+        await dialog
+          .getByRole("button", { name: "Cancel / close", exact: true })
+          .click();
+        assert.equal(
+          report.approvedFixtureActions.length,
+          before + 1,
+          "Cancel queue must not start a test",
+        );
+        await view.page.locator(".terminal-proposal-card").click();
+        await dialog
+          .getByRole("button", { name: "Queue approved test", exact: true })
+          .click();
+        await dialog
+          .getByRole("button", {
+            name: "Confirm: Queue approved test",
+            exact: true,
+          })
+          .click();
+        await dialog
+          .getByText("Approval consumed.", { exact: false })
+          .waitFor();
+        assert.equal(report.approvedFixtureActions.length, before + 2);
+        await dialog
+          .getByRole("button", { name: "Cancel / close", exact: true })
+          .click();
+        await view.page.locator(".terminal-proposal-card").click();
+        await dialog
+          .getByText("Approval consumed.", { exact: false })
+          .waitFor();
+        assert.equal(
+          await dialog
+            .getByRole("button", { name: "Queue approved test", exact: true })
+            .count(),
+          0,
+        );
+      }
+      await view.context.close();
+    }
+    for (const options of [
+      { proposals: true, draft: true },
+      { proposals: true, conflict: true },
+    ]) {
+      const view = await setup(options);
+      await view.page.locator(".terminal-proposal-card").click();
+      const dialog = view.page.getByRole("dialog");
+      await dialog.getByLabel("Your review reason").fill("Reviewed explicitly");
+      if (options.draft)
+        assert.ok(
+          await dialog
+            .getByRole("button", { name: "Approve proposal", exact: true })
+            .isDisabled(),
+        );
+      else {
+        await dialog
+          .getByRole("button", { name: "Approve proposal", exact: true })
+          .click();
+        await dialog
+          .getByRole("button", {
+            name: "Confirm: Approve proposal",
+            exact: true,
+          })
+          .click();
+        await dialog.getByText("Not applied:", { exact: false }).waitFor();
+        assert.ok(
+          await dialog
+            .getByRole("button", { name: "Approve proposal", exact: true })
+            .isDisabled(),
+        );
+        await dialog.getByRole("button", { name: "Reload proposal" }).click();
+        await dialog
+          .getByLabel("Complete immutable proposal document")
+          .waitFor();
+      }
+      await dialog.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      await view.context.close();
+    }
+    report.checks.push(
+      "full immutable document, escaped source text, required reason, confirm/back/cancel, exact digest, approve/revise/stop, separate queue, consumed approval, draft and conflict blocks, Escape focus trap",
+    );
+    assert.deepEqual(
+      report.mutations,
+      [],
+      "Browsing the desk must not mutate backend state",
+    );
+    assert.deepEqual(report.errors, [], "No uncaught browser exceptions");
+    report.checks.push(
+      "zero backend mutations and zero uncaught browser errors",
+    );
   } finally {
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+    fs.writeFileSync(
+      path.join(output, "report.json"),
+      JSON.stringify(report, null, 2),
+    );
     console.log(JSON.stringify(report, null, 2));
     await browser.close();
   }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

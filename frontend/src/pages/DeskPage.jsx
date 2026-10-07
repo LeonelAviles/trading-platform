@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   fetchBacktests,
-  fetchDesk,
+  fetchDataCoverage,
   fetchStrategies,
   strategyPackageUrl,
 } from "../api";
@@ -44,7 +44,7 @@ function MetricLeader({ title, run, value, description, onSelect }) {
         <>
           <h2>No eligible result</h2>
           <strong className="terminal-leader-value muted">—</strong>
-          <p>Choose a recorded window and minimum trade count.</p>
+          <p>Choose a window, minimum trade count and comparison policy.</p>
         </>
       )}
     </section>
@@ -58,18 +58,22 @@ export default function DeskPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [coverage, setCoverage] = useState(null);
   useEffect(() => {
     let cancelled = false;
     let timer;
     async function load() {
       try {
-        const [strategies, runs, desk] = await Promise.all([
+        const [strategies, runs] = await Promise.all([
           fetchStrategies(),
           fetchBacktests(),
-          fetchDesk().catch((e) => ({ coverage: { error: e.message } })),
         ]);
         if (!cancelled) {
-          setData({ strategies, runs: orderedRuns(runs), desk });
+          if (!Array.isArray(strategies) || !Array.isArray(runs))
+            throw new Error(
+              "Strategy or run history returned an invalid response.",
+            );
+          setData({ strategies, runs: orderedRuns(runs) });
           setError("");
         }
       } catch (e) {
@@ -85,16 +89,41 @@ export default function DeskPage() {
       clearTimeout(timer);
     };
   }, [refresh]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchDataCoverage()
+      .then((value) => {
+        if (!cancelled) setCoverage(value);
+      })
+      .catch((e) => {
+        if (!cancelled) setCoverage({ error: e.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
   const strategies = useMemo(
     () => (data?.strategies || []).filter(isES),
     [data],
   );
-  const runs = data?.runs || [];
+  const runs = useMemo(() => data?.runs || [], [data]);
+  const strategyIds = useMemo(
+    () => new Set(strategies.map((s) => s.id)),
+    [strategies],
+  );
+  const runsByStrategy = useMemo(() => {
+    const index = new Map();
+    for (const run of runs) {
+      if (!index.has(run.strategyId)) index.set(run.strategyId, []);
+      index.get(run.strategyId).push(run);
+    }
+    return index;
+  }, [runs]);
   const requestedStrategy = params.get("strategy") || selection.strategyId;
   const strategy =
     strategies.find((s) => s.id === requestedStrategy) ||
     (!requestedStrategy ? strategies[0] : null);
-  const strategyRuns = runs.filter((r) => r.strategyId === strategy?.id);
+  const strategyRuns = runsByStrategy.get(strategy?.id) || [];
   const requestedRun =
     params.get("run") ||
     (selection.strategyId === strategy?.id ? selection.runId : null);
@@ -110,16 +139,31 @@ export default function DeskPage() {
     if (strategy)
       select({ strategyId: strategy.id, runId: run?.id, name: strategy.name });
   }, [strategy, run?.id, select]);
+  useEffect(() => {
+    // Give the initial fallback selection a history entry of its own. Browser
+    // Back must not resolve the original bare URL using a later session choice.
+    if (!strategy || (params.has("strategy") && (params.has("run") || !run)))
+      return;
+    const next = new URLSearchParams(params);
+    next.set("strategy", strategy.id);
+    if (run && !params.has("run")) next.set("run", run.id);
+    setParams(next, { replace: true });
+  }, [strategy, run, params, setParams]);
   const availableCohorts = useMemo(
     () => cohorts(data?.runs || [], strategies),
     [data, strategies],
   );
-  const cohort = params.get("cohort") || availableCohorts[0]?.key || "";
+  const cohort = params.get("cohort") || "";
+  const rawComparison = params.get("comparison") === "raw";
   const minimumTrades = Math.max(
     1,
     Math.min(100000, Number.parseInt(params.get("minTrades"), 10) || 100),
   );
-  const winners = leaders(strategies, runs, cohort, minimumTrades);
+  const winners = useMemo(
+    () =>
+      leaders(strategies, runs, rawComparison ? cohort : null, minimumTrades),
+    [strategies, runs, cohort, minimumTrades, rawComparison],
+  );
   const allHistory = params.get("history") === "1";
   const rows = strategies.filter(
     (s) => allHistory || !["rejected", "retired"].includes(s.status),
@@ -130,9 +174,8 @@ export default function DeskPage() {
   const activeRuns = runs.filter(
     (r) =>
       ["queued", "preparing", "running"].includes(r.status) &&
-      strategies.some((s) => s.id === r.strategyId),
+      strategyIds.has(r.strategyId),
   );
-  const coverage = data?.desk?.coverage;
   const es = coverage?.roots?.ES;
   function update(patch, replace = false) {
     const next = new URLSearchParams(params);
@@ -144,7 +187,7 @@ export default function DeskPage() {
   }
   function choose(strategyId, runId) {
     const s = strategies.find((item) => item.id === strategyId);
-    const r = runId || runs.find((item) => item.strategyId === strategyId)?.id;
+    const r = runId || runsByStrategy.get(strategyId)?.[0]?.id;
     select({ strategyId, runId: r, name: s?.name });
     update({ strategy: strategyId, run: r, view: "execution" });
   }
@@ -203,7 +246,7 @@ export default function DeskPage() {
                     value={cohort}
                     onChange={(e) => update({ cohort: e.target.value })}
                   >
-                    <option value="">No recorded window</option>
+                    <option value="">Choose a recorded window</option>
                     {availableCohorts.map((c) => (
                       <option value={c.key} key={c.key}>
                         {c.label}
@@ -233,10 +276,20 @@ export default function DeskPage() {
                   />
                 </label>
               </div>
+              <label className="terminal-comparison-policy">
+                <input
+                  type="checkbox"
+                  checked={rawComparison}
+                  onChange={(e) =>
+                    update({ comparison: e.target.checked ? "raw" : null })
+                  }
+                />
+                Compare raw recorded results in this window; sizing, risk and
+                costs may differ
+              </label>
               <div className="terminal-comparison-note">
-                ES only · Latest completed run per strategy in this window ·{" "}
-                {winners.eligible} eligible · Recorded sizing, risk and costs
-                may differ
+                ES only · All eligible saved runs retained · {winners.eligible}{" "}
+                eligible runs · Descriptive only, not a normalized assessment
               </div>
               <section
                 className="terminal-leaders"
@@ -310,9 +363,7 @@ export default function DeskPage() {
                           </thead>
                           <tbody>
                             {rows.map((s) => {
-                              const latest = runs.find(
-                                (r) => r.strategyId === s.id,
-                              );
+                              const latest = runsByStrategy.get(s.id)?.[0];
                               const m =
                                 latest?.status === "done"
                                   ? metrics(latest)
@@ -529,11 +580,13 @@ export default function DeskPage() {
               <footer className="terminal-data-footer">
                 <div>
                   <span className="terminal-symbol">ES</span> Historical MBO ·{" "}
-                  {coverage?.error
-                    ? `Coverage unavailable: ${coverage.error}`
-                    : es
-                      ? `${es.sessions} sessions · ${es.first} → ${es.last}`
-                      : "No ingested ES sessions reported"}
+                  {!coverage
+                    ? "Loading coverage…"
+                    : coverage?.error
+                      ? `Coverage unavailable: ${coverage.error}`
+                      : es
+                        ? `${es.sessions} sessions · ${es.first} → ${es.last}`
+                        : "No ingested ES sessions reported"}
                 </div>
                 <Link to="/settings">Market data details →</Link>
               </footer>

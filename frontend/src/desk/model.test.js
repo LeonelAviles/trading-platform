@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   candlesForChart,
+  fillWindow,
   cohortKey,
   cohorts,
   isES,
@@ -59,18 +60,22 @@ describe("recorded desk evidence", () => {
     expect(result.eligible).toBe(1);
     expect(result.profitability.id).toBe("a");
   });
-  it("uses the latest completed result rather than cherry-picking an earlier qualifying run", () => {
+  it("retains an older category best when later runs are worse or below the trade minimum", () => {
     const older = run("a", "s1");
     const newer = run("b", "s1", {
       createdAt: "2026-07-01",
       summary: { totalPnl: -50, trades: 10, winRate: 30 },
     });
     expect(
-      leaders(strategies, [older, newer], cohortKey(older), 100).profitability,
-    ).toBeNull();
+      leaders(strategies, [older, newer], cohortKey(older), 100).profitability
+        .id,
+    ).toBe("a");
     expect(
       leaders(strategies, [older, newer], cohortKey(older), 1).profitability.id,
-    ).toBe("b");
+    ).toBe("a");
+    expect(
+      leaders(strategies, [older, newer], cohortKey(older), 1).winRate.id,
+    ).toBe("a");
   });
   it("does not invent winners when history or metrics are absent", () => {
     expect(leaders(strategies, [], null, 100).winRate).toBeNull();
@@ -89,6 +94,30 @@ describe("recorded desk evidence", () => {
 });
 
 describe("recorded fill preview", () => {
+  it.each([
+    ["1h", 3600],
+    ["4h", 14400],
+    ["1D", 86400],
+  ])(
+    "includes containing candle opens when the backend clips %s bars by open time",
+    (interval, seconds) => {
+      const entry = Date.parse("2026-06-12T14:45:00Z") / 1000;
+      const trade = {
+        direction: "long",
+        entryTime: entry,
+        exitTime: entry + 300,
+        entryPrice: 6000,
+        exitPrice: 6001,
+      };
+      const window = fillWindow(trade, interval);
+      const containing = Math.floor(entry / seconds) * seconds;
+      const available = [-1, 0, 1]
+        .map((i) => ({ time: containing + i * seconds }))
+        .filter((b) => b.time >= window.start && b.time <= window.end);
+      expect(available.some((b) => b.time === containing)).toBe(true);
+      expect(tradeMarkers(trade, available, seconds)).toHaveLength(2);
+    },
+  );
   const bars = [120, 180, 300].map((time) => ({
     time,
     open: 10,
@@ -98,7 +127,13 @@ describe("recorded fill preview", () => {
   }));
   it("sorts and deduplicates bars, excluding malformed candle data", () => {
     expect(
-      candlesForChart([bars[1], bars[0], bars[1], { ...bars[2], close: null }]),
+      candlesForChart([
+        null,
+        bars[1],
+        bars[0],
+        bars[1],
+        { ...bars[2], close: null },
+      ]),
     ).toEqual(bars.slice(0, 2));
   });
   it("uses real fill prices and containing candle times", () => {

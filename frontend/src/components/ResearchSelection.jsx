@@ -3,9 +3,20 @@ import { useLocation } from "react-router-dom";
 import { ResearchSelectionContext } from "../researchSelection";
 
 const KEY = "stratos.research.selection";
+function normalize(value) {
+  return Object.fromEntries(
+    ["strategyId", "runId", "name"].map((key) => [
+      key,
+      typeof value?.[key] === "string" &&
+      value[key].length <= (key === "name" ? 1000 : 200)
+        ? value[key]
+        : null,
+    ]),
+  );
+}
 function readSelection() {
   try {
-    return JSON.parse(sessionStorage.getItem(KEY)) || {};
+    return normalize(JSON.parse(sessionStorage.getItem(KEY)));
   } catch {
     return {};
   }
@@ -17,11 +28,7 @@ export default function ResearchSelection({ children }) {
   const select = useCallback(
     (next) =>
       setSelection((prev) => {
-        const value = {
-          strategyId: next.strategyId || null,
-          runId: next.runId || null,
-          name: next.name || null,
-        };
+        const value = normalize(next);
         return Object.keys(value).every((key) => value[key] === prev[key])
           ? prev
           : value;
@@ -30,8 +37,15 @@ export default function ResearchSelection({ children }) {
   );
   useEffect(() => {
     const params = new URLSearchParams(search);
-    const strategyId =
-      /^\/strategies\/([^/]+)$/.exec(pathname)?.[1] || params.get("strategy");
+    const encodedId = /^\/strategies\/([^/]+)$/.exec(pathname)?.[1];
+    let strategyId = params.get("strategy");
+    if (encodedId) {
+      try {
+        strategyId = decodeURIComponent(encodedId);
+      } catch {
+        return;
+      }
+    }
     if (!strategyId) return;
     setSelection((prev) => ({
       strategyId,

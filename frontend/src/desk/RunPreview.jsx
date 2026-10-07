@@ -6,8 +6,11 @@ import {
   createSeriesMarkers,
 } from "lightweight-charts";
 import { fetchBacktest, fetchOHLCV } from "../api";
+import { intervalToSeconds } from "../drawing/geometry";
+import { fetchTradeEvidence } from "./approvalsApi";
 import {
   candlesForChart,
+  fillWindow,
   metrics,
   money,
   number,
@@ -22,11 +25,7 @@ function FillChart({ job, trade }) {
   useEffect(() => {
     let cancelled = false;
     setState({ loading: true, bars: [], error: "" });
-    const start = trade.entryTime - 1800;
-    const end = Math.min(
-      Math.max(trade.exitTime || trade.entryTime, trade.entryTime) + 1800,
-      start + 86400,
-    );
+    const { start, end } = fillWindow(trade, job.interval);
     fetchOHLCV(job.symbol, job.interval || "1min", start, end)
       .then((bars) => {
         if (!cancelled)
@@ -43,7 +42,7 @@ function FillChart({ job, trade }) {
     return () => {
       cancelled = true;
     };
-  }, [job.symbol, job.interval, trade.entryTime, trade.exitTime, retry]);
+  }, [job.symbol, job.interval, trade, retry]);
   useEffect(() => {
     if (!host.current || !state.bars.length) return undefined;
     const chart = createChart(host.current, {
@@ -70,19 +69,7 @@ function FillChart({ job, trade }) {
     candles.setData(state.bars);
     const markers = createSeriesMarkers(
       candles,
-      tradeMarkers(
-        trade,
-        state.bars,
-        {
-          "1min": 60,
-          "5min": 300,
-          "15min": 900,
-          "30min": 1800,
-          "1h": 3600,
-          "4h": 14400,
-          "1D": 86400,
-        }[job.interval] || 60,
-      ),
+      tradeMarkers(trade, state.bars, intervalToSeconds(job.interval)),
     );
     chart.timeScale().fitContent();
     const observer = new ResizeObserver(() =>
@@ -136,6 +123,9 @@ export default function RunPreview({ run }) {
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [tradeIndex, setTradeIndex] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [evidence, setEvidence] = useState({ loading: true });
+  const [evidenceRetry, setEvidenceRetry] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer;
@@ -157,9 +147,48 @@ export default function RunPreview({ run }) {
       clearTimeout(timer);
     };
   }, [run.id, retry]);
+  useEffect(() => {
+    let cancelled = false;
+    setTradeIndex(0);
+    setEvidence({ loading: true });
+    if (!job) return;
+    if (
+      job.status !== "done" ||
+      job.symbol !== "ES1!" ||
+      !["is", "wf1", "wf2", "wf3"].includes(job.windowKind)
+    ) {
+      setEvidence({
+        unavailable:
+          "Verified research trade evidence is available only for completed ES1! in-sample/walk-forward runs. The full execution review remains available.",
+      });
+      return;
+    }
+    fetchTradeEvidence(job.id, offset)
+      .then((value) => {
+        if (cancelled) return;
+        if (
+          value?.job?.id !== job.id ||
+          !Array.isArray(value.trades) ||
+          !Number.isInteger(value.total) ||
+          value.total < 0 ||
+          !value.artifactSha256
+        )
+          throw new Error("The trade evidence response is incomplete.");
+        setEvidence({ data: value });
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setEvidence({
+            error: `Trade evidence unavailable: ${e.message}. An unavailable artifact is not evidence of zero trades.`,
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [job, offset, evidenceRetry]);
   const result = job || run;
   const m = metrics(result);
-  const trades = job?.trades || [];
+  const trades = evidence.data?.trades || [];
   const trade = trades[Math.min(tradeIndex, Math.max(0, trades.length - 1))];
   return (
     <>
@@ -208,113 +237,165 @@ export default function RunPreview({ run }) {
               Open full execution chart →
             </Link>
           </div>
-          {trade ? (
+          {evidence.loading ? (
+            <div className="terminal-empty" role="status">
+              Loading verified trade artifact…
+            </div>
+          ) : evidence.error ? (
+            <div className="terminal-notice" role="alert">
+              {evidence.error}{" "}
+              <button onClick={() => setEvidenceRetry((n) => n + 1)}>
+                Retry evidence
+              </button>
+            </div>
+          ) : evidence.unavailable ? (
+            <div className="terminal-empty">{evidence.unavailable}</div>
+          ) : (
             <>
-              <label className="terminal-trade-picker">
-                Recorded trade{" "}
-                <select
-                  value={Math.min(tradeIndex, trades.length - 1)}
-                  onChange={(e) => setTradeIndex(Number(e.target.value))}
-                >
-                  {trades.map((t, i) => (
-                    <option key={t.id || i} value={i}>
-                      {i + 1} · {t.direction} ·{" "}
-                      {t.sessionDate ||
-                        (Number.isFinite(t.entryTime)
-                          ? new Date(t.entryTime * 1000)
-                              .toISOString()
-                              .slice(0, 10)
-                          : "Date unavailable")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {Number.isFinite(trade.entryTime) && job.symbol ? (
-                <FillChart
-                  key={`${job.id}:${trade.id || tradeIndex}`}
-                  job={job}
-                  trade={trade}
-                />
+              <div className="terminal-evidence-source">
+                <details>
+                  <summary>Trade artifact provenance</summary>
+                  <p>SHA-256: {evidence.data?.artifactSha256}</p>
+                  <p>{evidence.data?.regimeProvenance}</p>
+                  <p>
+                    Legacy missing values remain unavailable. Entry feature
+                    snapshots are not captured.
+                  </p>
+                </details>
+                <div className="terminal-proposal-pagination">
+                  <button
+                    disabled={offset === 0}
+                    onClick={() => setOffset((n) => Math.max(0, n - 50))}
+                  >
+                    Previous trades
+                  </button>
+                  <span>
+                    {evidence.data?.total
+                      ? `${offset + 1}–${Math.min(offset + trades.length, evidence.data.total)} of ${evidence.data.total}`
+                      : "0 trades in artifact"}
+                  </span>
+                  <button
+                    disabled={
+                      offset + trades.length >= (evidence.data?.total || 0)
+                    }
+                    onClick={() => setOffset((n) => n + 50)}
+                  >
+                    Next trades
+                  </button>
+                </div>
+              </div>
+              {trade ? (
+                <>
+                  <label className="terminal-trade-picker">
+                    Recorded trade{" "}
+                    <select
+                      value={Math.min(tradeIndex, trades.length - 1)}
+                      onChange={(e) => setTradeIndex(Number(e.target.value))}
+                    >
+                      {trades.map((t, i) => (
+                        <option key={t.id || i} value={i}>
+                          {offset + i + 1} ·{" "}
+                          {t.direction || "Direction unavailable"} ·{" "}
+                          {t.sessionDate ||
+                            (Number.isFinite(t.entryTime)
+                              ? new Date(t.entryTime * 1000)
+                                  .toISOString()
+                                  .slice(0, 10)
+                              : "Date unavailable")}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {Number.isFinite(trade.entryTime) && job.symbol ? (
+                    <FillChart
+                      key={`${job.id}:${trade.id || tradeIndex}`}
+                      job={job}
+                      trade={trade}
+                    />
+                  ) : (
+                    <div className="terminal-empty">
+                      This trade has no usable market timestamp or symbol.
+                    </div>
+                  )}
+                  <dl className="terminal-fill-context">
+                    <div>
+                      <dt>Entry</dt>
+                      <dd>{price(trade.entryPrice)}</dd>
+                    </div>
+                    <div>
+                      <dt>Exit</dt>
+                      <dd>{price(trade.exitPrice)}</dd>
+                    </div>
+                    <div>
+                      <dt>Reason</dt>
+                      <dd>{trade.exitReason || "Not recorded"}</dd>
+                    </div>
+                    <div>
+                      <dt>Net P&amp;L</dt>
+                      <dd>{money(trade.pnlUsd)}</dd>
+                    </div>
+                  </dl>
+                  <details className="terminal-entry-context">
+                    <summary>Recorded trade context</summary>
+                    <dl>
+                      <div>
+                        <dt>Entry time (UTC)</dt>
+                        <dd>
+                          {Number.isFinite(trade.entryTime)
+                            ? new Date(trade.entryTime * 1000).toISOString()
+                            : "Not recorded"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Exit time (UTC)</dt>
+                        <dd>
+                          {Number.isFinite(trade.exitTime)
+                            ? new Date(trade.exitTime * 1000).toISOString()
+                            : "Not recorded"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Stop / target</dt>
+                        <dd>
+                          {price(trade.stopPrice)} / {price(trade.targetPrice)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Contracts</dt>
+                        <dd>{trade.contracts ?? "Not recorded"}</dd>
+                      </div>
+                      <div>
+                        <dt>Commission / slippage</dt>
+                        <dd>
+                          {number(trade.commissionUsd, 2, " USD")} /{" "}
+                          {number(trade.slippageTicks, 2, " ticks")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Regime tags</dt>
+                        <dd>
+                          {Array.isArray(trade.regimeTags)
+                            ? trade.regimeTags.join(", ") || "Not recorded"
+                            : "Not recorded"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Entry feature snapshot</dt>
+                        <dd>
+                          {trade.entryContextId
+                            ? `Reference ${trade.entryContextId}; snapshot detail unavailable.`
+                            : "Not recorded for this trade."}
+                        </dd>
+                      </div>
+                    </dl>
+                  </details>
+                </>
               ) : (
                 <div className="terminal-empty">
-                  This trade has no usable market timestamp or symbol.
+                  No trades were recorded in this verified artifact.
                 </div>
               )}
-              <dl className="terminal-fill-context">
-                <div>
-                  <dt>Entry</dt>
-                  <dd>{price(trade.entryPrice)}</dd>
-                </div>
-                <div>
-                  <dt>Exit</dt>
-                  <dd>{price(trade.exitPrice)}</dd>
-                </div>
-                <div>
-                  <dt>Reason</dt>
-                  <dd>{trade.exitReason || trade.reason || "Not recorded"}</dd>
-                </div>
-                <div>
-                  <dt>Net P&amp;L</dt>
-                  <dd>{money(trade.pnlUsd ?? trade.pnl)}</dd>
-                </div>
-              </dl>
-              <details className="terminal-entry-context">
-                <summary>Recorded trade context</summary>
-                <dl>
-                  <div>
-                    <dt>Entry time (UTC)</dt>
-                    <dd>
-                      {Number.isFinite(trade.entryTime)
-                        ? new Date(trade.entryTime * 1000).toISOString()
-                        : "Not recorded"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Exit time (UTC)</dt>
-                    <dd>
-                      {Number.isFinite(trade.exitTime)
-                        ? new Date(trade.exitTime * 1000).toISOString()
-                        : "Not recorded"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Stop / target</dt>
-                    <dd>
-                      {price(trade.stopPrice)} / {price(trade.targetPrice)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Contracts</dt>
-                    <dd>{trade.contracts ?? trade.qty ?? "Not recorded"}</dd>
-                  </div>
-                  <div>
-                    <dt>Commission / slippage</dt>
-                    <dd>
-                      {number(trade.commissionUsd, 2, " USD")} /{" "}
-                      {number(trade.slippageTicks, 2, " ticks")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Regime tags</dt>
-                    <dd>{trade.regimeTags?.join(", ") || "Not recorded"}</dd>
-                  </div>
-                  <div>
-                    <dt>Entry feature snapshot</dt>
-                    <dd>
-                      {trade.entryContextId
-                        ? `Reference ${trade.entryContextId}; snapshot detail unavailable.`
-                        : "Not recorded for this trade."}
-                    </dd>
-                  </div>
-                </dl>
-              </details>
             </>
-          ) : (
-            <div className="terminal-empty">
-              {["running", "queued", "preparing"].includes(job.status)
-                ? "No fills recorded yet. This view follows the existing run."
-                : "No trades were recorded for this run."}
-            </div>
           )}
         </>
       )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchAgentThread } from "../api";
 import { researchHref } from "../researchSelection";
+import ProposalReview from "./ProposalReview";
 
 export default function ResearchRail({ selection, activeRuns }) {
   const [thread, setThread] = useState(null);
@@ -69,18 +70,7 @@ export default function ResearchRail({ selection, activeRuns }) {
           </>
         )}
       </div>
-      <div className="terminal-approval-unavailable">
-        <span className="terminal-eyebrow">Hypothesis approvals</span>
-        <h3>Approval controls unavailable</h3>
-        <p>
-          This version does not expose a per-test approval service. No approval
-          or test is started from this desk.
-        </p>
-        <p className="terminal-small">
-          Review each new hypothesis before testing. Opening chat preserves your
-          selection; it does not authorize an experiment.
-        </p>
-      </div>
+      <ProposalReview threadId={thread?.id} />
       <div className="terminal-existing-runs">
         <h3>
           Existing run activity <span>{activeRuns.length}</span>

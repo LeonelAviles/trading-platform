@@ -8,8 +8,11 @@ links the desk, run review and research chat.
 
 ## Evidence and selection
 
-- Profitability and win-rate leaders use the latest completed run per strategy
-  within the selected date range, validation window and execution mode. The
+- Profitability and win-rate leaders retain all eligible completed runs, so a
+  later worse run cannot displace an older category best. Ranking is unselected
+  by default: choose a date/window/mode cohort and explicitly opt into raw
+  recorded-result comparison. No cross-dataset or normalized ranking policy is
+  assumed. The
   minimum-trade filter is visible and adjustable. Costs, sizing and risk can
   differ; these cards describe recorded results, not normalized rankings or
   investment recommendations.
@@ -18,7 +21,12 @@ links the desk, run review and research chat.
 - URL parameters and session storage preserve strategy/run selection across
   desk, full execution chart and chat navigation. Selection is visual context;
   it does not silently send a message, approve a hypothesis or launch a run.
-- Preview candles come from a bounded OHLCV request around the selected saved
+- Trade details use the paginated `/api/agent/evidence/{id}/trades` endpoint
+  for completed ES1! IS/WF runs only. Missing/corrupt artifacts are unavailable,
+  distinct from a verified empty artifact; legacy null fees, slippage and size
+  remain unknown. Artifact SHA-256 and hindsight regime provenance are visible.
+  Other symbols/windows keep the existing full execution-review link.
+- Preview candles come from a bounded, interval-aligned OHLCV request around the selected saved
   trade. Markers show its actual recorded fill prices, aligned to containing
   candles. Gaps are not filled with synthetic candles. The full execution chart
   remains available for the complete run.
@@ -26,8 +34,23 @@ links the desk, run review and research chat.
   The Rules tab describes the current saved specification, not an entry-time
   reconstruction.
 - Prop suitability is unassessed because firm-specific eligibility rules are
-  absent. Per-test approval controls remain unavailable pending a backend
-  contract. The desk does not create experiments or change strategy status.
+  absent. Approval and evidence functionality depends on backend PR #1
+  (`feat/research-agent-approved-experiments`), initially verified against
+  `942f89223d6e3098afd336042847aec6810c9534`. The UI PR remains based on main.
+  Older backends show explicit unavailable states; there is no execution fallback. The desk creates no proposals and changes no strategy status directly.
+
+## Proposal approval flow
+
+The research rail reads paginated proposals for the recent conversation, clearly
+separate from the selected chart strategy. The modal fetches and displays the
+complete immutable document, digest, blockers, parent, decisions and evidence.
+Approve, reject-and-revise and reject-and-stop require a reason and a separate
+confirmation; Back, Close and Escape do not mutate state. Approval does not queue
+work. Queue approved test requires another explicit confirmation and links to the
+returned evidence job IDs. Drafts cannot be approved; 409 conflicts or ambiguous
+network failures disable further actions until the user reloads recorded state.
+A consumed approval cannot queue another attempt. No decision runs on mount,
+polling, selection or navigation. All displayed source text is escaped React text.
 
 ## Verification
 
@@ -51,8 +74,25 @@ npm run test:ui
 
 `UI_QA_URL` overrides the URL; `UI_QA_OUTPUT` overrides the default output folder
 `/tmp/stratos-ui-qa`. The script intercepts every API call with synthetic fixtures
-and asserts that browsing causes no backend mutations. Its report and screenshots
+and asserts that ordinary browsing causes no backend mutations. Approval tests
+exercise only explicit, intercepted decision/queue requests. Its report and screenshots
 cover desktop/mobile rendering, history and run selection, repeated tabs, chat
 and full-chart navigation, loading, empty data, unavailable data, retry, stale
-responses and invalid deep links. Screenshots are labeled as synthetic QA data.
+responses invalid deep links, initial browser Back, approval confirmation/cancel, draft and
+conflict blocks, malformed session storage and missing/corrupt/legacy evidence. Screenshots are labeled as synthetic QA data.
 These checks do not validate live market data or execute a backtest.
+
+## Review fixes and CI limitation
+
+Post-opening review fixed initial bare-URL browser Back, retained older category
+bests, explicit comparison policy, bounded typed session selection, collapsed
+navigation labeling, evidence provenance and interval-aligned candle requests.
+Coverage loads independently through `/api/data/coverage`; the desk no longer
+polls the expensive discarded validation/lineage summary. Run lookup is indexed
+and leaderboard computation memoized.
+
+Initial UI-head CI passed frontend lint/build/tests. Backend CI reported the two
+existing zero-trade assertions in `tests/test_jobs.py` (lifecycle and validation),
+with 173 passing. The backend tree is byte-identical to base
+`28d5e29952bac4861ea7c79d84c5dd1fde0bedf7` (tree
+`8891920cf37769ae2952e3ba3a7d2e442c8229f2`); this PR makes no backend fixes.

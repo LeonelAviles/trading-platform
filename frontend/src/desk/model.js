@@ -1,3 +1,5 @@
+import { intervalToSeconds } from "../drawing/geometry";
+
 // Desk comparisons describe recorded results, never a new validation or prop assessment.
 export const finite = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -51,20 +53,13 @@ export function cohorts(runs, strategies) {
 }
 export function leaders(strategies, runs, key, minimumTrades) {
   const ids = new Set(strategies.filter(isES).map((s) => s.id));
-  const latest = new Map();
-  for (const run of orderedRuns(runs)) {
-    if (
-      run.status !== "done" ||
-      !key ||
-      cohortKey(run) !== key ||
-      !ids.has(run.strategyId) ||
-      latest.has(run.strategyId)
-    )
-      continue;
-    latest.set(run.strategyId, run);
-  }
-  const eligible = [...latest.values()].filter(
-    (r) => (metrics(r).trades ?? -1) >= minimumTrades,
+  const eligible = orderedRuns(runs).filter(
+    (run) =>
+      run.status === "done" &&
+      key &&
+      cohortKey(run) === key &&
+      ids.has(run.strategyId) &&
+      (metrics(run).trades ?? -1) >= minimumTrades,
   );
   const top = (field) =>
     eligible
@@ -98,12 +93,24 @@ export function candlesForChart(bars) {
   for (const bar of Array.isArray(bars) ? bars : []) {
     if (
       ["time", "open", "high", "low", "close"].every(
-        (k) => finite(bar[k]) !== null,
+        (k) => finite(bar?.[k]) !== null,
       )
     )
       byTime.set(bar.time, bar);
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+export function fillWindow(trade, interval) {
+  const seconds = intervalToSeconds(interval);
+  const padding = Math.max(1800, seconds);
+  // The backend clips on candle OPEN, with UTC-aligned bar buckets. Include
+  // the containing bar even when the entry occurs late inside a 1h/4h/day bar.
+  const start = Math.floor(trade.entryTime / seconds) * seconds - padding;
+  const end = Math.min(
+    Math.max(trade.exitTime || trade.entryTime, trade.entryTime) + padding,
+    start + Math.max(86400, seconds * 3),
+  );
+  return { start, end };
 }
 export function tradeMarkers(trade, bars, intervalSeconds = 60) {
   if (!trade || !bars.length) return [];

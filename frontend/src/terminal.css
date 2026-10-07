@@ -103,6 +103,168 @@
 .mobile-research-nav {
   display: none;
 }
+.terminal-comparison-policy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 10px 0;
+  line-height: 1.6;
+}
+.terminal-comparison-policy input {
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.terminal-proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  margin: 10px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.terminal-proposal-card strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.terminal-proposal-card span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.terminal-proposal-pagination,
+.terminal-proposal-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 14px 0;
+}
+.terminal-proposal-pagination {
+  font-size: 11px;
+  justify-content: space-between;
+}
+.terminal-proposal-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  padding: 0;
+  width: min(780px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-2);
+}
+.terminal-proposal-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.terminal-proposal-dialog::backdrop {
+  background: #000b;
+}
+.terminal-proposal-dialog header,
+.terminal-proposal-dialog footer {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 16px 20px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.terminal-proposal-dialog header {
+  border-bottom: 1px solid var(--border);
+}
+.terminal-proposal-dialog h2 {
+  font-size: 19px;
+  margin: 7px 0 0;
+}
+.terminal-proposal-dialog h3 {
+  font-size: 14px;
+  margin: 18px 0 10px;
+}
+.terminal-proposal-dialog footer {
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.terminal-proposal-body {
+  padding: 16px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+.terminal-proposal-body p,
+.terminal-proposal-body li {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.terminal-proposal-digest {
+  font: 11px monospace;
+  color: var(--text-muted);
+}
+.terminal-proposal-document {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font: 11px/1.7 monospace;
+}
+.terminal-proposal-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.terminal-proposal-reason textarea {
+  width: 100%;
+  padding: 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  resize: vertical;
+}
+.terminal-proposal-dialog button {
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text);
+}
+.terminal-proposal-dialog .terminal-primary {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.terminal-proposal-dialog button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.terminal-proposal-evidence a {
+  display: block;
+  color: var(--accent);
+  padding: 8px 0;
+}
+.terminal-evidence-source {
+  padding: 8px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.terminal-evidence-source summary {
+  cursor: pointer;
+  color: var(--accent);
+}
 .workspace-page {
   background: #101315;
 }
