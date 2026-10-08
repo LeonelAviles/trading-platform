@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -194,6 +194,43 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     citations_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = _ts()
+
+
+class ResearchProposal(Base):
+    """Immutable hypothesis/spec/plan snapshot; incomplete proposals remain drafts."""
+
+    __tablename__ = "research_proposals"
+    id: Mapped[str] = _id()
+    thread_id: Mapped[str] = mapped_column(ForeignKey("agent_threads.id"), index=True)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("research_proposals.id"), nullable=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    document_json: Mapped[dict] = mapped_column(JSON)
+    blockers_json: Mapped[list] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32), default="proposed")
+    strategy_id: Mapped[str | None] = mapped_column(ForeignKey("strategies.id"), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    created_at: Mapped[str] = _ts()
+
+
+class ResearchDecision(Base):
+    """One immutable user decision per proposal; retries cannot grant another test."""
+
+    __tablename__ = "research_decisions"
+    id: Mapped[str] = _id()
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("research_proposals.id"), unique=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = _ts()
+
+
+class ResearchEvidence(Base):
+    """Exact batch membership; job rows/artifacts cannot be silently replaced."""
+
+    __tablename__ = "research_evidence"
+    id: Mapped[str] = _id()
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("research_proposals.id"), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("backtests.id"), unique=True)
 
 
 # --------------------------------------------------------------------------

@@ -6,7 +6,8 @@ layer produces:
     {"inSample": {metrics}, "walkForward": [{metrics}, ...], "outOfSample": {metrics}|None,
      "monteCarlo": {...}|None, "deflatedSharpe": {...}|None}
 
-`passes` requires every non-null criterion. Below `minTradesInSample` the
+`passes` requires available evidence for every non-null criterion. Missing
+required evidence is untestable, not a pass or a no-edge finding. Below `minTradesInSample` the
 verdict is `untestable` — never pass, never fail. OOS criteria are only
 checked when an OOS run exists (after finalize).
 """
@@ -64,7 +65,7 @@ class Verdict:
 def _check(checks, name, value, threshold, op, label):
     if threshold is None or value is None:
         checks.append({"name": name, "value": value, "threshold": threshold, "ok": None, "label": label})
-        return True
+        return True  # missing required evidence is classified as untestable below
     ok = value >= threshold if op == ">=" else value <= threshold
     checks.append({"name": name, "value": value, "threshold": threshold, "ok": bool(ok), "label": label})
     return bool(ok)
@@ -101,7 +102,10 @@ def evaluate(job: dict, risk: dict | None) -> Verdict:
         fail(f"IS max drawdown {is_.get('maxDrawdownPct')}% > {pc['maxDrawdownPct']}%")
 
     positive = sum(1 for w in wf if (w.get("netPnl") or 0) > 0)
-    if not _check(checks, "minWalkForwardWindowsPositive", positive if wf else None, pc["minWalkForwardWindowsPositive"], ">=", "walk-forward windows positive"):
+    required_wf = pc["minWalkForwardWindowsPositive"]
+    wf_available = (required_wf == 0 or (bool(wf) and len(wf) >= (required_wf or 0)
+                    and all(w.get("netPnl") is not None for w in wf)))
+    if not _check(checks, "minWalkForwardWindowsPositive", positive if wf_available else None, required_wf, ">=", "walk-forward windows positive"):
         fail(f"only {positive}/{len(wf)} walk-forward windows positive < {pc['minWalkForwardWindowsPositive']}")
 
     if mc and mc.get("bootstrap") and mc["bootstrap"].get("maxDrawdownPct"):
@@ -126,6 +130,11 @@ def evaluate(job: dict, risk: dict | None) -> Verdict:
             fail(f"OOS profit factor {oos.get('profitFactor')} < {pc['minOosProfitFactor']}")
     else:
         checks.append({"name": "outOfSample", "value": None, "threshold": None, "ok": None, "label": "OOS (hidden until finalize)"})
+
+    unavailable = [c for c in checks if c["threshold"] is not None and c["value"] is None]
+    if unavailable:
+        failures.extend(f"unavailable required evidence: {c['label']}" for c in unavailable)
+        return Verdict(passes=False, untestable=True, failures=failures, checks=checks, score=0.0, status="untestable")
 
     scored = [c for c in checks if c["ok"] is not None]
     score = sum(1 for c in scored if c["ok"]) / len(scored) if scored else 0.0

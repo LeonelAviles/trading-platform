@@ -33,7 +33,11 @@ def get_backtest(job_id: str):
 
 @router.delete("/backtests/{job_id}")
 def delete_backtest(job_id: str):
-    if not nautilus_runner.delete_job(job_id):
+    try:
+        deleted = nautilus_runner.delete_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
         raise HTTPException(404, f"backtest '{job_id}' not found")
     return {"deleted": job_id}
 

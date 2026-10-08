@@ -1,10 +1,9 @@
 import builtins
+import copy
 from datetime import date
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.orm import sessionmaker
 
 import database
 from research_agent import knowledge, service, workflow
@@ -14,23 +13,6 @@ from models import AgentRun, Backtest
 from tests.test_spec_validation import ORB
 
 
-@pytest.fixture()
-def agent_db(tmp_path, monkeypatch):
-    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'agent.db'}")
-    database.init_db(eng)
-    monkeypatch.setattr(database, "engine", eng)
-    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=eng, autoflush=False, future=True))
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "README.md").write_text(
-        "# Reliable Research\n\nUse walk-forward validation to preserve time order and estimate stability.\n\n"
-        "## Costs\n\nInclude commission and slippage before accepting a trading strategy.\n",
-        encoding="utf-8",
-    )
-    (repo / "example.py").write_text("# this is a Python comment\ndef score():\n    return 'deflated sharpe'\n", encoding="utf-8")
-    knowledge.ingest_repository(root=repo, name="test-research", url="https://example.test/repo", revision="abc123", license_name="MIT")
-    yield repo
-    eng.dispose()
 
 
 def test_ingest_search_and_graph(agent_db):
@@ -168,7 +150,7 @@ def test_workflow_only_accepts_passing_champion(agent_db):
     run = workflow.start(thread["id"], root, jobs)
     with database.session_scope() as db:
         row = db.get(AgentRun, run["id"])
-        state = dict(row.state_json)
+        state = copy.deepcopy(row.state_json)
         state["candidates"][0]["verdict"] = {"status": "fail", "score": 0.5}
         row.state_json = state
         row.status = "analyzing"
@@ -274,7 +256,10 @@ def test_level_event_tool_is_clamped_and_never_queues(agent_db, monkeypatch):
         assert db.query(Backtest).count() == 0
 
 
-def test_list_backtest_jobs_reports_status_and_hides_oos(agent_db):
+def test_list_backtest_jobs_reports_status_and_hides_oos(agent_db, monkeypatch):
+    # Scope/artifact verification has dedicated adversarial integration coverage.
+    monkeypatch.setattr(agent_tools.evidence, "_artifact", lambda _: ({}, [], "fixture"))
+    monkeypatch.setattr(agent_tools.evidence, "permitted_sessions", lambda _: {"2026-04-01"})
     sid = strategy_store.save_strategy(ORB)["id"]
     with database.session_scope() as db:
         db.add(Backtest(strategy_id=sid, mode="ticks", window_kind="is", status="done",

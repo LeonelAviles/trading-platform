@@ -141,6 +141,7 @@ def test_validation_runs_is_and_wf_only(store):
     assert rep["monteCarlo"]["bootstrap"]["runs"] == 1000 and rep["deflatedSharpe"]["observations"] == 5
     assert rep["verdict"]["untestable"] is True       # 5 trades << 100
     assert rep["risk"]["passCriteria"]["minTradesInSample"] == 100
+    assert validation.report("abc123abc123", mode="bars", include_oos=False)["outOfSample"] is None
     # OOS appears only once a holdout exists *and* an oos row exists. There is
     # no holdout at IS_FRACTION 1.0, so carve one by hand: freeze the first
     # four sessions as IS and let recompute_splits put the fifth in OOS.
@@ -156,7 +157,10 @@ def test_validation_runs_is_and_wf_only(store):
     assert oos["status"] == "done"
     rep2 = validation.report("abc123abc123", mode="bars")
     assert rep2["oosAvailable"] and rep2["outOfSample"]["trades"] == 1
-    assert validation.report("abc123abc123", mode="bars", include_oos=False)["outOfSample"] is None
+    # The older IS/WF artifacts include the newly carved holdout. Research
+    # reports must reject them rather than silently treating OOS as IS.
+    with pytest.raises(ValueError, match="outside the permitted frozen IS/WF scope"):
+        validation.report("abc123abc123", mode="bars", include_oos=False)
 
 
 def test_delete_job(store):

@@ -70,7 +70,11 @@ def put_strategy(strategy_id: str, strategy: dict = Body(...)):
 
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str):
-    if not strategy_store.delete_strategy(strategy_id):
+    try:
+        deleted = strategy_store.delete_strategy(strategy_id)
+    except strategy_store.StrategyError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
         raise HTTPException(404, f"strategy '{strategy_id}' not found")
     return {"deleted": strategy_id}
 

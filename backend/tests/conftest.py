@@ -88,3 +88,26 @@ def client(tmp_path, monkeypatch):
     with TestClient(app_module.app) as c:
         yield c
     eng.dispose()
+
+
+@pytest.fixture()
+def agent_db(tmp_path, monkeypatch):
+    import database
+    from sqlalchemy.orm import sessionmaker
+    from research_agent import knowledge
+
+    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'agent.db'}")
+    database.init_db(eng)
+    monkeypatch.setattr(database, "engine", eng)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=eng, autoflush=False, future=True))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text(
+        "# Reliable Research\n\nUse walk-forward validation to preserve time order and estimate stability.\n\n"
+        "## Costs\n\nInclude commission and slippage before accepting a trading strategy.\n",
+        encoding="utf-8",
+    )
+    (repo / "example.py").write_text("# this is a Python comment\ndef score():\n    return 'deflated sharpe'\n", encoding="utf-8")
+    knowledge.ingest_repository(root=repo, name="test-research", url="https://example.test/repo", revision="abc123", license_name="MIT")
+    yield repo
+    eng.dispose()

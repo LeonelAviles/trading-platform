@@ -19,7 +19,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 import database
@@ -162,6 +162,9 @@ def delete_job(job_id: str) -> bool:
         row = db.get(Backtest, job_id)
         if row is None:
             return False
+        from models import ResearchEvidence
+        if db.query(ResearchEvidence).filter_by(job_id=job_id).first():
+            raise ValueError("approved research evidence is retained; deletion is not supported")
         db.delete(row)
     shutil.rmtree(_job_dir(job_id), ignore_errors=True)
     return True
@@ -189,10 +192,21 @@ def _symbol(strategy: dict) -> str:
     return (strategy.get("instrument") or {}).get("symbol") or strategy.get("symbol")
 
 
+def _assert_legacy_queue_allowed(strategy: dict) -> None:
+    if (strategy.get("origin") or {}).get("type") == "agent":
+        raise ValueError("agent strategies require an exact approved research proposal")
+    if strategy.get("id"):
+        from models import ResearchProposal
+        with database.session_scope() as db:
+            if db.query(ResearchProposal).filter_by(strategy_id=strategy["id"]).first():
+                raise ValueError("research strategy versions can only run through their approved proposal")
+
+
 def create_job(strategy: dict, *, mode: str | None = None, window_kind: str = "full",
                date_from: date | None = None, date_to: date | None = None) -> dict:
     from engine import validation
 
+    _assert_legacy_queue_allowed(strategy)
     mode = mode or default_mode(strategy)
     symbol = _symbol(strategy)
     if date_from is None or date_to is None:
@@ -247,6 +261,8 @@ def _run_job(job_id: str) -> None:
     out_path = job_dir / "trades.json"
     log_path = job_dir / "worker.log"
     try:
+        from research_agent.memory import verify_job_inputs
+        verify_job_inputs(job_id, json.loads((job_dir / "strategy.json").read_text()))
         with open(log_path, "w", encoding="utf-8") as lf:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "engine.backtest_worker", str(job_dir / "strategy.json"), date_from, date_to, mode, str(out_path)],
@@ -421,6 +437,8 @@ def _worker_loop():
 def start(job_id: str) -> None:
     global _worker_thread
     with _lock:
+        if job_id in _running:
+            return
         _running.add(job_id)
         if _worker_thread is None or not _worker_thread.is_alive():
             _worker_thread = threading.Thread(target=_worker_loop, daemon=True, name="backtest-worker")
@@ -453,6 +471,7 @@ def run_validation(strategy: dict, mode: str | None = None) -> list[dict]:
     """IS + WF1–3 as separate queued jobs (never OOS — that is a deliberate, separate look)."""
     from engine import validation
 
+    _assert_legacy_queue_allowed(strategy)
     root = load_instruments().root_for_symbol(_symbol(strategy)).root
     kinds = [k for k in ("is", "wf1", "wf2", "wf3") if k in validation.windows(root)]
     return [start_backtest(strategy, mode=mode, window_kind=k) for k in kinds]
