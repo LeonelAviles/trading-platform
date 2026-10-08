@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { fetchBacktest, fetchCVD } from '../api';
 import { HeaderSlotContext } from '../headerSlot';
+import { useResearchSelection } from '../researchSelection';
 import AnalysisPanel from '../components/AnalysisPanel';
 import ChartAgentPanel from '../components/ChartAgentPanel';
 import { useOrderFlowChart } from '../chart/useOrderFlowChart';
@@ -22,6 +23,7 @@ function shortDuration(seconds) {
 export default function CandlestickPage() {
   const { leading: leadingSlot, main: headerSlot, trailing: trailingSlot } = useContext(HeaderSlotContext);
   const { backtestId } = useParams();
+  const { select } = useResearchSelection();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   let storedThread = null;
@@ -74,6 +76,7 @@ export default function CandlestickPage() {
         const job = await fetchBacktest(backtestId);
         if (cancelled) return;
         setSelectedJob(job);
+        select({ strategyId: job.strategyId, runId: job.id, name: job.strategyName });
         setBacktestTrades(job.trades || []);
         // Draw the trades on the bars that produced them: a 15-minute
         // strategy's entries are meaningless against a 1-minute chart. Jobs
@@ -88,7 +91,7 @@ export default function CandlestickPage() {
     }
     load();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [backtestId, navigate]);
+  }, [backtestId, navigate, select]);
 
   const runClockTime = clockTime ?? engineTime;
 
