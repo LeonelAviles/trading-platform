@@ -27,6 +27,7 @@ from config.instruments import load_instruments
 from engine import analytics
 from engine import pnl as P
 from engine.session import session_date, NS
+from market.paths import get_paths
 from models import Backtest, new_id, utc_now
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -250,7 +251,15 @@ def _run_job(job_id: str) -> None:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "engine.backtest_worker", str(job_dir / "strategy.json"), date_from, date_to, mode, str(out_path)],
                 cwd=str(BACKEND_DIR), stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"},
+                text=True, env={
+                    **os.environ,
+                    "PYTHONWARNINGS": "ignore",
+                    # configure() overrides live in the parent process; carry
+                    # its effective store into the subprocess explicitly.
+                    "DATA_DIR": str(get_paths().data_dir),
+                    "MARKET_DATA_DIR": str(get_paths().market_data_dir),
+                    "REPLAY_CACHE_MAX_GB": str(get_paths().replay_cache_max_gb),
+                },
             )
             metrics["_workerPid"] = proc.pid
             _set(job_id, metrics_json=metrics)

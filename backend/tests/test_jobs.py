@@ -23,7 +23,9 @@ def store(tmp_path_factory, monkeypatch_module=None):
     p = paths_mod.configure(data_dir=tmp / "data", market_data_dir=tmp / "market-data")
     p.ensure_dirs()
     for i, d in enumerate(DAYS):
-        cfg = synth.SynthConfig(session_date=d, rth_start="09:30", rth_end="10:00", seed=300 + i)
+        # Use the September contract: June expires at 09:30 on the final
+        # fixture day, before the synthetic strategy can enter.
+        cfg = synth.SynthConfig(session_date=d, symbols=("ESU6",), rth_start="09:30", rth_end="10:00", seed=300 + i)
         ing.DayIngest(None, schema="mbo", session_date=d, frames=_chunks(synth.generate_mbo(cfg)), paths=p, min_daily_volume=1, book=False).run()
     ing.finalize(p)
     cat.build(p, progress=lambda s: None)
