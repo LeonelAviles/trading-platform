@@ -89,8 +89,10 @@ def propose(thread_id: str, plan: Plan):
             raise ValueError("thread not found")
         if db.query(MLExperiment).filter_by(thread_id=thread_id).first() or memory.thread_stopped(db, thread_id):
             raise memory.ResearchConflict("one discovery plan per thread; start a new thread to revise or restart")
-    bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS,
-                               et_to_ns(plan.testEnd + timedelta(days=1), "00:00") // NS)
+    # The store's bounds are inclusive UNIX seconds. Request the final second
+    # of testEnd so the next ET midnight cannot enter the approved snapshot.
+    end_second = et_to_ns(plan.testEnd + timedelta(days=1), "00:00") // NS - 1
+    bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)
     bars = core.validate_bars(bars)
     days = set(bars.index.tz_convert("America/New_York").strftime("%Y-%m-%d"))
     if not days <= set(sessions):

@@ -450,3 +450,34 @@ def test_unsupervised_budget_exhaustion_and_no_label_input(plan):
         method.fit(features, regime_plan(plan, minClusterSamples=100))
     with pytest.raises(ValueError, match="only training volume"):
         method.fit(features.assign(netTicks=0), regime_plan(plan))
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_snapshot_calendar_end_excludes_next_midnight(agent_db, monkeypatch, tmp_path, bars, plan, cached):
+    """Exercise real get_bars/_clip semantics, including its inclusive end."""
+    import json
+    import data_store
+
+    monkeypatch.setattr(paths, "_paths", paths.Paths(tmp_path / "data", tmp_path / "raw"))
+    monkeypatch.setattr(service.validation, "_splits", lambda _: {
+        "inSample": ["2026-07-13", "2026-07-14", "2026-07-15"], "outOfSample": ["2026-07-16"]})
+    midnight_rows = pd.DataFrame(
+        {"open": 5000., "high": 5001., "low": 4999., "close": 5000., "volume": 25.},
+        index=pd.DatetimeIndex(["2026-07-12 23:59", "2026-07-13 00:00", "2026-07-15 23:59",
+                                "2026-07-16 00:00", "2026-07-16 00:01"], tz="America/New_York"))
+    source = pd.concat([bars, midnight_rows]).sort_index()
+    monkeypatch.setattr(data_store, "_version", lambda: ("synthetic-midnight",))
+    monkeypatch.setattr(data_store, "_bars_sql", lambda *args: source.copy())
+    key = ("ES1!", "1min", data_store._version())
+    monkeypatch.setattr(data_store, "_full_bars", {key: source.copy()} if cached else {})
+    boundary = pd.Timestamp("2026-07-16 00:00", tz="America/New_York")
+    # Establish the production reader contract, without mocking its clip.
+    assert data_store.get_bars("ES1!", "1min", end=int(boundary.timestamp())).index[-1] == boundary
+    tid = agent.create_thread()["id"]
+    proposal = service.propose(tid, plan)
+    payload = json.loads(service._snapshot_path(proposal["id"]).read_text())
+    times = pd.to_datetime(payload["timestamps"], unit="ns", utc=True).tz_convert("America/New_York")
+    assert times.min() == pd.Timestamp("2026-07-13 00:00", tz="America/New_York")
+    assert times.max() == pd.Timestamp("2026-07-15 23:59", tz="America/New_York")
+    assert boundary not in times and len(times) == len(bars) + 2
+    assert proposal["document"]["dataset"]["sessions"] == ["2026-07-13", "2026-07-14", "2026-07-15"]
