@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from research_ml.schema import Plan
+from research_ml.regimes import VolumeRegimes
 
 MAX_BARS = 50_000
 COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -84,13 +85,27 @@ class Threshold:
     def expression(self) -> dict:
         return {"op": self.op, "args": [{"field": "volume"}, self.threshold]}
 
+    def artifact(self):
+        return {"threshold": self.threshold, "op": self.op,
+                "preprocessing": "training_only_volume_quantiles", "trigger": self.expression()}
+
+
+class FittedRule(Protocol):
+    """Frozen inference and portable expression have identical signal semantics."""
+    def predict(self, values): ...
+    def expression(self) -> dict: ...
+    def artifact(self) -> dict: ...
+
 
 class Method(Protocol):
     """Plugins only receive training samples; export must preserve predictions."""
-    def fit(self, train: pd.DataFrame, plan: Plan) -> tuple[Threshold | None, list[dict]]: ...
+    requires_targets: bool
+    def fit(self, train: pd.DataFrame, plan: Plan) -> tuple[FittedRule | None, list[dict]]: ...
 
 
 class VolumeThreshold:
+    requires_targets = True
+
     def fit(self, train, plan):
         # Quantile transformation is the only learned preprocessing. Its cut
         # points are fitted on training data and exported in original units.
@@ -108,7 +123,10 @@ class VolumeThreshold:
         return winner, trials
 
 
-METHODS: dict[str, Method] = {"volume_threshold_v1": VolumeThreshold()}
+METHODS: dict[str, Method] = {
+    "volume_threshold_v1": VolumeThreshold(),
+    "volume_regimes_v1": VolumeRegimes(),
+}
 
 
 def evaluate(model, data):
@@ -132,16 +150,18 @@ def accepted(metrics, plan):
 
 def discover(bars, plan: Plan, tick_size: float) -> dict:
     parts = samples(bars, plan, tick_size)
-    model, trials = METHODS[plan.method].fit(parts["train"], plan)
+    method = METHODS[plan.method]
+    columns = ["volume", "netTicks"] if method.requires_targets else ["volume"]
+    model, trials = method.fit(parts["train"][columns].copy(), plan)
     result = {"outcome": "no_edge", "reason": "insufficient training signals", "trials": trials,
+              "learningKind": "supervised" if method.requires_targets else "unsupervised",
               "selectionCount": len(trials), "model": None, "metrics": {},
               "splitCounts": {k: len(v) for k, v in parts.items()},
               "evidenceKind": "overlapping_forward_labels_not_trade_pnl",
               "significance": "not established", "finalHoldoutUsed": False}
     if model is None:
         return result
-    result["model"] = {"method": plan.method, "threshold": model.threshold, "op": model.op,
-                       "preprocessing": "training_only_volume_quantiles", "trigger": model.expression()}
+    result["model"] = {"method": plan.method, **model.artifact()}
     result["metrics"] = {"train": evaluate(model, parts["train"]),
                          "validation": evaluate(model, parts["validation"])}
     if not accepted(result["metrics"]["validation"], plan):

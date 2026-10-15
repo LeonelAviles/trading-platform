@@ -14,18 +14,33 @@ from market import paths
 from models import Backtest, MLExperiment, ResearchProposal
 from research_agent import memory, service as agent
 from research_ml import accounts, core, service
-from research_ml.schema import AccountPolicy, Plan
+from research_ml.schema import AccountPolicy, RegimePlan, ThresholdPlan, parse_plan
 from tests.helpers_bars import bar, make_ctx
 
 
 @pytest.fixture
 def plan():
-    return Plan(hypothesis="Synthetic threshold software test", method="volume_threshold_v1", symbol="ES1!",
+    return ThresholdPlan(hypothesis="Synthetic threshold software test", method="volume_threshold_v1", symbol="ES1!",
                 interval="1min", direction="long", start="2026-07-13", trainEnd="2026-07-13",
                 validationEnd="2026-07-14", testEnd="2026-07-15", target="next_open_to_horizon_close_ticks",
                 horizonBars=1, roundTripCostTicks=0.5, quantiles=[0.5], maxCandidates=2,
                 minTrainSignals=2, minEvaluationSignals=2, minMeanNetTicks=1,
                 minImprovementOverBaselineTicks=0, multipleTestingPolicy="descriptive_only_no_significance_claim")
+
+
+def regime_plan(plan, **changes):
+    raw = plan.model_dump(mode="json")
+    for key in ("quantiles", "maxCandidates", "minTrainSignals"):
+        raw.pop(key)
+    return RegimePlan(**{**raw, "method": "volume_regimes_v1", "clusterCount": 2,
+                         "maxIterations": 20, "minClusterSamples": 2, "activeClusters": [1],
+                         "interpretation": "Synthetic test: trade the higher volume regime; no profit interpretation",
+                         **changes})
+
+
+@pytest.fixture(params=["supervised", "unsupervised"])
+def discovery_plan(request, plan):
+    return plan if request.param == "supervised" else regime_plan(plan)
 
 
 @pytest.fixture
@@ -110,17 +125,17 @@ def test_no_edge_and_insufficient_training_stop(bars, plan):
 
 @pytest.mark.parametrize("change", [{"symbol": "NQ1!"}, {"horizonBars": 0}, {"quantiles": [float("nan")]},
                                      {"quantiles": [.5, .5]}, {"maxCandidates": 1}, {"trainEnd": "2026-07-16"},
-                                     {"roundTripCostTicks": float("inf")}, {"minTrainSignals": True}])
+                                     {"roundTripCostTicks": float("inf")}, {"roundTripCostTicks": True}, {"minTrainSignals": True}])
 def test_invalid_choices_fail_closed(plan, change):
     with pytest.raises(ValidationError):
-        Plan.model_validate({**plan.model_dump(mode="json"), **change})
+        parse_plan({**plan.model_dump(mode="json"), **change})
 
 
 def test_missing_policy_no_defaults(plan):
     raw = plan.model_dump(mode="json")
     del raw["roundTripCostTicks"]
     with pytest.raises(ValidationError):
-        Plan.model_validate(raw)
+        parse_plan(raw)
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "unsorted", "nan", "ohlc", "naive"])
@@ -139,7 +154,8 @@ def test_invalid_market_inputs(bars, kind):
         core.validate_bars(bars)
 
 
-def test_no_fit_without_exact_approval_and_no_cross_thread(context, plan, monkeypatch):
+def test_no_fit_without_exact_approval_and_no_cross_thread(context, discovery_plan, monkeypatch):
+    plan = discovery_plan
     tid, _ = context
     p = service.propose(tid, plan)
     with pytest.raises(memory.ResearchConflict, match="approval"):
@@ -157,7 +173,8 @@ def test_no_fit_without_exact_approval_and_no_cross_thread(context, plan, monkey
         assert db.query(Backtest).count() == db.query(ResearchProposal).count() == 0
 
 
-def test_concurrent_run_consumes_approval_once(context, plan, monkeypatch):
+def test_concurrent_run_consumes_approval_once(context, discovery_plan, monkeypatch):
+    plan = discovery_plan
     p = approved(context, plan)
     original, calls = core.discover, []
     def spy(*args):
@@ -175,7 +192,8 @@ def test_concurrent_run_consumes_approval_once(context, plan, monkeypatch):
 
 
 @pytest.mark.parametrize("drift", ["snapshot", "code", "scope", "document"])
-def test_drift_blocks_without_fitting(context, plan, monkeypatch, drift):
+def test_drift_blocks_without_fitting(context, discovery_plan, monkeypatch, drift):
+    plan = discovery_plan
     p = approved(context, plan)
     monkeypatch.setattr(core, "discover", lambda *a: pytest.fail("must not fit"))
     if drift == "snapshot":
@@ -195,13 +213,15 @@ def test_drift_blocks_without_fitting(context, plan, monkeypatch, drift):
     assert result["status"] == "blocked" and result["result"]["outcome"] != "no_edge"
 
 
-def test_snapshot_is_reproducible_after_source_changes(context, plan, monkeypatch):
+def test_snapshot_is_reproducible_after_source_changes(context, discovery_plan, monkeypatch):
+    plan = discovery_plan
     p = approved(context, plan)
     monkeypatch.setattr(service.data_store, "get_bars", lambda *a: pytest.fail("must use approved snapshot"))
     assert service.run(context[0], p["id"])["status"] == "candidate"
 
 
-def test_final_holdout_and_stopping(context, plan):
+def test_final_holdout_and_stopping(context, discovery_plan):
+    plan = discovery_plan
     tid, split = context
     with pytest.raises(ValueError, match="holdout"):
         service.propose(tid, plan.model_copy(update={"testEnd": date(2026, 7, 16)}))
@@ -229,7 +249,8 @@ def test_separate_account_policies_and_missing_evidence():
     assert accounts.assess([{}], policy)["status"] == "unassessed"
 
 
-def test_candidate_handoff_requires_new_approval(context, plan, monkeypatch, tmp_path):
+def test_candidate_handoff_requires_new_approval(context, discovery_plan, monkeypatch, tmp_path):
+    plan = discovery_plan
     from engine import spec
     from tests.test_spec_validation import ORB
     p = approved(context, plan)
@@ -256,6 +277,9 @@ def test_candidate_handoff_requires_new_approval(context, plan, monkeypatch, tmp
     assert exported["decision"] is None
     assert exported["document"]["strategy"]["entry"]["trigger"]["args"][0] == {"field": "volume"}
     assert exported["document"]["strategy"]["meta"]["mlDiscovery"]["experimentDigest"] == p["digest"]
+    assert exported["document"]["strategy"]["meta"]["mlDiscovery"]["method"] == plan.method
+    if plan.method == "volume_regimes_v1":
+        assert exported["document"]["strategy"]["meta"]["mlDiscovery"]["interpretation"] == plan.interpretation
     assert spec.validate_spec(exported["document"]["strategy"]) == []
     with pytest.raises(memory.ResearchConflict, match="approval"):
         memory.enqueue(exported["id"], context[0])
@@ -291,7 +315,8 @@ def test_candidate_handoff_requires_new_approval(context, plan, monkeypatch, tmp
         service.candidate_proposal(context[0], p["id"], strategy, validation_plan)
 
 
-def test_routes_require_explicit_plan_and_decision(client, monkeypatch, tmp_path, bars, plan):
+def test_routes_require_explicit_plan_and_decision(client, monkeypatch, tmp_path, bars, discovery_plan):
+    plan = discovery_plan
     monkeypatch.setattr(paths, "_paths", paths.Paths(tmp_path / "data", tmp_path / "raw"))
     monkeypatch.setattr(service.validation, "_splits", lambda _: {
         "inSample": ["2026-07-13", "2026-07-14", "2026-07-15"], "outOfSample": ["2026-07-16"]})
@@ -323,3 +348,105 @@ def test_agent_cannot_approve_or_run_ml():
     # New human endpoints must never accidentally enter the model's tool list.
     schemas = str(tools.TOOL_DEFINITIONS)
     assert "ml-experiments" not in schemas and "volume_threshold_v1" not in schemas
+
+
+def test_unsupervised_fitting_never_receives_outcomes(bars, plan, monkeypatch):
+    from research_ml.regimes import VolumeRegimes
+    method = VolumeRegimes()
+    original, seen = method.fit, []
+    def fit(features, cfg):
+        seen.append(list(features.columns))
+        return original(features, cfg)
+    monkeypatch.setattr(method, "fit", fit)
+    monkeypatch.setitem(core.METHODS, "volume_regimes_v1", method)
+    cfg = regime_plan(plan)
+    before = core.discover(bars, cfg, .25)
+    assert seen == [["volume"]]
+    assert before["learningKind"] == "unsupervised" and before["selectionCount"] == 1
+    # Different training labels cannot change learned patterns or user choice.
+    changed = bars.copy()
+    changed.loc[changed.index.date == plan.trainEnd, "close"] = 4998
+    after = core.discover(changed, cfg, .25)
+    assert after["model"] == before["model"] and after["trials"] == before["trials"]
+    # Later distributions and outcomes cannot change any fitted state either.
+    changed.loc[changed.index.date > plan.trainEnd, "volume"] *= 1000
+    changed.loc[changed.index.date > plan.trainEnd, "close"] = 4998
+    later = core.discover(changed, cfg, .25)
+    assert later["model"] == before["model"] and later["trials"] == before["trials"]
+    assert later["outcome"] == "no_edge" and "test" not in later["metrics"]
+    assert before == core.discover(bars, cfg, .25)
+
+
+def test_unsupervised_rule_does_not_choose_profitable_cluster(bars, plan):
+    # High volume is profitable in this artificial fixture. The user requests
+    # low volume; the system must retain that rule and report its failure.
+    result = core.discover(bars, regime_plan(plan, activeClusters=[0]), .25)
+    assert result["model"]["activeClusters"] == [0]
+    assert result["outcome"] == "no_edge"
+    assert result["metrics"]["validation"]["meanNetTicks"] < 0
+    assert "test" not in result["metrics"]
+    assert result["trials"][0]["clusters"] == [
+        {"rank": 0, "centerVolume": 10.0, "samples": 10},
+        {"rank": 1, "centerVolume": 100.0, "samples": 9}]
+
+
+@pytest.mark.parametrize("selected", [[0], [1], [2], [3], [0, 2], [1, 3], [0, 1, 2, 3]])
+@pytest.mark.parametrize("direction", ["long", "short"])
+def test_unsupervised_export_interval_and_union_boundaries(plan, selected, direction):
+    from research_ml.regimes import VolumeRegimes
+    cfg = regime_plan(plan, clusterCount=4, activeClusters=selected, direction=direction)
+    rule, diagnostic = VolumeRegimes().fit(pd.DataFrame({"volume": [10, 12, 30, 32, 60, 62, 100, 102]}), cfg)
+    assert rule.centers == (11, 31, 61, 101)
+    assert diagnostic[0]["iterations"] <= cfg.maxIterations
+    # Include exact boundaries, immediate neighbors, and unseen extremes.
+    edges = rule.artifact()["boundaries"]
+    values = [0, 11, 31, 61, 101, 1e6]
+    for edge in edges:
+        values += [np.nextafter(edge, -np.inf), edge, np.nextafter(edge, np.inf)]
+    ctx = make_ctx()
+    evaluator = expr.Evaluator(rule.expression(), ctx, direction)
+    for i, volume in enumerate(values):
+        ctx.on_bar(bar(i, 5000, v=float(volume)))
+        assert evaluator.eval() == bool(rule.predict([volume])[0])
+    assert list(rule.assign(edges)) == [0, 1, 2]
+
+
+@pytest.mark.parametrize("changes", [{"activeClusters": []}, {"activeClusters": [2]}, {"activeClusters": [1, 1]},
+                                      {"activeClusters": [True]}, {"clusterCount": 1}, {"clusterCount": 9},
+                                      {"maxIterations": 0}, {"minClusterSamples": 0}, {"interpretation": " "}])
+def test_unsupervised_invalid_interpretation_or_budget(plan, changes):
+    with pytest.raises(ValidationError):
+        regime_plan(plan, **changes)
+
+
+def test_unsupervised_requires_interpretation_and_rejects_supervised_options(plan):
+    raw = regime_plan(plan).model_dump(mode="json")
+    for key in ("interpretation", "activeClusters", "clusterCount", "maxIterations", "horizonBars"):
+        incomplete = {k: v for k, v in raw.items() if k != key}
+        with pytest.raises(ValidationError):
+            parse_plan(incomplete)
+    with pytest.raises(ValidationError):
+        parse_plan({**raw, "quantiles": [.5]})
+
+
+def test_unsupervised_degenerate_or_underpopulated_data_is_blocked(context, plan):
+    # The fixture has only two distinct training volumes. Three clusters are
+    # unavailable evidence, not a license to change the user's requested model.
+    p = approved(context, regime_plan(plan, clusterCount=3, activeClusters=[2]))
+    result = service.run(context[0], p["id"])
+    assert result["status"] == "blocked"
+    assert "distinct training volumes" in result["result"]["reason"]
+
+
+def test_unsupervised_budget_exhaustion_and_no_label_input(plan):
+    from research_ml.regimes import VolumeRegimes
+    method = VolumeRegimes()
+    # First iteration changes assignments; reaching the budget must block,
+    # never silently export an unconverged cluster or search alternative k.
+    features = pd.DataFrame({"volume": [0, 1, 2, 3, 9, 10, 11, 20]})
+    with pytest.raises(ValueError, match="did not converge"):
+        method.fit(features, regime_plan(plan, maxIterations=1, minClusterSamples=1))
+    with pytest.raises(ValueError, match="minClusterSamples"):
+        method.fit(features, regime_plan(plan, minClusterSamples=100))
+    with pytest.raises(ValueError, match="only training volume"):
+        method.fit(features.assign(netTicks=0), regime_plan(plan))

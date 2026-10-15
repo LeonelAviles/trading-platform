@@ -6,11 +6,19 @@ It does not schedule experiments, access the final platform holdout, run paper/l
 orders, or claim profitability. Existing chat, strategies, charts, packaging and
 proposal review continue to use their current interfaces.
 
-The first method, `volume_threshold_v1`, is a deliberately small reference plugin:
-learn a threshold on completed one-minute ES bar volume, then emit a plain Strategy
-Spec expression. It is not a recommended trading hypothesis or a selected model
-roadmap. The user must choose to test it, and supply every plan field. No real-market
-hypothesis was run while implementing this feature; all new tests use synthetic data.
+Two deliberately modest plugins cover **both supervised and unsupervised** research:
+
+- `volume_threshold_v1`: supervised rule search, learning a volume threshold from
+  training forward outcomes.
+- `volume_regimes_v1`: unsupervised one-dimensional k-means, discovering volume
+  regimes from training features only. User-selected cluster ranks become the rule;
+  the fitter never sees or ranks clusters by forward outcomes.
+
+Both emit plain Strategy Spec expressions. Neither is a recommended trading hypothesis
+or a selected long-term model roadmap. The user must choose which method to test and
+supply every applicable plan field. No real-market hypothesis was run while implementing
+these features; all new tests use synthetic data. A cluster is a pattern in observed
+volume, not evidence of a profitable regime.
 
 ## Workflow and approval boundaries
 
@@ -25,7 +33,7 @@ hypothesis was run while implementing this feature; all new tests use synthetic 
    SQLite reserves the run before fitting. Concurrent requests and retries cannot
    fit it again. This endpoint is bounded and synchronous, with no automatic retries.
 6. `GET .../ml-experiments` retains the plan, immutable decision, all searched
-   thresholds, selected trigger, metrics, result digest and terminal outcome.
+   thresholds or cluster diagnostics, selected trigger, metrics, result digest and terminal outcome.
 7. For a `candidate`, `POST .../{id}/candidate-proposal` accepts `{strategy, testPlan}`.
    Supply all existing execution/risk/session/exit choices; the server replaces only
    `entry.trigger` with the learned rule and stamps discovery provenance in `meta`.
@@ -33,7 +41,7 @@ hypothesis was run while implementing this feature; all new tests use synthetic 
    proposal review can inspect it; the existing approve and queue actions are still
    required before Nautilus can test it. Missing choices remain a blocked draft.
 8. Approved strategy specs retain their ordinary Nautilus path and package export.
-   A threshold expression requires no Python deserialization, pickle, or model
+   The exported rule expressions require no Python deserialization, pickle, or model
    dependency at strategy execution time.
 
 No discovery controls are exposed to the language model. Plan entry currently uses
@@ -48,29 +56,52 @@ blocks both discovery and later strategy queues in the same thread. It does not
 cancel already dispatched legacy Nautilus jobs. A process crash can leave a run
 `running`; it cannot automatically resume or refit. Inspect that record and create
 a new explicitly approved experiment if needed. Technical failures are `blocked`,
-never `no_edge`. Threshold retries are not permitted after a test failure.
+never `no_edge`. Neither method retries or changes its rule after a test failure.
 
 ## Explicit plan contract
 
-All these fields are required; there is no executable default request:
+Common fields below are required for both methods; there is no executable default request:
 
 | Fields | Meaning |
 |---|---|
 | `hypothesis` | The hypothesis the user wants to test |
-| `method`, `symbol`, `interval` | `volume_threshold_v1`, `ES1!`, `1min` in this increment |
+| `method`, `symbol`, `interval` | Explicitly choose `volume_threshold_v1` or `volume_regimes_v1`; ES1!, 1min only |
 | `direction` | Explicit `long` or `short` |
 | `start`, `trainEnd`, `validationEnd`, `testEnd` | Inclusive ET session dates, with ordered disjoint partitions |
 | `target` | `next_open_to_horizon_close_ticks` |
 | `horizonBars` | 1–60 forward bars, explicitly selected |
 | `roundTripCostTicks` | Explicit nonnegative total cost estimate in ES ticks |
-| `quantiles` | Unique quantiles strictly inside (0, 1), fitted on training volume only |
-| `maxCandidates` | Explicit search budget; two threshold directions per quantile, at most 100 |
-| `minTrainSignals`, `minEvaluationSignals` | Explicit positive sample-count requirements |
+| `minEvaluationSignals` | Explicit positive evaluation sample-count requirement |
 | `minMeanNetTicks` | Explicit minimum conditional forward outcome |
 | `minImprovementOverBaselineTicks` | Nonnegative improvement in net ticks per observation |
 | `multipleTestingPolicy` | `descriptive_only_no_significance_claim` |
 
-The 366-day, 50,000-bar, 12 MB snapshot and 100-candidate limits are software resource
+For supervised `volume_threshold_v1`, additionally supply:
+
+| Fields | Meaning |
+|---|---|
+| `quantiles` | Unique quantiles strictly inside (0, 1), fitted on training volume only |
+| `maxCandidates` | Explicit search budget; two threshold directions per quantile, at most 100 |
+| `minTrainSignals` | Explicit positive training signal-count requirement |
+
+For unsupervised `volume_regimes_v1`, instead supply:
+
+| Fields | Meaning |
+|---|---|
+| `clusterCount` | Explicit number of volume regimes, 2–8 |
+| `maxIterations` | Explicit fit budget, 1–100 iterations, one initialization, no restarts |
+| `minClusterSamples` | Positive minimum training observations required in every cluster |
+| `activeClusters` | Nonempty, unique zero-based ranks of clusters on which to signal; 0 is the lowest-volume cluster |
+| `interpretation` | Explicit user rationale for turning those volume regimes into the specified long/short rule |
+
+The method discriminates the schema: clustering cannot accept supervised search options,
+and threshold search cannot accept clustering options. Cluster count, active ranks and
+interpretation are approved **before** fitting; the service never chooses the cluster
+with the best subsequent returns. Changing interpretation requires a new plan/approval.
+The target remains an explicit supported target and the horizon is explicitly chosen in
+1-minute bars. No horizon is defaulted, and sub-minute targets are not silently converted.
+
+The 366-day, 50,000-bar, 12 MB snapshot, 100-candidate and clustering iteration limits are software resource
 limits, not trading recommendations. Unknown fields/methods, missing choices,
 non-finite values, non-ES inputs and unavailable dates fail closed.
 
@@ -83,18 +114,37 @@ label availability is the close of i+h. Targets must remain within the partition
 within the same ET RTH session, and span h contiguous minute bars. Missing bars,
 session endings and partition endings are purged, never bridged or imputed.
 
-Training-only quantiles are the only learned preprocessing for this plugin. There
+For supervised search, training-only quantiles are the only learned preprocessing. There
 is no scaler to leak later distribution information. Both `volume > threshold` and
 `volume <= threshold` are searched; duplicate cut points collapse deterministically.
 The training objective is net forward ticks per observation, subject to the explicit
 minimum signal count. Sorted thresholds and operator order break ties deterministically.
 Every evaluated threshold and score is retained, including unsuccessful trials.
+The approval covers this exact bounded training search; resulting strategies still
+require their own approval before any Nautilus test.
 
-The selected model is frozen before validation. Validation must meet the explicit
+Unsupervised volume clustering uses the same target-eligible training timestamps but
+receives **only the volume column**, with no forward outcomes or label-end timestamps.
+It uses raw volume (one feature; no scaler) and deterministic Lloyd iterations. Initial
+centers are evenly spaced ranks of distinct training volumes. Final cluster IDs are
+ordered by increasing center; they are not return rankings. Training centers, counts,
+mean squared feature distance and iteration count are recorded as pattern diagnostics.
+Insufficient distinct volumes, empty/underpopulated clusters or exhausted convergence
+budget are `blocked`, not evidence of no edge. There is no automatic k search, relabeling,
+restart or selection of active clusters.
+
+Frozen nearest-center assignment becomes fixed midpoint boundaries. Ties belong to the
+lower-volume cluster. User-selected clusters export as unions of intervals with the same
+`>` and `<=` comparisons, including unseen volumes outside the training range. Neither
+centers nor interpretation adapt on validation/test. This enables reproducible Nautilus
+signals without a runtime cluster model. Direction is independently explicit. Model and
+pattern diagnostics remain visible even when the user-defined rule fails evaluation.
+
+Both fitted models and their rule interpretations are frozen before validation. Validation must meet the explicit
 minimum signal count and mean outcome, and strictly exceed the better of always
 signaling and never signaling on the same per-observation denominator plus the
 requested improvement. Only a passing validation opens the internal test metrics.
-The model is never refitted on validation, and test results never select a threshold.
+The model is never refitted on validation, and test results never select a threshold or change the active clusters.
 Any criterion failure stops with `no_edge` **under this plan**, not proof that no
 possible strategy has an edge. Sparse/invalid data or exceptions return `blocked`.
 
@@ -158,7 +208,7 @@ erDiagram
     ml_experiments ||--o{ research_proposals : referenced_in_spec_meta
     research_proposals ||--o| research_decisions : requires
     research_proposals ||--o{ research_evidence : records
-    research_evidence }o--|| backtests : identifies
+    backtests ||--o| research_evidence : identifies
     strategies ||--o{ backtests : validates
 ```
 
@@ -187,7 +237,7 @@ concurrency, retention and deployment requirement.
 ## Decisions still needed
 
 - Which hypotheses, model families, features, side, prediction targets and horizons
-  deserve explicit tests; this reference plugin does not settle them.
+  deserve explicit tests; these reference plugins do not settle them.
 - Exact dates and minimum evidence, cost assumptions, search/stop budget, uncertainty
   policy and how/when a final holdout may be released.
 - Firm/version-specific drawdown and loss semantics versus personal-account goals.

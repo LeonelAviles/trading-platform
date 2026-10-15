@@ -24,7 +24,7 @@ from market.paths import get_paths
 from models import AgentThread, MLExperiment, new_id, utc_now
 from research_agent import memory
 from research_ml import core
-from research_ml.schema import Plan
+from research_ml.schema import Plan, parse_plan
 
 MAX_SNAPSHOT_BYTES = 12_000_000
 
@@ -169,7 +169,7 @@ def run(thread_id, experiment_id):
             raise memory.ResearchConflict("thread was stopped")
         row.status = "running"  # committed before any model can fit
     try:
-        plan = Plan.model_validate(document["plan"])
+        plan = parse_plan(document["plan"])
         if provenance() != document["provenance"] or _scope(plan) != document["dataset"]["sessions"]:
             raise ValueError("code/config/dependencies/frozen sessions changed; new approval required")
         path = _snapshot_path(experiment_id)
@@ -219,8 +219,9 @@ def candidate_proposal(thread_id, experiment_id, strategy, test_plan):
     if not isinstance(raw.get("meta", {}), dict):
         raise ValueError("strategy meta must be an object")
     raw.setdefault("meta", {})["mlDiscovery"] = {"experimentId": experiment_id, "experimentDigest": experiment_digest,
-                                                  "resultDigest": digest, "target": plan["target"],
+                                                  "resultDigest": digest, "method": plan["method"], "target": plan["target"],
                                                   "horizonBars": plan["horizonBars"],
+                                                  "interpretation": plan.get("interpretation"),
                                                   "warning": "signal export only; exits/sizing/costs require separate Nautilus validation"}
     return memory.propose(thread_id, plan["hypothesis"], raw, test_plan,
                           ["ML discovery", "chronological internal OOS"], [])
