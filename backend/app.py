@@ -26,6 +26,7 @@ from routers import (  # noqa: E402
     backtests,
     desk,
     market,
+    ml,
     replay,
     settings,
     strategies,
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
 
     for router in (
         agent.router,
+        ml.router,
         market.router,
         strategies.router,
         backtests.router,

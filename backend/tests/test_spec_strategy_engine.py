@@ -106,3 +106,21 @@ def test_bars_mode_uses_sidecar_delta(store):
     for t in res["trades"][:10]:
         signal_close = (t["entryTime"] // 60) * 60
         assert delta_by_close.get(signal_close, 0) > 0, (t["entryTime"], delta_by_close.get(signal_close))
+
+
+def test_learned_volume_trigger_reproduces_in_nautilus(store):
+    """An exported fitted threshold runs without any model runtime dependency."""
+    from types import SimpleNamespace
+    from research_ml.core import VolumeThreshold
+
+    bars = data_store.get_bars("ES1!", "1min")
+    train = bars[bars.index.tz_convert("America/New_York").date == DAYS[0]].copy()
+    train["netTicks"] = (train.close.shift(-1) - train.open.shift(-1)) / .25 - 1
+    train = train.dropna(subset=["netTicks"])
+    model, _ = VolumeThreshold().fit(train, SimpleNamespace(quantiles=[.25, .5, .75], minTrainSignals=3))
+    spec = _spec(direction="long", entry={"trigger": model.expression(), "orderType": "market", "timeoutBars": 1})
+    first = run_backtest(spec, DAYS[1], DAYS[1], "bars")
+    second = run_backtest(spec, DAYS[1], DAYS[1], "bars")
+    fields = ("direction", "entryTime", "exitTime", "entryPrice", "exitPrice", "pnlUsd", "contracts")
+    assert first["trades"], "synthetic later session must exercise learned trigger"
+    assert [{k: t[k] for k in fields} for t in first["trades"]] == [{k: t[k] for k in fields} for t in second["trades"]]

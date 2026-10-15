@@ -178,6 +178,15 @@ def _write_reservation(db):
     db.execute(text("BEGIN IMMEDIATE"))
 
 
+def thread_stopped(db, thread_id: str) -> bool:
+    """A user stop applies across fitted discovery and strategy validation."""
+    from models import MLExperiment
+    legacy = (db.query(ResearchDecision).join(ResearchProposal, ResearchProposal.id == ResearchDecision.proposal_id)
+              .filter(ResearchProposal.thread_id == thread_id, ResearchDecision.action == "reject_stop").first())
+    discovery = db.query(MLExperiment).filter_by(thread_id=thread_id, status="stopped").first()
+    return legacy is not None or discovery is not None
+
+
 def decide(proposal_id: str, thread_id: str, expected_digest: str, action: str, reason: str) -> dict:
     if action not in {"approve", "reject_stop", "reject_revise"}:
         raise ValueError("decision must be approve, reject_stop or reject_revise")
@@ -221,9 +230,7 @@ def enqueue(proposal_id: str, thread_id: str) -> dict:
             document = row.document_json
             if digest(document) != row.digest:
                 raise ResearchConflict("proposal content changed")
-            stopped = (db.query(ResearchDecision).join(ResearchProposal, ResearchProposal.id == ResearchDecision.proposal_id)
-                       .filter(ResearchProposal.thread_id == thread_id, ResearchDecision.action == "reject_stop").first())
-            if stopped:
+            if thread_stopped(db, thread_id):
                 raise ResearchConflict("user stopped this research thread; start a new thread for new research")
             current_data = dataset_context()
             if current_data != document["dataset"]:

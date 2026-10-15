@@ -44,6 +44,13 @@ A persistent sidebar (collapses to an icon rail on chart pages):
 
 ## What works today
 
+- **Approval-gated ML discovery API**: an opt-in ES volume-threshold reference method,
+  training-only preprocessing, chronological internal validation/test, immutable
+  snapshot provenance, and deterministic candidate handoff into the existing proposal
+  approval workflow. No autonomous experiments or final-holdout access.
+  See [docs/08-ml-research.md](docs/08-ml-research.md) for explicit inputs, API steps,
+  separate account assessments, and the compatible Bronze/Silver/Gold design.
+
 - **Stratos Research** at `/agent`: OpenAI Responses API with a pinned local
   Machine Learning for Trading library (1,550+ documents), auditable citations,
   persistent conversations and typed tools for Strategy Spec creation and
