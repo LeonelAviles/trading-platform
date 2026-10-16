@@ -233,6 +233,20 @@ class ResearchEvidence(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("backtests.id"), unique=True)
 
 
+class MLExperiment(Base):
+    """One immutable discovery plan, user decision, and terminal result."""
+
+    __tablename__ = "ml_experiments"
+    id: Mapped[str] = _id()
+    thread_id: Mapped[str] = mapped_column(ForeignKey("agent_threads.id"), unique=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    document_json: Mapped[dict] = mapped_column(JSON)
+    decision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="proposed")
+    created_at: Mapped[str] = _ts()
+
+
 # --------------------------------------------------------------------------
 # Settings
 # --------------------------------------------------------------------------

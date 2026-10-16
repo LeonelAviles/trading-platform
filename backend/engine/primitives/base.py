@@ -139,4 +139,4 @@ def _ensure_loaded():
     if _loaded:
         return
     _loaded = True
-    from engine.primitives import book, orderflow, price, profile, structure, time  # noqa: F401
+    from engine.primitives import book, orderflow, price, profile, structure, time, ml  # noqa: F401

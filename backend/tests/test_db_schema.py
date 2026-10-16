@@ -5,7 +5,7 @@ from sqlalchemy import inspect
 EXPECTED_TABLES = {
     "strategies", "backtests", "settings", "knowledge_sources", "knowledge_nodes",
     "knowledge_edges", "knowledge_chunks", "knowledge_chunks_fts", "agent_threads", "agent_messages",
-    "agent_runs",
+    "agent_runs", "ml_experiments",
 }
 REMOVED_TABLES = {
     "findings", "research_sources", "research_docs", "research_queue", "primitive_requests", "llm_usage",
