@@ -56,10 +56,10 @@ def _to_dict(row: Strategy) -> dict:
     return spec
 
 
-def list_strategies() -> list[dict]:
+def list_strategies(*, include_archived=False) -> list[dict]:
     with database.session_scope() as db:
         rows = db.query(Strategy).order_by(Strategy.name).all()
-        return [_to_dict(r) for r in rows]
+        return [_to_dict(r) for r in rows if include_archived or not (r.spec_json or {}).get("meta", {}).get("researchArchive")]
 
 
 def get_strategy(strategy_id: str) -> dict | None:

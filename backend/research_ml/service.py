@@ -10,7 +10,7 @@ import hashlib
 import importlib.metadata
 import json
 import platform
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -51,7 +51,7 @@ def _scope(plan):
     endpoints = [str(plan.start), str(plan.trainEnd), str(plan.validationEnd), str(plan.testEnd)]
     if any(d not in ins for d in endpoints) or any(endpoints[0] <= d <= endpoints[-1] for d in oos):
         raise ValueError("all dates must be inside frozen in-sample data; final holdout is unavailable to discovery")
-    return sorted(d for d in ins if endpoints[0] <= d <= endpoints[-1])
+    return sorted(d for d in ins if endpoints[0] <= d <= endpoints[-1] and date.fromisoformat(d).weekday() < 5)
 
 
 def _snapshot_path(experiment_id):

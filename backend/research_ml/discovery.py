@@ -94,7 +94,7 @@ def history(thread_id):
             "heldoutPolicy": "one staged evaluation reservation per contract/session; external exposure unknown"}
 
 
-def propose(thread_id, plan: ClusterDiscoveryPlan):
+def propose(thread_id, plan: ClusterDiscoveryPlan, *, research_scope=None):
     with database.session_scope() as db:
         if not db.get(AgentThread, thread_id):
             raise ValueError("thread not found")
@@ -113,7 +113,7 @@ def propose(thread_id, plan: ClusterDiscoveryPlan):
     document = {"plan": plan.model_dump(mode="json"), "provenance": service.provenance(),
         "dataset": {"sha256": hashlib.sha256(content).hexdigest(), "rows": len(bars),
                     "sessions": sessions, **source, "tickSize": tick},
-        "partitionCounts": counts, "fitBudget": 1, "aiReviewBudget": 1,
+        "partitionCounts": counts, "researchScope": copy.deepcopy(research_scope), "fitBudget": 1, "aiReviewBudget": 1,
         "evaluationBudget": 1, "scope": "feature-only discovery; later outcomes remain sealed until hypothesis approval",
         "heldoutPolicy": "reserve both later partitions once by contract/session; legacy and external exposure unknown"}
     discovery_id = new_id()
@@ -288,6 +288,58 @@ def review(thread_id, discovery_id, digest, client=None):
         row.review_json = envelope
         if row.status != "stopped":
             row.status = status
+        db.flush()
+        return _public(row)
+
+
+def review_context(thread_id, discovery_id, digest):
+    """Export only training-feature evidence for an in-session assistant review."""
+    with database.session_scope() as db:
+        row = _row(db, thread_id, discovery_id)
+        if row.digest != digest or row.status != "discovered" or memory.thread_stopped(db, thread_id):
+            raise memory.ResearchConflict("review requires exact completed discovery")
+        result, result_digest = _verified_result(row)
+        plan = row.document_json["plan"]
+        context = {"researchQuestion": plan["researchQuestion"], "contract": plan["contract"],
+            "discoveryStart": plan["start"], "discoveryEnd": plan["trainEnd"],
+            "summary": result["summary"], "scope": "training features only; no later outcomes supplied"}
+        return {"context": context, "inputDigest": memory.digest(context), "resultDigest": result_digest}
+
+
+def submit_review(thread_id, discovery_id, digest, input_digest, review, reviewer):
+    """Record an explicitly supplied assistant review; never approve or execute.
+
+    This uses the same one-review budget as the optional API reviewer. The
+    caller attests the source; no claim of cryptographic model authentication.
+    """
+    parsed = ClusterReview.model_validate(review)
+    exported = review_context(thread_id, discovery_id, digest)
+    if input_digest != exported["inputDigest"]:
+        raise memory.ResearchConflict("review input digest mismatch")
+    count = len(exported["context"]["summary"]["clusters"])
+    if sorted(c.clusterId for c in parsed.clusters) != list(range(count)):
+        raise ValueError("review must describe every fitted cluster exactly once")
+    if (parsed.recommendation == "propose") != (parsed.suggestion is not None):
+        raise ValueError("review recommendation and hypothesis disagree")
+    if parsed.suggestion and (len(set(parsed.suggestion.activeClusters)) != len(parsed.suggestion.activeClusters)
+            or max(parsed.suggestion.activeClusters) >= count):
+        raise ValueError("review selected invalid cluster IDs")
+    if not reviewer.strip() or len(reviewer) > 200:
+        raise ValueError("explicit reviewer attribution required")
+    with database.session_scope() as db:
+        memory._write_reservation(db)
+        row = _row(db, thread_id, discovery_id)
+        if row.status != "discovered" or row.digest != digest or memory.thread_stopped(db, thread_id):
+            raise memory.ResearchConflict("one review per completed discovery")
+        _, result_digest = _verified_result(row)
+        if result_digest != exported["resultDigest"]:
+            raise memory.ResearchConflict("discovery result changed")
+        record = {"version": REVIEW_VERSION, "provider": "in_session_assistant",
+            "model": reviewer, "attribution": "caller_attested", "responseId": None,
+            "inputDigest": input_digest, "discoveryResultDigest": result_digest,
+            "review": parsed.model_dump(mode="json"), "at": utc_now()}
+        row.review_json = {"document": record, "digest": memory.digest(record)}
+        row.status = "reviewed"
         db.flush()
         return _public(row)
 

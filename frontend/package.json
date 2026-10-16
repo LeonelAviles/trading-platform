@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:ui": "node scripts/research-desk-qa.cjs",
-    "test:ml-ui": "node scripts/ml-discovery-qa.cjs"
+    "test:ml-ui": "node scripts/ml-discovery-qa.cjs",
+    "test:workflow-ui": "node scripts/workflow-evidence-qa.cjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",

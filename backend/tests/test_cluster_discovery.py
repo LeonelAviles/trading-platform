@@ -307,3 +307,22 @@ def test_http_discovery_review_hypothesis_and_evaluation(client, raw_context, mo
     assert client.post(run_base + "/run").status_code == 409
     client.post(run_base + "/decision", json={"digest": experiment["digest"], "action": "approve", "reason": "HTTP hypothesis test"})
     assert client.post(run_base + "/run").json()["status"] == "candidate"
+
+
+def test_in_session_review_is_bound_to_training_context_and_one_budget(raw_context):
+    tid, _ = raw_context
+    row = fitted(tid)
+    context = discovery.review_context(tid, row['id'], row['digest'])
+    assert 'validation' not in json.dumps(context)
+    with pytest.raises(memory.ResearchConflict, match='input digest'):
+        discovery.submit_review(tid,row['id'],row['digest'],'0'*64,Reviewer().payload,'Codex session')
+    recorded = discovery.submit_review(tid,row['id'],row['digest'],context['inputDigest'],Reviewer().payload,'Codex session')
+    assert recorded['status']=='reviewed'
+    assert recorded['review']['document']['provider']=='in_session_assistant'
+    assert service.history(tid)['experiments']==[]
+    with pytest.raises(memory.ResearchConflict):
+        discovery.submit_review(tid,row['id'],row['digest'],context['inputDigest'],Reviewer().payload,'Codex session')
+    assert discovery.review(tid,row['id'],row['digest'])==recorded
+    experiment=discovery.propose_hypothesis(tid,row['id'],hypothesis_request(recorded))
+    with pytest.raises(memory.ResearchConflict,match='approval'):
+        service.run(tid,experiment['id'])

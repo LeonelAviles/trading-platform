@@ -27,11 +27,12 @@ def uses_mbo(strategy):
     return visit(strategy)
 
 
-def load(strategy):
+def load(strategy, *, allow_rejected=False):
     meta = strategy.get("meta", {}).get("mlDiscovery", {})
     with database.session_scope() as db:
         row = db.get(MLExperiment, meta.get("experimentId", ""))
-        if not row or row.status != "candidate" or (row.decision_json or {}).get("action") != "approve":
+        if (not row or row.status not in ({"candidate", "no_edge"} if allow_rejected else {"candidate"})
+                or (row.decision_json or {}).get("action") != "approve"):
             raise ValueError("approved completed MBO experiment required")
         document, result = copy.deepcopy(row.document_json), copy.deepcopy(row.result_json)
         expected = row.digest
@@ -82,8 +83,10 @@ def context(strategy):
         "warning": "reuses discovery partitions; descriptive execution validation, not new out-of-sample evidence"}
 
 
-def replay(strategy, start, end):
-    plan, document, frame = load(strategy)
+def replay(strategy, start, end, *, allow_rejected=False):
+    plan, document, frame = load(strategy, allow_rejected=allow_rejected)
+    if allow_rejected and (start <= plan.trainEnd or end > plan.validationEnd):
+        raise ValueError("diagnostic execution is restricted to already exposed validation sessions")
     if start < plan.start or end > plan.testEnd or start > end:
         raise ValueError("Nautilus dates exceed approved MBO snapshot")
     days = frame.index.tz_convert("America/New_York").date
@@ -91,13 +94,20 @@ def replay(strategy, start, end):
 
 
 def nautilus_day(frame, symbol, day):
-    from nautilus_trader.model.data import Bar, BarType
+    from nautilus_trader.model.data import Bar, BarType, TradeTick
     from nautilus_trader.model.objects import Price, Quantity
+    from nautilus_trader.model.enums import AggressorSide
+    from nautilus_trader.model.identifiers import TradeId, InstrumentId
     part = frame[frame.index.tz_convert("America/New_York").date == day]
     bar_type = BarType.from_str(cat.bar_type_str(symbol))
     bars, rows, flows = [], {}, {}
     for ts, r in part.iterrows():
         close = ts.value + 60_000_000_000
+        # One nanosecond after the preceding minute completes: causal signal
+        # first, then next opening price. This is an execution-price event only.
+        opening = ts.value + 1
+        bars.append(TradeTick(InstrumentId.from_str(cat.instrument_id(symbol)), Price.from_str(f"{r.open:.2f}"),
+            Quantity.from_int(1), AggressorSide.NO_AGGRESSOR, TradeId(str(opening)), opening, opening))
         bars.append(Bar(bar_type, *(Price.from_str(f"{r[c]:.2f}") for c in ("open", "high", "low", "close")),
                         Quantity.from_int(int(r.volume)), close, close))
         rows[close] = r[FEATURES].tolist()

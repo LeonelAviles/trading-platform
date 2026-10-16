@@ -13,7 +13,8 @@ trade records plus per-session returns.
 
 Modes
   bars   1-minute catalog bars (higher timeframes aggregated in-engine);
-         entries at the signal bar's close ± 1 tick; stop/target evaluated
+         legacy entries at signal close; frozen MBO entries use the next
+         contiguous minute open after the signal is complete; stop/target evaluated
          intrabar against the next bars' high/low, worst case first (stop wins).
   ticks  TradeTick stream with in-engine bar aggregation; market orders fill
          at the venue's current last price (the print that closed the signal
@@ -131,6 +132,8 @@ def _make_strategy_class():
             self.cspec = cspec
             self.flow = flow_sidecar or {}
             self.ml_rows = None
+            self.mbo_next_open = False
+            self.deferred_mbo = None
             self.ledger = ledger
             self.slip = slippage_ticks
             self.primary_min = TF_MINUTES[params["primary"]]
@@ -172,6 +175,8 @@ def _make_strategy_class():
             # arrive stamped with the standard bar type, so match on that.
             self.bar_type_match = self.bar_type.standard() if self.bar_type.is_composite() else self.bar_type
             self.subscribe_bars(self.bar_type)
+            if self.mbo_next_open:
+                self.subscribe_trade_ticks(self.inst.id)
 
         # -- helpers --------------------------------------------------------
         def _et_ns(self, d: date, hhmm: str) -> int:
@@ -179,6 +184,7 @@ def _make_strategy_class():
 
         def _new_session(self, d: date):
             self.session = d
+            self.deferred_mbo = None
             self.session_pnl = 0.0
             self.session_trades = 0
             self.consec_losses = 0
@@ -273,6 +279,17 @@ def _make_strategy_class():
 
         # -- ticks ----------------------------------------------------------
         def on_trade_tick(self, tick):
+            if self.mbo_next_open:
+                # These are synthetic opening-price events, not observed ticks.
+                # They cannot update order-flow features or trailing indicators.
+                deferred, self.deferred_mbo = self.deferred_mbo, None
+                if deferred is not None:
+                    direction, signal_bar, day = deferred
+                    if (int(tick.ts_event) == signal_bar.ts_close + 1
+                            and self.open is None and self.pending_entry is None
+                            and self._entry_allowed(int(tick.ts_event), day)):
+                        self._submit_entry(direction, signal_bar, day, float(tick.price))
+                return
             px = float(tick.price)
             self.last_price = px
             side = tick.aggressor_side.name
@@ -359,23 +376,29 @@ def _make_strategy_class():
             if not self._entry_allowed(b.ts_close, d):
                 self.stats["blocked"] += 1
                 return
-            stop, target = self._levels(direction, b.close, b)
+            if self.mbo_next_open:
+                self.deferred_mbo = (direction, b, d)
+                return
+            self._submit_entry(direction, b, d, b.close)
+
+        def _submit_entry(self, direction, b, d, ref):
+            stop, target = self._levels(direction, ref, b)
             if stop is None and target is None and self.p["stop"].get("type") == "structure":
                 self.stats["blocked"] += 1      # structure level unavailable or on the wrong side
                 return
-            qty = self._size(b.close, stop)
+            qty = self._size(ref, stop)
             side = OrderSide.BUY if direction == "long" else OrderSide.SELL
             sign = 1 if direction == "long" else -1
             otype = self.p["order_type"] if self.mode != "bars" else "market"
             if otype == "limit":
-                px = P.round_to_tick(b.close + sign * self.p["limit_offset_ticks"] * self.cspec.tick_size, self.cspec)
+                px = P.round_to_tick(ref + sign * self.p["limit_offset_ticks"] * self.cspec.tick_size, self.cspec)
                 order = self.order_factory.limit(self.inst.id, side, Quantity.from_int(qty), price=Price.from_str(f"{px:.2f}"), tags=["entry"])
             elif otype == "stop":
-                px = P.round_to_tick(b.close + sign * self.p["stop_offset_ticks"] * self.cspec.tick_size, self.cspec)
+                px = P.round_to_tick(ref + sign * self.p["stop_offset_ticks"] * self.cspec.tick_size, self.cspec)
                 order = self.order_factory.stop_market(self.inst.id, side, Quantity.from_int(qty), trigger_price=Price.from_str(f"{px:.2f}"), tags=["entry"])
             else:
                 order = self.order_factory.market(self.inst.id, side, Quantity.from_int(qty), tags=["entry"])
-            self.pending_entry = {"direction": direction, "ref": b.close, "stop": stop, "target": target,
+            self.pending_entry = {"direction": direction, "ref": ref, "stop": stop, "target": target,
                                   "bar_index": b.index, "qty": qty, "cid": str(order.client_order_id),
                                   "absolute": self._levels_absolute, "bar": b, "resting": otype != "market",
                                   "expires_bar": b.index + self.p["entry_timeout_bars"]}
@@ -639,7 +662,7 @@ def _regime_tags(root: str) -> dict:
     return {(r[0] if isinstance(r[0], date) else r[0].date()).isoformat(): [r[1], f"vol_{r[2]}", r[3]] for r in rows}
 
 
-def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks", progress=None) -> dict:
+def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks", progress=None, *, research_diagnostic=False) -> dict:
     from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
     from nautilus_trader.backtest.models import FillModel, PerContractFeeModel
     from nautilus_trader.config import DataEngineConfig, LoggingConfig
@@ -668,7 +691,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
     if mbo:
         if mode != "bars" or book_prims:
             raise ValueError("frozen MBO validation requires exact snapshot bars without heatmap primitives")
-        symbol, mbo_frame, mbo_dataset = frozen.replay(spec, date_from, date_to)
+        symbol, mbo_frame, mbo_dataset = frozen.replay(spec, date_from, date_to, allow_rejected=research_diagnostic)
         days = tuple(sorted(set(mbo_frame.index.tz_convert("America/New_York").date)))
         if not days:
             raise ValueError("no approved MBO rows in requested dates")
@@ -748,6 +771,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
                 publish_progress(live_date, live_ts)
             strat.configure(params=params, rules=rules, instrument=inst, mode=mode, cspec=cspec,
                             flow_sidecar=None, ledger=ledger, slippage_ticks=slippage, live_progress=on_engine_bar)
+            strat.mbo_next_open = mbo
             engine.add_strategy(strat)
             for d in rng.dates:
                 start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
@@ -757,7 +781,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
                     book_days += 1
                 if mbo:
                     data, strat.ml_rows, strat.flow = frozen.nautilus_day(mbo_frame, rng.symbol, d)
-                    bars_total += len(data)
+                    bars_total += sum(hasattr(item, "bar_type") for item in data)
                 elif mode == "bars":
                     strat.flow.update(_flow_sidecar(root.root, d, rng.symbol))
                     data = catalog.bars(bar_types=[cat.bar_type_str(rng.symbol)], start=start, end=end)
@@ -797,6 +821,8 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
             "slippageTicks": slippage, "commissionPerSide": root.commission_per_side, "accountSize": params["account_size"],
             "seconds": round(time.time() - t0, 1), "note": note, "signals": None,
             "mboSnapshot": mbo_dataset,
+            "researchDiagnostic": research_diagnostic,
+            "entryConvention": "next_contiguous_minute_open_after_complete_signal" if mbo else "legacy_signal_close",
             "book": {"primitives": book_prims, "source": "liquidity_1s", "days": book_days} if book_prims else None,
         },
     }
