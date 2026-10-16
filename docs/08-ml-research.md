@@ -1,169 +1,182 @@
-# Approval-gated ML research foundation
+# Approval-gated multivariate MBO research
 
-This increment adds an opt-in **API workflow**, not a running research program.
-It proposes, approves, fits, records, and exports one bounded discovery experiment.
-It does not schedule experiments, access the final platform holdout, run paper/live
-orders, or claim profitability. Existing chat, strategies, charts, packaging and
-proposal review continue to use their current interfaces.
+This is an opt-in **API workflow**, not a running research program. It freezes one
+ES experiment, requires exact user approval before fitting, records explicit stop/no-edge
+outcomes, and exports passing candidates into the existing separately approved Nautilus
+workflow. No schedules, final-holdout access, paper/live execution or profitability claims
+are added. Existing chat, strategies, charts, ingestion and storage remain available.
+All implementation checks use **synthetic data**, including synthetic compressed DBN files.
+The user's reported eight months of ES MBO has not been inspected or quality-verified here.
 
-Two deliberately modest plugins cover **both supervised and unsupervised** research:
+## Methods and features
 
-- `volume_threshold_v1`: supervised rule search, learning a volume threshold from
-  training forward outcomes.
-- `volume_regimes_v1`: unsupervised one-dimensional k-means, discovering volume
-  regimes from training features only. User-selected cluster ranks become the rule;
-  the fitter never sees or ranks clusters by forward outcomes.
+The current MBO path jointly consumes the same six ordered features in both methods:
 
-Both emit plain Strategy Spec expressions. Neither is a recommended trading hypothesis
-or a selected long-term model roadmap. The user must choose which method to test and
-supply every applicable plan field. No real-market hypothesis was run while implementing
-these features; all new tests use synthetic data. A cluster is a pattern in observed
-volume, not evidence of a profitable regime.
+| Order | Feature | Definition at each one-minute close |
+|---|---|---|
+| 1 | `spread_ticks` | Best ask minus best bid, divided by configured ES tick size |
+| 2 | `depth_imbalance` | `(bid size - ask size)/(bid size + ask size)` across up to the explicitly chosen N best levels on each side |
+| 3 | `aggressive_buy_rate` | Contracts in T records with buyer aggressor B, divided by 60 seconds |
+| 4 | `aggressive_sell_rate` | Contracts in T records with seller aggressor A, divided by 60 seconds |
+| 5 | `add_rate` | Non-snapshot A record count divided by 60 seconds |
+| 6 | `cancel_reduction_rate` | Size removed by C records divided by 60 seconds, including execution-related reductions |
+
+`mbo_ridge_v1` fits one joint ridge regression to training forward outcomes. The user
+specifies the regularization and predicted-net-tick signal threshold before fitting.
+There is no search over thresholds or per-column winner selection.
+
+`mbo_kmeans_v1` fits multivariate k-means to training features only. It never receives
+outcomes or label timestamps. Deterministic farthest-first initialization starts from the
+lexicographically first distinct standardized vector; ties use lexicographic order.
+Lloyd iterations stop at unchanged assignments. Final cluster IDs follow lexicographic
+standardized-center order, **not profitability or a scalar volume ranking**. The user
+chooses active IDs and their interpretation before fitting; no automatic re-labeling,
+restart, k search or return-based cluster selection occurs.
+
+Both standardize each column with its training population mean and standard deviation.
+A constant training column uses scale 1. The frozen feature order, scaler, coefficients or
+centers, threshold/active IDs, feature version and model version are retained. Validation
+and test data never change preprocessing or parameters. An undersized/empty cluster,
+insufficient distinct vectors or exhausted convergence budget is a technical `blocked`
+result. Failed economic criteria return `no_edge` under that exact plan.
+
+Earlier `volume_threshold_v1` and `volume_regimes_v1` remain supported for compatibility
+with existing proposals and tests. They are explicitly volume-only legacy baselines,
+not the multivariate MBO path. Their existing request schemas remain visible in OpenAPI.
+
+## Source, timing and quality contract
+
+The MBO path reads local `market-data/raw/ES/YYYY-MM-DD.mbo.dbn.zst` files directly.
+There is no fallback to OHLCV zero-filled flow, the identity-stripped replay cache,
+end-of-second aggregated checkpoints, or the heatmap feed that omits small levels.
+One fixed outright ES contract and daily publisher/instrument/channel IDs are approved
+upfront. Raw DBN symbology must match those IDs and the chosen contract. No full-day-volume
+front-month selection is used. Automatic contract rolls are deferred; select a suitable
+fixed-contract date range explicitly.
+
+The extractor starts from a complete vendor snapshot and maintains the full resting
+order map using `replay.book.L3Book`. Snapshot adds initialize state without counting as
+activity. T and F records do not alter the book; C performs the size reduction once.
+Unknown trade sides contribute to OHLCV/unknown-volume audit, never to sell flow.
+The approved maximum unknown-volume fraction applies to every minute with trades.
+
+Rows cover `[minute open, minute close)` in **receive time**. Only complete F_LAST events
+are visible. If an event spans the boundary, all its records become available with its
+completion in the later minute. Late exchange events are never backfilled into earlier
+features; their receive-time availability controls inclusion. Both price bars and feature
+rows come from this same stream, and are available at the minute close. RTH is 09:30–16:00
+America/New_York. Snapshot synthetic receive timestamps are allowed only for initialization;
+ordinary bad receive timestamps, bad-book flags, aggregated/top-of-book inputs, regressing
+receive times/sequences, duplicate/unknown orders and inconsistent reductions fail closed.
+Intraday resets/snapshots require a separately reviewed dataset and currently fail closed.
+
+The user supplies maximum book age (since the last resting mutation received),
+event/receive clock difference and unknown-trade
+fraction. Missing, stale, crossed or empty books and no-trade minutes are omitted and
+counted; gaps are purged when constructing targets, never filled with zeros. N is a maximum
+level count: a sparse side uses its actually available levels. Sequence checks establish
+monotonicity per selected instrument; they **do not prove full channel packet continuity**.
+Vendor gap flags are checked, but this is not an independent exchange-feed audit.
+
+Semantics follow the vendor's [MBO schema](https://databento.com/docs/schemas-and-data-formats/mbo),
+[record flags/actions](https://databento.com/docs/standards-and-conventions/common-fields-enums-types),
+and [snapshot format](https://databento.com/docs/standards-and-conventions/mbo-snapshot).
 
 ## Workflow and approval boundaries
 
-1. Create a research thread with `POST /api/agent/threads`.
+1. Create a thread with `POST /api/agent/threads`.
 2. Submit a complete plan to `POST /api/agent/threads/{threadId}/ml-experiments`.
-   This validates inputs and freezes a bounded OHLCV snapshot; it does **not fit**.
-3. Read the returned immutable document and SHA-256 digest. It includes all choices,
-   derived-data identity, source/config/dependency fingerprints, and partition counts.
-4. `POST .../ml-experiments/{id}/decision` with `digest`, `action: "approve"`, and a
-   nonempty `reason` records the user's exact approval. `reject_stop` stops this thread.
-5. Separately call `POST .../ml-experiments/{id}/run`. Only then can training occur.
-   SQLite reserves the run before fitting. Concurrent requests and retries cannot
-   fit it again. This endpoint is bounded and synchronous, with no automatic retries.
-6. `GET .../ml-experiments` retains the plan, immutable decision, all searched
-   thresholds or cluster diagnostics, selected trigger, metrics, result digest and terminal outcome.
-7. For a `candidate`, `POST .../{id}/candidate-proposal` accepts `{strategy, testPlan}`.
-   Supply all existing execution/risk/session/exit choices; the server replaces only
-   `entry.trigger` with the learned rule and stamps discovery provenance in `meta`.
-   This creates an ordinary **unapproved** research proposal. The Desk's existing
-   proposal review can inspect it; the existing approve and queue actions are still
-   required before Nautilus can test it. Missing choices remain a blocked draft.
-8. Approved strategy specs retain their ordinary Nautilus path and package export.
-   The exported rule expressions require no Python deserialization, pickle, or model
-   dependency at strategy execution time.
+   This reads/validates raw records and freezes derived inputs; **no model fits**.
+3. Review the immutable document/digest, including source file SHA-256 hashes, daily
+   IDs, quality counters, contract, feature contract, code/config/dependency hashes,
+   snapshot identity, partition counts and every model/target/evaluation choice.
+4. `POST .../{id}/decision` with `digest`, `action: "approve"` and a nonempty reason
+   records exact user approval. `reject_stop` stops the thread.
+5. `POST .../{id}/run` reserves one fitting attempt durably before fitting. Retries,
+   concurrent requests and stopped/running experiments cannot fit again. Technical
+   failures are `blocked`; failed evaluation is `no_edge`. No automatic retries occur.
+6. `GET .../ml-experiments` retains decisions, diagnostics, frozen model, metrics and
+   terminal results. A revision requires a new thread and new approval; global attempt
+   history remains visible, and external/manual trial counts remain unknown.
+7. For `candidate`, `POST .../{id}/candidate-proposal` accepts `{strategy, testPlan}`.
+   Supply all session, exit, sizing, cost and risk choices. Export inserts the frozen
+   trigger and provenance, creating an **unapproved** ordinary research proposal.
+8. The existing proposal approve/queue actions are required for Nautilus validation.
+   MBO exports require bars mode, primary 1min, ES1!, the same direction, no entry
+   sequence, no filters and no context timeframes. Their actual contract is the pinned
+   outright displayed in the dataset and result. No catalog/front-month substitution occurs.
 
-No discovery controls are exposed to the language model. Plan entry currently uses
-the API/OpenAPI UI (`/docs`); a dedicated discovery form is deferred. Export requires
-ES1!, primary 1min with no context, matching direction, and no filters or entry
-sequence. User-chosen sessions, exits and sizing can change outcomes: this is exact
-**signal** export, not a claim that forward-label scores reproduce strategy PnL.
+Nautilus reads the hash-verified snapshot's receive-time price bars and feature rows,
+using the same bounded numeric `FrozenModel.predict` implementation as discovery.
+The `frozen_mbo_signal` primitive refuses missing or mistimed rows. It accepts validated
+JSON numeric parameters; no pickle or executable model payload is loaded. Code/config,
+model, result and snapshot drift block execution. The spec alone is **not self-contained**:
+its experiment record and snapshot must accompany it. There is no paper/live adapter.
 
-One discovery plan is allowed per thread. Revision/retry needs a new thread and
-approval; history and the global recorded-attempt count remain. A `reject_stop`
-blocks both discovery and later strategy queues in the same thread. It does not
-cancel already dispatched legacy Nautilus jobs. A process crash can leave a run
-`running`; it cannot automatically resume or refit. Inspect that record and create
-a new explicitly approved experiment if needed. Technical failures are `blocked`,
-never `no_edge`. Neither method retries or changes its rule after a test failure.
+For MBO proposals, `testPlan.dataPolicy` is `immutable_MBO_receive_time_snapshot`.
+`is`, `wf1`, and `wf2` denote that experiment's training, validation and internal test
+session ranges. They are repeated execution checks on already-used data, **not new OOS
+evidence or rolling model refits**. Existing non-MBO proposals keep their original windows.
+A dedicated discovery form is deferred; plans are entered through the API/OpenAPI `/docs`.
 
-## Explicit plan contract
+## Explicit plan inputs
 
-Common fields below are required for both methods; there is no executable default request:
+All common fields are required; there is no executable default request:
 
 | Fields | Meaning |
 |---|---|
-| `hypothesis` | The hypothesis the user wants to test |
-| `method`, `symbol`, `interval` | Explicitly choose `volume_threshold_v1` or `volume_regimes_v1`; ES1!, 1min only |
-| `direction` | Explicit `long` or `short` |
-| `start`, `trainEnd`, `validationEnd`, `testEnd` | Inclusive ET session dates, with ordered disjoint partitions |
-| `target` | `next_open_to_horizon_close_ticks` |
-| `horizonBars` | 1–60 forward bars, explicitly selected |
-| `roundTripCostTicks` | Explicit nonnegative total cost estimate in ES ticks |
-| `minEvaluationSignals` | Explicit positive evaluation sample-count requirement |
-| `minMeanNetTicks` | Explicit minimum conditional forward outcome |
-| `minImprovementOverBaselineTicks` | Nonnegative improvement in net ticks per observation |
+| `hypothesis`, `method` | User hypothesis and `mbo_ridge_v1` or `mbo_kmeans_v1` |
+| `symbol`, `interval`, `direction` | ES1!, 1min, and explicitly long or short |
+| `start`, `trainEnd`, `validationEnd`, `testEnd` | Ordered disjoint inclusive ET session partitions, entirely within frozen platform IS |
+| `target`, `horizonBars` | `next_open_to_horizon_close_ticks`, explicit 1–60 minute bars; no implicit 30-second conversion |
+| `roundTripCostTicks` | Nonnegative total estimated round-trip cost |
+| `minEvaluationSignals`, `minMeanNetTicks`, `minImprovementOverBaselineTicks` | Explicit evaluation/stop criteria |
 | `multipleTestingPolicy` | `descriptive_only_no_significance_claim` |
+| `contract`, `contractSelection` | Outright such as ESU6; `fixed_contract_before_experiment` |
+| `sources` | Sorted entries `{day, instrumentId, publisherId, channelId}` for every frozen session in the date range |
+| `depthLevels`, `featureWindowSeconds` | Explicit 1–50 best price levels; 60-second windows |
+| `maxBookAgeMs`, `maxEventLagMs`, `maxUnknownTradeFraction` | Explicit freshness/clock/unknown-aggressor quality tolerances |
 
-For supervised `volume_threshold_v1`, additionally supply:
+Ridge additionally requires positive `ridgeAlpha`, `predictionThresholdTicks` and positive
+`minTrainSignals`. Clustering instead requires `clusterCount` (2–8), `maxIterations`
+(1–100), positive `minClusterSamples`, unique `activeClusters` IDs and an explicit
+`interpretation`. Unknown fields/methods, missing choices and non-finite values fail closed.
 
-| Fields | Meaning |
-|---|---|
-| `quantiles` | Unique quantiles strictly inside (0, 1), fitted on training volume only |
-| `maxCandidates` | Explicit search budget; two threshold directions per quantile, at most 100 |
-| `minTrainSignals` | Explicit positive training signal-count requirement |
+The 366-day, 50,000-bar, 12 MB snapshot and 50-million-record-per-source-day ceilings
+plus 100,000-record event and 500,000-resting-order memory ceilings are software limits,
+not trading recommendations. Raw input is streamed and
+only per-minute outputs plus the current full book/event are held; model matrices are
+bounded. Snapshot capture is synchronous and may be expensive on real MBO. It has not
+been benchmarked on the user's dataset; eight months of full RTH bars will exceed the
+50,000-row ceiling. A larger/rolling/asynchronous research design needs explicit review.
 
-For unsupervised `volume_regimes_v1`, instead supply:
+## Chronology and reproducibility
 
-| Fields | Meaning |
-|---|---|
-| `clusterCount` | Explicit number of volume regimes, 2–8 |
-| `maxIterations` | Explicit fit budget, 1–100 iterations, one initialization, no restarts |
-| `minClusterSamples` | Positive minimum training observations required in every cluster |
-| `activeClusters` | Nonempty, unique zero-based ranks of clusters on which to signal; 0 is the lowest-volume cluster |
-| `interpretation` | Explicit user rationale for turning those volume regimes into the specified long/short rule |
+Partitions precede label creation. At bar i close the feature vector is known. The
+label is `(close[i+h] - open[i+1]) / tickSize`, multiplied by the chosen side, minus
+round-trip cost. Label availability is close i+h. Targets must remain within the same
+partition and ET RTH session, spanning h contiguous minute bars. Missing rows, session
+endings and partition endings are purged. Neither labels nor their availability enter
+unsupervised fitting.
 
-The method discriminates the schema: clustering cannot accept supervised search options,
-and threshold search cannot accept clustering options. Cluster count, active ranks and
-interpretation are approved **before** fitting; the service never chooses the cluster
-with the best subsequent returns. Changing interpretation requires a new plan/approval.
-The target remains an explicit supported target and the horizon is explicitly chosen in
-1-minute bars. No horizon is defaulted, and sub-minute targets are not silently converted.
+Validation must meet the approved signal count/mean outcome and strictly improve upon
+the better of always-signaling and no-signaling on the same per-observation denominator,
+plus the approved improvement requirement. Only passing validation opens internal test
+metrics. The model never refits after validation, and failed tests never trigger another
+search. Overlapping forward labels are not independent observations or trade PnL.
 
-The 366-day, 50,000-bar, 12 MB snapshot, 100-candidate and clustering iteration limits are software resource
-limits, not trading recommendations. Unknown fields/methods, missing choices,
-non-finite values, non-ES inputs and unavailable dates fail closed.
+The platform's final holdout stays unavailable. Nested walk-forward model selection,
+purged CV, final-holdout release and statistical significance remain deferred. Different
+execution exits/sizing/costs may change results: frozen signal parity does not imply PnL
+parity between forward labels and a strategy backtest.
 
-## Chronology, target alignment and reproducibility
-
-Partitions are made **before** constructing forward labels. At the close of bar i,
-its volume is known. The label is `(close[i+h] - open[i+1]) / tickSize`, multiplied
-by the explicitly chosen side, less round-trip costs. Timestamps refer to bar opens;
-label availability is the close of i+h. Targets must remain within the partition,
-within the same ET RTH session, and span h contiguous minute bars. Missing bars,
-session endings and partition endings are purged, never bridged or imputed.
-
-For supervised search, training-only quantiles are the only learned preprocessing. There
-is no scaler to leak later distribution information. Both `volume > threshold` and
-`volume <= threshold` are searched; duplicate cut points collapse deterministically.
-The training objective is net forward ticks per observation, subject to the explicit
-minimum signal count. Sorted thresholds and operator order break ties deterministically.
-Every evaluated threshold and score is retained, including unsuccessful trials.
-The approval covers this exact bounded training search; resulting strategies still
-require their own approval before any Nautilus test.
-
-Unsupervised volume clustering uses the same target-eligible training timestamps but
-receives **only the volume column**, with no forward outcomes or label-end timestamps.
-It uses raw volume (one feature; no scaler) and deterministic Lloyd iterations. Initial
-centers are evenly spaced ranks of distinct training volumes. Final cluster IDs are
-ordered by increasing center; they are not return rankings. Training centers, counts,
-mean squared feature distance and iteration count are recorded as pattern diagnostics.
-Insufficient distinct volumes, empty/underpopulated clusters or exhausted convergence
-budget are `blocked`, not evidence of no edge. There is no automatic k search, relabeling,
-restart or selection of active clusters.
-
-Frozen nearest-center assignment becomes fixed midpoint boundaries. Ties belong to the
-lower-volume cluster. User-selected clusters export as unions of intervals with the same
-`>` and `<=` comparisons, including unseen volumes outside the training range. Neither
-centers nor interpretation adapt on validation/test. This enables reproducible Nautilus
-signals without a runtime cluster model. Direction is independently explicit. Model and
-pattern diagnostics remain visible even when the user-defined rule fails evaluation.
-
-Both fitted models and their rule interpretations are frozen before validation. Validation must meet the explicit
-minimum signal count and mean outcome, and strictly exceed the better of always
-signaling and never signaling on the same per-observation denominator plus the
-requested improvement. Only a passing validation opens the internal test metrics.
-The model is never refitted on validation, and test results never select a threshold or change the active clusters.
-Any criterion failure stops with `no_edge` **under this plan**, not proof that no
-possible strategy has an edge. Sparse/invalid data or exceptions return `blocked`.
-
-This internal chronological test is **inside the existing frozen in-sample region**.
-The platform's final holdout remains inaccessible to discovery. The existing WF
-windows for fixed specs remain descriptive consistency checks; this increment does
-not relabel them as fitted-model walk-forward training. Nested walk-forward selection,
-purged CV, final-holdout release and statistical inference are deferred decisions.
-Labels overlap, so these scores are neither independent observations nor trade PnL.
-Search count is recorded, external/manual attempts are unknown, and no significance
-claim or profitability inference is made.
-
-A local immutable-by-hash derived OHLCV snapshot is stored under
-`data/research_cache/ml/{experimentId}.json`. Content bytes, exact plan, method/engine
-source, instrument configuration, Python/machine and numeric-library versions are
-pinned. Execution verifies the snapshot and provenance before fitting; drift requires
-a new proposal. Mutating the source Parquet after capture does not change the approved
-snapshot. Missing snapshots fail closed. Back up metadata and snapshots together;
-there is no retention/deletion policy or autonomous cleanup in this increment.
+`data/research_cache/ml/{experimentId}.json` holds hash-pinned ordered price/feature rows.
+Raw file hashes and quality/source metadata live in the approved experiment document.
+Code fingerprints include the extractor, replay book, model/inference, engine and source
+reader; dependency versions are pinned. Source file changes after capture do not change
+the approved snapshot. Missing/tampered snapshots fail closed. Back up metadata and
+snapshots together; no automatic cleanup or retention policy is added. A process crash
+can leave a run `running`; it never auto-resumes.
 
 ## Separate account assessments
 
@@ -196,7 +209,7 @@ migration are not prerequisites. The architecture maps naturally to medallion la
 | Layer | Existing implementation | Increment / next contract |
 |---|---|---|
 | Bronze | Databento DBN raw files, manifest hashes; optional existing S3 archive scripts | Preserve immutable vendor bytes and license/provenance metadata |
-| Silver | Instrument config, front-month mapping, minute bars/trades/book Parquet, DuckDB queries | Validate OHLCV shape/order/session completeness before discovery; raw quality stays unverified |
+| Silver | Instrument config, front-month mapping, minute bars/trades/book Parquet, DuckDB queries | MBO research derives complete-event receive-time features directly from identified raw DBN; legacy tiers remain available |
 | Gold | Frozen splits, Nautilus catalog, research evidence and strategy artifacts | Add content-hashed per-experiment feature-input snapshots and deterministic learned triggers |
 | Metadata | SQLite/Alembic threads, proposals, decisions, strategies, backtests, evidence | Add `ml_experiments`; keep all completed, stopped and failed discovery history |
 
@@ -230,13 +243,13 @@ Meaningful real ML work remains gated by licensed ES coverage and quality. This
 checkout supplied no real market dataset. Existing raw quality, contract-roll effects,
 bar corrections and point-in-time availability were not audited. The new checks
 catch structural defects and missing sessions, not all market-data defects. Assess
-these before adopting richer features. Keep SQLite while local serialized approvals
+these before interpreting the new feature models. Keep SQLite while local serialized approvals
 suffice; consider PostgreSQL/object storage only with an explicit multi-user,
 concurrency, retention and deployment requirement.
 
 ## Decisions still needed
 
-- Which hypotheses, model families, features, side, prediction targets and horizons
+- Which hypotheses, side, fixed contract, source IDs, depth/freshness policies, model parameters, prediction targets and horizons
   deserve explicit tests; these reference plugins do not settle them.
 - Exact dates and minimum evidence, cost assumptions, search/stop budget, uncertainty
   policy and how/when a final holdout may be released.

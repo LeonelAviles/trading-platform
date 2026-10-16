@@ -130,6 +130,7 @@ def _make_strategy_class():
             self.mode = mode
             self.cspec = cspec
             self.flow = flow_sidecar or {}
+            self.ml_rows = None
             self.ledger = ledger
             self.slip = slippage_ticks
             self.primary_min = TF_MINUTES[params["primary"]]
@@ -310,6 +311,10 @@ def _make_strategy_class():
                 self.book_feed.advance(ts)
                 bids, asks = self.book_feed.view(b.close)
                 self.rules.set_book(bids, asks, ts)
+            if self.ml_rows is not None:
+                if ts not in self.ml_rows:
+                    raise ValueError("approved MBO row missing at Nautilus bar close")
+                self.rules.ctx.ml_features = (ts, self.ml_rows[ts])
             self.rules.on_bar(b)
 
             if self.open is not None:
@@ -657,7 +662,20 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
     elif book_prims:
         note = "book primitives read the one-second resting-liquidity view from MBO (levels ≥ 50 contracts)"
     slippage = ins.costs.slippage_ticks_market if params["slippage_ticks"] is None else int(params["slippage_ticks"])
-    ranges = ins_mod.resolve_ranges(params["symbol"], date_from, date_to)
+    from research_ml import frozen
+    mbo = frozen.uses_mbo(spec)
+    mbo_frame = mbo_dataset = None
+    if mbo:
+        if mode != "bars" or book_prims:
+            raise ValueError("frozen MBO validation requires exact snapshot bars without heatmap primitives")
+        symbol, mbo_frame, mbo_dataset = frozen.replay(spec, date_from, date_to)
+        days = tuple(sorted(set(mbo_frame.index.tz_convert("America/New_York").date)))
+        if not days:
+            raise ValueError("no approved MBO rows in requested dates")
+        ranges = [ins_mod.ContractRange(symbol, days[0], days[-1], days)]
+        note = "Frozen receive-time MBO snapshot; repeated discovery partitions are not fresh OOS evidence"
+    else:
+        ranges = ins_mod.resolve_ranges(params["symbol"], date_from, date_to)
     session_dates = [d.isoformat() for r in ranges for d in r.dates]
     session_total = len(session_dates)
     if book_prims:
@@ -669,7 +687,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
                 f"for {len(missing)} of {len(session_dates)} session days (first missing: {sym} {d0.isoformat()}). "
                 "Ingest MBO for those days or drop the book conditions — running would leave the condition permanently false.")
     ledger = Ledger(cspec, _regime_tags(root.root))
-    catalog = cat.open_catalog()
+    catalog = None if mbo else cat.open_catalog()
     rules = build_rules(spec)
     ExecStrategy = _make_strategy_class()
 
@@ -717,7 +735,8 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
     publish_progress(force=True)
     try:
         for rng in ranges:
-            inst = catalog.instruments(instrument_ids=[cat.instrument_id(rng.symbol)])
+            inst = ([cat.contract_for(rng.symbol, root, rng.date_from)] if mbo else
+                    catalog.instruments(instrument_ids=[cat.instrument_id(rng.symbol)]))
             if not inst:
                 raise RuntimeError(f"instrument {rng.symbol} not in catalog — run scripts/build_catalog.py")
             inst = inst[0]
@@ -736,7 +755,10 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
                 if book_prims:
                     strat.book_feed = book_feed_mod.LiquidityBookFeed.load(rng.symbol, d)
                     book_days += 1
-                if mode == "bars":
+                if mbo:
+                    data, strat.ml_rows, strat.flow = frozen.nautilus_day(mbo_frame, rng.symbol, d)
+                    bars_total += len(data)
+                elif mode == "bars":
                     strat.flow.update(_flow_sidecar(root.root, d, rng.symbol))
                     data = catalog.bars(bar_types=[cat.bar_type_str(rng.symbol)], start=start, end=end)
                     bars_total += len(data)
@@ -774,6 +796,7 @@ def run_backtest(spec: dict, date_from: date, date_to: date, mode: str = "ticks"
             "sessions": len(session_dates), "contracts": [r.symbol for r in ranges], "bars": bars_total, "ticks": ticks_total,
             "slippageTicks": slippage, "commissionPerSide": root.commission_per_side, "accountSize": params["account_size"],
             "seconds": round(time.time() - t0, 1), "note": note, "signals": None,
+            "mboSnapshot": mbo_dataset,
             "book": {"primitives": book_prims, "source": "liquidity_1s", "days": book_days} if book_prims else None,
         },
     }

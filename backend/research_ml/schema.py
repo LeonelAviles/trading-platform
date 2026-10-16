@@ -69,11 +69,60 @@ class RegimePlan(CommonPlan):
         return self
 
 
-Plan = Annotated[ThresholdPlan | RegimePlan, Field(discriminator="method")]
+class MBOSource(StrictModel):
+    day: date
+    instrumentId: int = Field(strict=True, gt=0, le=2**32-1)
+    publisherId: int = Field(strict=True, gt=0, le=2**16-1)
+    channelId: int = Field(strict=True, ge=0, le=255)
+
+
+class MBOPlan(CommonPlan):
+    contract: str = Field(pattern=r"^ES[HMUZ][0-9]{1,2}$")
+    contractSelection: Literal["fixed_contract_before_experiment"]
+    sources: list[MBOSource] = Field(min_length=3, max_length=366)
+    depthLevels: int = Field(strict=True, ge=1, le=50)
+    featureWindowSeconds: Literal[60]
+    maxBookAgeMs: int = Field(strict=True, ge=1, le=3_600_000)
+    maxEventLagMs: int = Field(strict=True, ge=1, le=3_600_000)
+    maxUnknownTradeFraction: float = Field(strict=True, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def source_days(self):
+        days = [s.day for s in self.sources]
+        if days != sorted(set(days)) or any(not self.start <= d <= self.testEnd for d in days):
+            raise ValueError("sources must be unique, increasing days inside the experiment")
+        return self
+
+
+class MBORidgePlan(MBOPlan):
+    method: Literal["mbo_ridge_v1"]
+    ridgeAlpha: float = Field(strict=True, gt=0)
+    predictionThresholdTicks: float = Field(strict=True)
+    minTrainSignals: int = Field(strict=True, ge=1)
+
+
+class MBOClusterPlan(MBOPlan):
+    method: Literal["mbo_kmeans_v1"]
+    clusterCount: int = Field(strict=True, ge=2, le=8)
+    maxIterations: int = Field(strict=True, ge=1, le=100)
+    minClusterSamples: int = Field(strict=True, ge=1)
+    activeClusters: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=1, max_length=8)
+    interpretation: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def cluster_rule(self):
+        if len(set(self.activeClusters)) != len(self.activeClusters) or any(k >= self.clusterCount for k in self.activeClusters):
+            raise ValueError("activeClusters must be unique zero-based IDs below clusterCount")
+        if not self.interpretation.strip():
+            raise ValueError("explicit cluster interpretation required")
+        return self
+
+
+Plan = Annotated[ThresholdPlan | RegimePlan | MBORidgePlan | MBOClusterPlan, Field(discriminator="method")]
 _PLAN_ADAPTER = TypeAdapter(Plan)
 
 
-def parse_plan(value) -> ThresholdPlan | RegimePlan:
+def parse_plan(value) -> ThresholdPlan | RegimePlan | MBORidgePlan | MBOClusterPlan:
     return _PLAN_ADAPTER.validate_python(value)
 
 

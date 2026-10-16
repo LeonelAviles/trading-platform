@@ -44,10 +44,10 @@ A persistent sidebar (collapses to an icon rail on chart pages):
 
 ## What works today
 
-- **Approval-gated ML discovery API**: opt-in ES supervised threshold search and
-  unsupervised volume-regime clustering, training-only fitting, explicit cluster
-  interpretation, chronological internal validation/test, immutable
-  snapshot provenance, and deterministic candidate handoff into the existing proposal
+- **Approval-gated ML discovery API**: opt-in ES joint MBO ridge regression and
+  multivariate regime clustering over spread, depth imbalance, classified flow and
+  order activity; training-only scaling, chronological internal validation/test,
+  immutable raw-source/feature provenance, and frozen Nautilus candidate handoff into the existing proposal
   approval workflow. No autonomous experiments or final-holdout access.
   See [docs/08-ml-research.md](docs/08-ml-research.md) for explicit inputs, API steps,
   separate account assessments, and the compatible Bronze/Silver/Gold design.

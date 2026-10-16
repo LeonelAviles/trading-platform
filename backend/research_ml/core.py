@@ -12,6 +12,8 @@ import pandas as pd
 
 from research_ml.schema import Plan
 from research_ml.regimes import VolumeRegimes
+from engine.mbo_features import FEATURES
+from research_ml.multivariate import MBORidge, MBOKMeans
 
 MAX_BARS = 50_000
 COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -26,7 +28,10 @@ def validate_bars(bars: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("timestamps must be unique and increasing")
     if any(c not in bars for c in COLUMNS):
         raise ValueError("OHLCV columns are required")
-    frame = bars[COLUMNS].astype(float).copy()
+    extra = FEATURES if any(c in bars for c in FEATURES) else []
+    if any(c not in bars for c in extra):
+        raise ValueError("all ordered MBO features are required")
+    frame = bars[COLUMNS + extra].astype(float).copy()
     if not np.isfinite(frame.to_numpy()).all():
         raise ValueError("OHLCV must be finite; missing values are not imputed")
     if (frame.volume < 0).any() or (frame[COLUMNS[:4]] <= 0).any().any():
@@ -65,7 +70,10 @@ def samples(bars: pd.DataFrame, plan: Plan, tick_size: float) -> dict[str, pd.Da
         sign = 1 if plan.direction == "long" else -1
         part["netTicks"] = sign * (part.close.shift(-h) - part.open.shift(-1)) / tick_size - plan.roundTripCostTicks
         part["labelEnd"] = ts.shift(-h) + pd.Timedelta(minutes=1)
-        out[key] = part.loc[valid, ["volume", "netTicks", "labelEnd"]]
+        inputs = FEATURES if plan.method.startswith("mbo_") else ["volume"]
+        if any(c not in part for c in inputs):
+            raise ValueError("MBO methods require verified raw-event features; OHLCV cannot substitute")
+        out[key] = part.loc[valid, [*inputs, "netTicks", "labelEnd"]]
         if not np.isfinite(out[key]["netTicks"]).all():
             raise ValueError("non-finite forward targets")
         if out[key].empty:
@@ -126,11 +134,13 @@ class VolumeThreshold:
 METHODS: dict[str, Method] = {
     "volume_threshold_v1": VolumeThreshold(),
     "volume_regimes_v1": VolumeRegimes(),
+    "mbo_ridge_v1": MBORidge(),
+    "mbo_kmeans_v1": MBOKMeans(),
 }
 
 
 def evaluate(model, data):
-    selected = model.predict(data.volume)
+    selected = model.predict(data[FEATURES] if "spread_ticks" in data else data.volume)
     values = data.netTicks[selected]
     return {"observations": len(data), "signals": len(values),
             "meanNetTicks": float(values.mean()) if len(values) else None,
@@ -151,7 +161,8 @@ def accepted(metrics, plan):
 def discover(bars, plan: Plan, tick_size: float) -> dict:
     parts = samples(bars, plan, tick_size)
     method = METHODS[plan.method]
-    columns = ["volume", "netTicks"] if method.requires_targets else ["volume"]
+    inputs = FEATURES if plan.method.startswith("mbo_") else ["volume"]
+    columns = inputs + (["netTicks"] if method.requires_targets else [])
     model, trials = method.fit(parts["train"][columns].copy(), plan)
     result = {"outcome": "no_edge", "reason": "insufficient training signals", "trials": trials,
               "learningKind": "supervised" if method.requires_targets else "unsupervised",

@@ -56,6 +56,11 @@ def dataset_context() -> dict:
     }
 
 
+def strategy_dataset(strategy):
+    from research_ml.frozen import uses_mbo, context
+    return context(strategy) if uses_mbo(strategy) else dataset_context()
+
+
 def plan_errors(plan: dict, strategy: dict, dataset: dict) -> list[str]:
     errors = []
     fields = {"windows", "objective", "comparison", "uncertaintyPolicy", "multipleTestingPolicy", "dataPolicy"}
@@ -65,7 +70,7 @@ def plan_errors(plan: dict, strategy: dict, dataset: dict) -> list[str]:
         if not isinstance(plan.get(field), str) or not plan[field].strip():
             errors.append(f"testPlan.{field}: explicit policy required (descriptive-only is allowed)")
     if plan.get("dataPolicy") != dataset["identityPolicy"]:
-        errors.append("testPlan.dataPolicy must explicitly accept metadata_inventory_not_immutable_snapshot")
+        errors.append(f"testPlan.dataPolicy must explicitly accept {dataset['identityPolicy']}")
     selected = plan.get("windows")
     if not isinstance(selected, list) or not selected or "is" not in selected or any(not isinstance(k, str) for k in selected) or len(set(selected)) != len(selected):
         errors.append("testPlan.windows must select unique frozen windows including is")
@@ -81,8 +86,8 @@ def plan_errors(plan: dict, strategy: dict, dataset: dict) -> list[str]:
             errors.append("risk.passCriteria.minWalkForwardWindowsPositive must be an explicit nonnegative integer")
         elif sum(kind in {"wf1", "wf2", "wf3"} and kind in dataset["windows"] for kind in selected) < required_wf:
             errors.append(f"testPlan.windows cannot satisfy minWalkForwardWindowsPositive={required_wf}; select sufficient available WF windows or review the criterion in a new proposal")
-    if not dataset["splitsSha256"] or not dataset["frontMonthSha256"]:
-        errors.append("dataset unavailable: frozen splits and front-month mapping required")
+    if not dataset["splitsSha256"] or not (dataset["frontMonthSha256"] or dataset.get("fixedContractSha256")):
+        errors.append("dataset unavailable: frozen splits and explicit contract mapping required")
     execution = strategy.get("execution") if isinstance(strategy.get("execution"), dict) else {}
     mode = execution.get("mode")
     for tier in ("bars", "ticks") if mode == "ticks" else ("bars",):
@@ -141,7 +146,7 @@ def propose(thread_id: str, hypothesis: str, strategy: dict, test_plan: dict,
     raw = copy.deepcopy(strategy)
     for field in ("id", "createdAt", "updatedAt", "status", "origin"):
         raw.pop(field, None)
-    dataset = dataset_context()
+    dataset = strategy_dataset(raw)
     blockers = executable_errors(raw) + plan_errors(test_plan, raw, dataset)
     with database.session_scope() as db:
         if not db.get(AgentThread, thread_id):
@@ -232,7 +237,7 @@ def enqueue(proposal_id: str, thread_id: str) -> dict:
                 raise ResearchConflict("proposal content changed")
             if thread_stopped(db, thread_id):
                 raise ResearchConflict("user stopped this research thread; start a new thread for new research")
-            current_data = dataset_context()
+            current_data = strategy_dataset(document["strategy"])
             if current_data != document["dataset"]:
                 raise ResearchConflict("dataset/config changed; a new proposal and approval are required")
             errors = executable_errors(document["strategy"]) + plan_errors(document["testPlan"], document["strategy"], current_data)
@@ -334,5 +339,5 @@ def verify_job_inputs(job_id: str, strategy: dict) -> None:
         proposal = db.get(ResearchProposal, pid)
         if digest(strategy) != job.metrics_json["strategyDigest"]:
             raise ResearchConflict("approved strategy artifact changed")
-        if dataset_context() != proposal.document_json["dataset"]:
+        if strategy_dataset(strategy) != proposal.document_json["dataset"]:
             raise ResearchConflict("approved dataset/config changed before execution")

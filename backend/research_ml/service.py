@@ -33,12 +33,14 @@ def provenance() -> dict:
     backend = Path(__file__).resolve().parents[1]
     files = sorted(set((backend / "research_ml").glob("*.py")) |
                    set((backend / "engine").rglob("*.py")) |
-                   {backend / "data_store.py", backend / "config/instruments.py"})
+                   set((backend / "replay").glob("*.py")) |
+                   set((backend / "research_agent").glob("*.py")) |
+                   {backend / "data_store.py", backend / "config/instruments.py", backend / "market/catalog.py"})
     return {"codeSha256": memory.digest({str(p.relative_to(backend)): hashlib.sha256(p.read_bytes()).hexdigest()
                                          for p in files}),
             "configSha256": hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest(),
             "python": platform.python_version(), "machine": platform.machine(),
-            "versions": {p: importlib.metadata.version(p) for p in ("numpy", "pandas", "nautilus_trader")}}
+            "versions": {p: importlib.metadata.version(p) for p in ("numpy", "pandas", "nautilus_trader", "databento", "databento-dbn")}}
 
 
 def _scope(plan):
@@ -92,17 +94,23 @@ def propose(thread_id: str, plan: Plan):
     # The store's bounds are inclusive UNIX seconds. Request the final second
     # of testEnd so the next ET midnight cannot enter the approved snapshot.
     end_second = et_to_ns(plan.testEnd + timedelta(days=1), "00:00") // NS - 1
-    bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)
+    tick = load_instruments().roots["ES"].tick_size
+    source = {"source": "existing_ES_Parquet_via_data_store", "identityPolicy": "immutable_derived_OHLCV_snapshot",
+              "rawDataQuality": "unverified"}
+    if plan.method.startswith("mbo_"):
+        from research_ml.mbo_source import load
+        bars, source = load(plan, sessions, tick)
+    else:
+        bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)
     bars = core.validate_bars(bars)
     days = set(bars.index.tz_convert("America/New_York").strftime("%Y-%m-%d"))
     if not days <= set(sessions):
         raise ValueError("snapshot contains sessions outside approved in-sample range")
     if not set(sessions) <= days:
         raise ValueError("snapshot is missing frozen sessions; repair ingestion before research")
-    tick = load_instruments().roots["ES"].tick_size
     # Check target feasibility before asking for approval, without fitting.
     partitions = core.samples(bars, plan, tick)
-    payload = {"timestamps": bars.index.as_unit("ns").asi8.tolist(), "columns": core.COLUMNS,
+    payload = {"timestamps": bars.index.as_unit("ns").asi8.tolist(), "columns": list(bars.columns),
                "values": bars.to_numpy().tolist()}
     content = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
     if len(content) > MAX_SNAPSHOT_BYTES:
@@ -110,9 +118,7 @@ def propose(thread_id: str, plan: Plan):
     eid = new_id()
     document = {"plan": plan.model_dump(mode="json"), "provenance": provenance(),
                 "dataset": {"sha256": hashlib.sha256(content).hexdigest(), "rows": len(bars),
-                            "sessions": sessions, "source": "existing_ES_Parquet_via_data_store",
-                            "identityPolicy": "immutable_derived_OHLCV_snapshot",
-                            "rawDataQuality": "unverified", "tickSize": tick},
+                            "sessions": sessions, **source, "tickSize": tick},
                 "partitionCounts": {k: len(v) for k, v in partitions.items()},
                 "scope": "ES historical discovery only; internal OOS within IS; no final holdout"}
     path = _snapshot_path(eid)
@@ -218,6 +224,8 @@ def candidate_proposal(thread_id, experiment_id, strategy, test_plan):
     if not isinstance(raw.get("entry"), dict) or raw["entry"].get("sequence") != [] or raw.get("filters") != []:
         raise ValueError("export requires an explicit entry with no sequence and no filters")
     raw["entry"]["trigger"] = result["model"]["trigger"]
+    if plan["method"].startswith("mbo_") and raw.get("execution", {}).get("mode") != "bars":
+        raise ValueError("frozen MBO snapshot validation requires bars mode")
     if not isinstance(raw.get("meta", {}), dict):
         raise ValueError("strategy meta must be an object")
     raw.setdefault("meta", {})["mlDiscovery"] = {"experimentId": experiment_id, "experimentDigest": experiment_digest,
