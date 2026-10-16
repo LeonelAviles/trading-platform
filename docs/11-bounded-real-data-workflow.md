@@ -334,7 +334,8 @@ The pre-iteration-plumbing regression checkpoint passed 404 tests on SQLite and
 404 on the dedicated PostgreSQL test database (one expected dialect-specific skip
 each), 38 frontend unit tests, frontend lint/build, and both mocked browser suites.
 The final backend suites, including iteration and read-only detail paths, pass
-407 tests on each database with the same expected skip. Frontend delivery checks
+410 tests on each database with the same expected skip, including the oversized-input
+and atomic-publication regressions. Frontend delivery checks
 pass lint, production build and all 38 unit tests; actual desktop/mobile browser
 checks show 17 trades and both unevaluated ideas with zero mutations and page errors.
 
@@ -343,6 +344,13 @@ desktop/mobile approval-flow checks, concentration reassessment/escaping checks,
 and actual-results desktop/mobile checks are used for delivery verification.
 Synthetic browser checks are explicitly separate from real run evidence.
 
+Independent final review identified an oversized-input history-poisoning risk in
+the next-idea writer. It was corrected with per-item limits, a serialized-byte
+check before writing, and atomic no-overwrite publication. Regressions cover an
+oversized item, an otherwise valid Unicode-expanded payload, and a simulated
+publication failure, each preserving existing history. No economic evaluation
+was repeated for this fix.
+
 ### Repeatable safe training-design iteration
 
 The implementation includes a bounded append-only next-idea chain, exposed in the
@@ -350,7 +358,12 @@ ML UI, API and `scripts/research_next_idea.py`. It supports recording and revisi
 up to five next-design recommendations per fitted discovery. Each record binds the
 exact training summary/result/snapshot, prior idea digest and explicit reasoning.
 Its fit, evaluation and execution budgets are all zero. Stale-context/previous-idea
-requests, tampered chains and excess revisions fail closed. Tests prove this path
+requests, tampered chains and excess revisions fail closed. Each design-change
+string is limited to 2,000 characters, and the complete serialized record must
+fit within the same 100,000-byte cap used by readers. Validation occurs before
+writing. A staged, flushed record is published atomically without overwriting
+existing history; oversized inputs and failed publication leave the prior chain
+readable and unchanged. Tests prove this path
 cannot call fitting/evaluation and does not change the heldout ledger.
 
 `GET .../ml-discoveries/{id}/next-idea-context` exports only training summaries,

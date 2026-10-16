@@ -5,6 +5,9 @@ post-evaluation recommendation is not represented as blinded or independent.
 """
 import json
 import re
+import os
+import tempfile
+from typing import Annotated
 import database
 from models import MLExperiment, utc_now
 from market.paths import get_paths
@@ -14,6 +17,7 @@ from research_ml.schema import StrictModel
 from pydantic import Field
 
 MAX_IDEAS = 5
+MAX_RECORD_BYTES = 100_000
 
 
 class NextIdea(StrictModel):
@@ -22,7 +26,7 @@ class NextIdea(StrictModel):
     previousIdeaDigest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     hypothesis: str = Field(min_length=1, max_length=4000)
     rationale: str = Field(min_length=1, max_length=4000)
-    trainingOnlyChanges: list[str] = Field(min_length=1, max_length=8)
+    trainingOnlyChanges: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(min_length=1, max_length=8)
     falsification: str = Field(min_length=1, max_length=2000)
     notEvaluatedReason: str = Field(min_length=1, max_length=2000)
     author: str = Field(min_length=1, max_length=200)
@@ -39,7 +43,7 @@ def _history(discovery_id):
     for path in sorted(_folder(discovery_id).glob("*.json")):
         if len(records) >= MAX_IDEAS:
             raise ValueError("iteration history exceeds bounded limit")
-        if path.stat().st_size > 100_000:
+        if path.stat().st_size > MAX_RECORD_BYTES:
             raise ValueError("iteration record exceeds size limit")
         envelope = json.loads(path.read_text())
         document = envelope["document"]
@@ -104,8 +108,20 @@ def propose(thread_id, discovery_id, request):
             "fitBudget": 0, "evaluationBudget": 0, "executionBudget": 0,
             "nextRunRequirement": "new explicit scope and unconsumed later sessions; never reset prior reservations"}
         envelope = {"document": document, "digest": memory.digest(document)}
+        content = json.dumps(envelope, sort_keys=True, allow_nan=False, indent=2).encode("utf-8")
+        if len(content) > MAX_RECORD_BYTES:
+            raise ValueError("iteration record exceeds size limit")
         folder = _folder(discovery_id)
         folder.mkdir(parents=True, exist_ok=True)
-        with (folder / f"{len(records)+1:02}-{envelope['digest']}.json").open("x") as stream:
-            json.dump(envelope, stream, sort_keys=True, allow_nan=False, indent=2)
+        target = folder / f"{len(records)+1:02}-{envelope['digest']}.json"
+        fd, temporary = tempfile.mkstemp(prefix=".idea-", suffix=".tmp", dir=folder)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # Publish a complete record atomically, refusing any overwrite.
+            os.link(temporary, target)
+        finally:
+            os.unlink(temporary)
         return envelope

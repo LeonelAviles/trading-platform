@@ -46,3 +46,27 @@ def test_post_evaluation_context_is_honest_and_never_reopens_dates(raw_context):
     iterations.propose(tid,row['id'],idea(c))
     with database.session_scope() as db: assert db.query(MLHeldoutUse).count()==2
     with pytest.raises(memory.ResearchConflict,match='stale'): iterations.propose(tid,row['id'],idea(c))
+
+
+@pytest.mark.parametrize('changes', [['x' * 2001], ['😀' * 2000] * 8])
+def test_oversized_idea_does_not_poison_existing_history(raw_context,changes):
+    tid,_=raw_context; row=fitted(tid); context=iterations.context(tid,row['id'])
+    first=iterations.propose(tid,row['id'],idea(context))
+    folder=iterations._folder(row['id'])
+    before={p.name:p.read_bytes() for p in folder.iterdir()}
+    with pytest.raises(ValueError):
+        iterations.propose(tid,row['id'],{**idea(context,first['digest']),'trainingOnlyChanges':changes})
+    assert {p.name:p.read_bytes() for p in folder.iterdir()}==before
+    assert iterations.history(tid,row['id'])['ideas']==[first]
+
+
+def test_failed_atomic_publication_keeps_history_and_cleans_staging(raw_context,monkeypatch):
+    tid,_=raw_context; row=fitted(tid); context=iterations.context(tid,row['id'])
+    first=iterations.propose(tid,row['id'],idea(context))
+    folder=iterations._folder(row['id']);before={p.name:p.read_bytes() for p in folder.iterdir()}
+    def fail_publish(*args): raise OSError('simulated publication failure')
+    monkeypatch.setattr(iterations.os,'link',fail_publish)
+    with pytest.raises(OSError,match='publication failure'):
+        iterations.propose(tid,row['id'],idea(context,first['digest']))
+    assert {p.name:p.read_bytes() for p in folder.iterdir()}==before
+    assert iterations.history(tid,row['id'])['ideas']==[first]
