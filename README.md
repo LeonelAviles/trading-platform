@@ -101,6 +101,7 @@ make test       # pytest (+ vitest when present)
 make lint       # oxlint
 make up         # docker compose: backend + frontend (memory-capped)
 make knowledge-ml4t-bootstrap  # first download/index; safe to re-run for updates
+make prepare-mbo-features REQUEST=/path/feature-request.json # reusable contract/day ML features
 ```
 
 To run the compose stack next to `make dev` (which owns :8123 / :5173), use the
@@ -116,10 +117,50 @@ bind mounts.
 `make dev` runs `uvicorn app:app` from `backend/`; `uvicorn main:app` still
 works as an alias.
 
+MBO research can reuse local Parquet features instead of rereading raw files for
+each experiment. Add `RESTORE=1` to the preparation command to download only
+missing selected days from S3, then select `dataSource: "prepared_MBO_features"`
+in the experiment plan. Preparation does not train a model. See
+[ML research preparation and API workflow](docs/08-ml-research.md#prepare-once-and-reuse-local-feature-rows).
+
+Open **ML discovery** (`/ml`) to discover clusters first, request an AI review,
+then approve a frozen hypothesis before evaluation on later data. The AI sees
+discovery feature summaries only; it cannot approve or run an experiment.
+See the [staged discovery workflow](docs/10-cluster-discovery.md).
+
+### Local PostgreSQL with Docker
+
+```bash
+make postgres-up      # generate local credentials, start PostgreSQL, wait for health
+make postgres-status
+make postgres-shell   # open psql inside the container
+make postgres-down    # stop the container; retain its named data volume
+```
+
+The optional service uses the official `postgres:17-bookworm` image and binds
+only to `127.0.0.1:5432`. Its default database is `trading_features`, user `trading`.
+`make postgres-env` creates a random password in the gitignored `.postgres.env`
+with owner-only permissions; repeated calls retain the existing credentials.
+Set `POSTGRES_PORT` there before startup if 5432 is occupied. PostgreSQL data
+persists in the Docker volume `trading-features_postgres_data`.
+
+The API supports PostgreSQL through `postgresql+psycopg://...` in
+`backend/.env`'s `DATABASE_URL`; SQLite remains available for standalone dev and
+tests. Existing SQLite records are transferred using pgloader into an empty
+Alembic-created database, then verified before cutover. PostgreSQL uses native
+full-text search and transaction advisory locks for research approvals. See the
+[migration and rollback runbook](docs/09-postgresql.md). Raw MBO archives and
+large Parquet datasets remain separate from the operational metadata database.
+
+The `POSTGRES_*` initialization values apply when the volume is first created;
+editing the env file later does not change credentials inside an existing
+database. Normal `postgres-down` preserves data; avoid adding `-v` to Compose
+down unless you intend to delete that volume.
+
 ## Stack
 
 Python 3.12+ / FastAPI · NautilusTrader · DuckDB + Parquet (market data) ·
-SQLite via SQLAlchemy + Alembic (`data/platform.db`, metadata + research index) ·
+PostgreSQL or SQLite via SQLAlchemy + Alembic (metadata + research index) ·
 OpenAI Responses API (`gpt-5.6-sol`, configurable) ·
 React 19 + Vite, plain JS.
 

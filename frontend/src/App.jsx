@@ -12,6 +12,7 @@ const BacktestsPage = lazy(() => import("./pages/BacktestsPage"));
 const CandlestickPage = lazy(() => import("./pages/CandlestickPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AgentPage = lazy(() => import("./pages/AgentPage"));
+const MLDiscoveryPage = lazy(() => import("./pages/MLDiscoveryPage"));
 
 const CHART_ROUTES = ["/review/"];
 
@@ -89,6 +90,7 @@ function AppShell() {
                 />
                 <Route path="/backtests" element={<BacktestsPage />} />
                 <Route path="/agent" element={<AgentPage />} />
+                <Route path="/ml" element={<MLDiscoveryPage />} />
                 <Route
                   path="/review"
                   element={<Navigate to="/backtests" replace />}

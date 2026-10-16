@@ -176,20 +176,25 @@ def propose(thread_id: str, hypothesis: str, strategy: dict, test_plan: dict,
 
 
 def _write_reservation(db):
-    # This platform's metadata store is SQLite. Do not pretend a process lock
-    # provides cross-process approval consumption or transaction isolation.
-    if db.bind.dialect.name != "sqlite":
-        raise ResearchConflict("research approval controller currently requires SQLite")
-    db.execute(text("BEGIN IMMEDIATE"))
+    # Serialize approval/queue/stop/fit reservations across API processes.
+    # Transaction locks are released on commit or rollback, including crashes.
+    dialect = db.bind.dialect.name
+    if dialect == "sqlite":
+        db.execute(text("BEGIN IMMEDIATE"))
+    elif dialect == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 0x54524144494E47})
+    else:
+        raise ResearchConflict("research approval controller requires SQLite or PostgreSQL")
 
 
 def thread_stopped(db, thread_id: str) -> bool:
     """A user stop applies across fitted discovery and strategy validation."""
-    from models import MLExperiment
+    from models import MLDiscovery, MLExperiment
     legacy = (db.query(ResearchDecision).join(ResearchProposal, ResearchProposal.id == ResearchDecision.proposal_id)
               .filter(ResearchProposal.thread_id == thread_id, ResearchDecision.action == "reject_stop").first())
     discovery = db.query(MLExperiment).filter_by(thread_id=thread_id, status="stopped").first()
-    return legacy is not None or discovery is not None
+    staged = db.query(MLDiscovery).filter_by(thread_id=thread_id, status="stopped").first()
+    return legacy is not None or discovery is not None or staged is not None
 
 
 def decide(proposal_id: str, thread_id: str, expected_digest: str, action: str, reason: str) -> dict:

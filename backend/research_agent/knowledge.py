@@ -1,6 +1,6 @@
 """Local research library and provenance graph.
 
-SQLite holds three understandable things: sources, document/section nodes, and
+The metadata database holds sources, document/section nodes, and
 searchable chunks.  The graph is deliberately a provenance graph rather than
 an LLM-generated collection of unverified claims.
 """
@@ -224,7 +224,7 @@ def _match_tokens(query: str) -> list[str]:
 
 
 def search(query: str, limit: int = 8) -> list[dict]:
-    """BM25 full-text search with stable, source-pinned citations."""
+    """Native full-text search with stable, source-pinned citations."""
     limit = max(1, min(int(limit), 20))
     tokens = _match_tokens(query)
     sql = text("""
@@ -239,12 +239,26 @@ def search(query: str, limit: int = 8) -> list[dict]:
         LIMIT :limit
     """)
     with database.session_scope() as db:
+        postgres = db.bind.dialect.name == "postgresql"
+        if postgres:
+            sql = text("""
+                SELECT c.id, s.name AS source_name, s.url, s.revision, c.path, c.heading,
+                       c.position, c.content, c.content_hash, n.properties_json,
+                       -ts_rank_cd(f.search_vector, to_tsquery('english', :match)) AS rank
+                FROM knowledge_chunks_fts f
+                JOIN knowledge_chunks c ON c.id = f.chunk_id
+                JOIN knowledge_sources s ON s.id = c.source_id
+                JOIN knowledge_nodes n ON n.id = c.node_id
+                WHERE f.search_vector @@ to_tsquery('english', :match)
+                ORDER BY rank, c.id
+                LIMIT :limit
+            """)
         # Prefer sections containing every query term; broaden only when the
         # research text does not use all of the user's words.
-        strict = " AND ".join(f'"{token}"' for token in tokens)
+        strict = (" & " if postgres else " AND ").join(f'"{token}"' for token in tokens)
         rows = db.execute(sql, {"match": strict, "limit": limit}).mappings().all()
         if not rows:
-            broad = " OR ".join(f'"{token}"' for token in tokens)
+            broad = (" | " if postgres else " OR ").join(f'"{token}"' for token in tokens)
             rows = db.execute(sql, {"match": broad, "limit": limit}).mappings().all()
     results = []
     for row in rows:

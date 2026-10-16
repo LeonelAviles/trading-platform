@@ -1,0 +1,11 @@
+# Use after migrating metadata to trading_platform. Reuses postgres-up's project.
+# docker compose --env-file .postgres.env -p trading-features \
+#   -f docker-compose.yml -f docker-compose.postgres.yml \
+#   -f docker-compose.postgres-app.yml up -d --build
+services:
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:?Run make postgres-env first}@postgres:5432/trading_platform
+    depends_on:
+      postgres:
+        condition: service_healthy

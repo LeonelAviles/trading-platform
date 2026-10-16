@@ -70,6 +70,12 @@ const NAV = [
     hint: "Every run, reviewed on its chart",
   },
   {
+    to: "/ml",
+    label: "ML discovery",
+    icon: "backtests",
+    hint: "Discover conditions, review hypotheses, evaluate later data",
+  },
+  {
     to: "/agent",
     label: "Research",
     icon: "agent",
@@ -188,6 +194,7 @@ export default function Sidebar({ collapsed, onToggle }) {
           Run review
         </NavLink>
         <NavLink to={destination("/agent")}>Research chat</NavLink>
+        <NavLink to="/ml">ML discovery</NavLink>
       </nav>
     </>
   );

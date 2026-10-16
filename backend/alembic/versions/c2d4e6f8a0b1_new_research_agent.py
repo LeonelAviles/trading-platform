@@ -76,7 +76,23 @@ def upgrade() -> None:
     op.create_index("ix_knowledge_chunks_source_id", "knowledge_chunks", ["source_id"])
     op.create_index("ix_knowledge_chunks_node_id", "knowledge_chunks", ["node_id"])
     op.create_index("ix_knowledge_chunks_content_hash", "knowledge_chunks", ["content_hash"])
-    op.execute("CREATE VIRTUAL TABLE knowledge_chunks_fts USING fts5(chunk_id UNINDEXED, title, path, content, tokenize='porter unicode61')")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("""
+            CREATE TABLE knowledge_chunks_fts (
+                chunk_id varchar(12) PRIMARY KEY,
+                title text NOT NULL,
+                path text NOT NULL,
+                content text NOT NULL,
+                search_vector tsvector GENERATED ALWAYS AS (
+                    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(path, '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(content, '')), 'D')
+                ) STORED
+            )
+        """)
+        op.execute("CREATE INDEX ix_knowledge_chunks_search ON knowledge_chunks_fts USING gin(search_vector)")
+    else:
+        op.execute("CREATE VIRTUAL TABLE knowledge_chunks_fts USING fts5(chunk_id UNINDEXED, title, path, content, tokenize='porter unicode61')")
 
     op.create_table(
         "agent_threads",

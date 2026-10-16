@@ -253,10 +253,19 @@ def export(tid, eid):
 
 
 @pytest.mark.parametrize("kind", ["ridge", "kmeans"])
-def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch):
+@pytest.mark.parametrize("data_source", ["raw_DBN_MBO", "prepared_MBO_features"])
+def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data_source):
     tid, paths_ = raw_context
-    p = service.propose(tid, plan(kind))
-    assert p["document"]["dataset"]["source"] == "raw_DBN_MBO"
+    chosen = plan(kind, dataSource=data_source)
+    if data_source == "prepared_MBO_features":
+        from research_ml import feature_store
+        from research_ml.schema import MBOFeatureRequest
+        request = MBOFeatureRequest.model_validate({k: getattr(chosen, k) for k in MBOFeatureRequest.model_fields})
+        feature_store.prepare(request, .25)
+        for path in paths_.raw_dir.rglob("*.zst"):
+            path.unlink()
+    p = service.propose(tid, chosen)
+    assert p["document"]["dataset"]["source"] == data_source
     assert len(p["document"]["dataset"]["sources"]) == 3
     with pytest.raises(memory.ResearchConflict, match="approval"):
         service.run(tid, p["id"])

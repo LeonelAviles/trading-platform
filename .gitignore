@@ -20,6 +20,7 @@ backend/*.log
 
 # Local secrets — API keys, DB URLs. See backend/.env.example.
 .env
+.postgres.env
 
 # OS / editor
 .DS_Store

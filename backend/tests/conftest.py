@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -46,13 +47,37 @@ def synth_bars(synth_trades):
 
 
 @pytest.fixture()
-def db_engine(tmp_path):
+def metadata_engine(tmp_path):
+    """Opt-in PostgreSQL tests get a unique schema, never shared app rows."""
     import database
+    from sqlalchemy import text
 
-    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'platform.db'}")
-    database.init_db(eng)
-    yield eng
-    eng.dispose()
+    postgres = os.environ.get("TEST_POSTGRES_URL")
+    admin = None
+    if postgres:
+        admin = database.make_engine(postgres)
+        assert admin.dialect.name == "postgresql"
+        schema = "test_" + uuid.uuid4().hex
+        with admin.begin() as conn:
+            conn.execute(text(f"CREATE SCHEMA {schema}"))
+        url = admin.url.update_query_dict({"options": f"-csearch_path={schema}"})
+        eng = database.make_engine(url.render_as_string(hide_password=False))
+    else:
+        eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'platform.db'}")
+    try:
+        database.init_db(eng)
+        yield eng
+    finally:
+        eng.dispose()
+        if admin:
+            with admin.begin() as conn:
+                conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+            admin.dispose()
+
+
+@pytest.fixture()
+def db_engine(metadata_engine):
+    return metadata_engine
 
 
 @pytest.fixture()
@@ -68,16 +93,17 @@ def db(db_engine):
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
+def client(metadata_engine, monkeypatch):
     """TestClient over the app, with the metadata DB redirected to tmp."""
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'platform.db'}")
+    eng = metadata_engine
+    url = eng.url.render_as_string(hide_password=False)
+    monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("PLATFORM_SKIP_DB_INIT", "1")
     import database
 
-    eng = database.make_engine(os.environ["DATABASE_URL"])
-    database.init_db(eng)
     from sqlalchemy.orm import sessionmaker
 
+    monkeypatch.setattr(database, "DATABASE_URL", url)
     monkeypatch.setattr(database, "engine", eng)
     monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=eng, autoflush=False, future=True))
 
@@ -87,17 +113,15 @@ def client(tmp_path, monkeypatch):
 
     with TestClient(app_module.app) as c:
         yield c
-    eng.dispose()
 
 
 @pytest.fixture()
-def agent_db(tmp_path, monkeypatch):
+def agent_db(tmp_path, monkeypatch, metadata_engine):
     import database
     from sqlalchemy.orm import sessionmaker
     from research_agent import knowledge
 
-    eng = database.make_engine(f"sqlite+pysqlite:///{tmp_path / 'agent.db'}")
-    database.init_db(eng)
+    eng = metadata_engine
     monkeypatch.setattr(database, "engine", eng)
     monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=eng, autoflush=False, future=True))
     repo = tmp_path / "repo"
@@ -110,4 +134,3 @@ def agent_db(tmp_path, monkeypatch):
     (repo / "example.py").write_text("# this is a Python comment\ndef score():\n    return 'deflated sharpe'\n", encoding="utf-8")
     knowledge.ingest_repository(root=repo, name="test-research", url="https://example.test/repo", revision="abc123", license_name="MIT")
     yield repo
-    eng.dispose()

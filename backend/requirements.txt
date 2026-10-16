@@ -13,9 +13,10 @@ polars
 pyarrow
 databento
 
-# Platform metadata: SQLite via SQLAlchemy, Alembic migrations (models.py).
+# Platform metadata: PostgreSQL or SQLite through SQLAlchemy and Alembic.
 sqlalchemy
 alembic
+psycopg[binary]>=3.2,<4
 
 # Tests
 pytest

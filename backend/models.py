@@ -233,17 +233,41 @@ class ResearchEvidence(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("backtests.id"), unique=True)
 
 
-class MLExperiment(Base):
-    """One immutable discovery plan, user decision, and terminal result."""
-
-    __tablename__ = "ml_experiments"
+class MLDiscovery(Base):
+    """One approved feature-only fit and one recorded AI review per thread."""
+    __tablename__ = "ml_discoveries"
     id: Mapped[str] = _id()
     thread_id: Mapped[str] = mapped_column(ForeignKey("agent_threads.id"), unique=True)
     digest: Mapped[str] = mapped_column(String(64))
     document_json: Mapped[dict] = mapped_column(JSON)
     decision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    review_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="proposed")
+    created_at: Mapped[str] = _ts()
+
+
+class MLExperiment(Base):
+    """One immutable discovery plan, user decision, and terminal result."""
+
+    __tablename__ = "ml_experiments"
+    id: Mapped[str] = _id()
+    thread_id: Mapped[str] = mapped_column(ForeignKey("agent_threads.id"), unique=True)
+    discovery_id: Mapped[str | None] = mapped_column(ForeignKey("ml_discoveries.id"), nullable=True, unique=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    document_json: Mapped[dict] = mapped_column(JSON)
+    decision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="proposed")
+    created_at: Mapped[str] = _ts()
+
+
+class MLHeldoutUse(Base):
+    """Conservative outcome-exposure reservations for the staged ML workflow."""
+    __tablename__ = "ml_heldout_uses"
+    session_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey("ml_experiments.id"), index=True)
+    partition: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[str] = _ts()
 
 

@@ -1,5 +1,4 @@
-"""SQLAlchemy engine/session for the platform metadata store — SQLite, one
-file at data/platform.db, WAL mode (PLATFORM-SPEC.md §4.7).
+"""SQLAlchemy metadata store: PostgreSQL, or SQLite for self-contained tests/dev.
 
 Market data is *not* here: it lives in DuckDB/Parquet (data_store.py). This
 module covers strategies, backtests and settings.
@@ -59,6 +58,10 @@ def make_engine(url: str | None = None) -> Engine:
         # The API serves requests from a thread pool; SQLite connections are
         # per-thread by default, and SQLAlchemy's pool handles the handoff.
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif parsed.get_backend_name() == "postgresql":
+        # A reservation may wait for another transaction. Subsequent reads
+        # must see its commit instead of a snapshot taken before the wait.
+        kwargs.update(isolation_level="READ COMMITTED", pool_pre_ping=True)
     eng = create_engine(resolved, **kwargs)
     if parsed.get_backend_name() == "sqlite":
         event.listen(eng, "connect", _sqlite_pragmas)
@@ -118,6 +121,6 @@ def init_db(target_engine: Engine | None = None) -> None:
 
     cfg = Config(str(ini))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", str(eng.url).replace("%", "%%"))
+    cfg.set_main_option("sqlalchemy.url", eng.url.render_as_string(hide_password=False).replace("%", "%%"))
     cfg.attributes["connection_engine"] = eng
     command.upgrade(cfg, "head")

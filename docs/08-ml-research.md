@@ -1,5 +1,10 @@
 # Approval-gated multivariate MBO research
 
+For **discover first → AI review → user-approved hypothesis → later-data
+evaluation**, use the app's **ML discovery** page at `/ml`. See the
+[staged discovery workflow](10-cluster-discovery.md). The one-shot API described
+below remains available for previously specified hypotheses.
+
 This is an opt-in **API workflow**, not a running research program. It freezes one
 ES experiment, requires exact user approval before fitting, records explicit stop/no-edge
 outcomes, and exports passing candidates into the existing separately approved Nautilus
@@ -46,7 +51,11 @@ not the multivariate MBO path. Their existing request schemas remain visible in 
 
 ## Source, timing and quality contract
 
-The MBO path reads local `market-data/raw/ES/YYYY-MM-DD.mbo.dbn.zst` files directly.
+The MBO path supports raw extraction and reusable prepared features. The default
+`dataSource: "raw_DBN_MBO"` reads local
+`market-data/raw/ES/YYYY-MM-DD.mbo.dbn.zst` files directly. With
+`dataSource: "prepared_MBO_features"`, it reads verified contract/day partitions
+from `data/market/mbo_features/` instead; raw files need not remain local.
 There is no fallback to OHLCV zero-filled flow, the identity-stripped replay cache,
 end-of-second aggregated checkpoints, or the heatmap feed that omits small levels.
 One fixed outright ES contract and daily publisher/instrument/channel IDs are approved
@@ -117,7 +126,95 @@ For MBO proposals, `testPlan.dataPolicy` is `immutable_MBO_receive_time_snapshot
 `is`, `wf1`, and `wf2` denote that experiment's training, validation and internal test
 session ranges. They are repeated execution checks on already-used data, **not new OOS
 evidence or rolling model refits**. Existing non-MBO proposals keep their original windows.
-A dedicated discovery form is deferred; plans are entered through the API/OpenAPI `/docs`.
+The earlier one-shot plans are entered through the API/OpenAPI `/docs`. Staged
+clustering has a dedicated `/ml` form and separate discovery/review endpoints.
+
+## Prepare once and reuse local feature rows
+
+Preparation is a separate data operation. It does not fit a model, inspect forward
+returns, approve an experiment, or queue a backtest. Both `mbo_kmeans_v1` and
+`mbo_ridge_v1` can consume the same prepared rows.
+
+1. Choose the contract and source days you want to retain, plus the extraction
+   and quality settings. Restore only those raw days from S3 if needed.
+2. Save a JSON request with `contract`, `sources`, `depthLevels`,
+   `featureWindowSeconds`, `maxBookAgeMs`, `maxEventLagMs` and
+   `maxUnknownTradeFraction`. Source identifiers must come from your actual DBN
+   data. There are no inferred source IDs or default quality tolerances.
+3. From the repository root run:
+
+   ```bash
+   make prepare-mbo-features REQUEST=/absolute/path/feature-request.json
+   # Also restore missing selected raw days through the archive manifest:
+   make prepare-mbo-features REQUEST=/absolute/path/feature-request.json RESTORE=1
+   ```
+
+   Equivalent CLI:
+
+   ```bash
+   cd backend
+   ../.venv/bin/python scripts/prepare_mbo_features.py --request /path/feature-request.json --restore
+   ```
+
+   The file can contain one request or an array of requests for different
+   contracts. Existing verified partitions are reused and do not trigger S3
+   downloads. Each day is published atomically; if a later day fails, completed
+   days remain reusable when the command is run again. `--restore` downloads
+   selected missing raw files; it does not change the bucket or delete raw files.
+4. List available partitions using
+   `GET /api/ml/features?contract=ESU6&start=2026-07-13&end=2026-07-15`.
+   The response includes extraction settings, original raw hashes, quality
+   counters, row counts and partition identities. Inventory reads metadata;
+   experiment loading also verifies the row bytes.
+5. Submit an ordinary ML plan with `dataSource: "prepared_MBO_features"`.
+   Supply the same contract, daily source IDs and extraction settings used in
+   preparation, along with your training/validation/test and model choices.
+   No raw files are read or downloaded on this path, and there is no silent raw
+   fallback. Missing/mismatched partitions produce an error naming the day.
+6. Review the returned experiment document and approve its exact digest before
+   running. The experiment freezes its own selected rows and records all source
+   and partition hashes. Subsequent changes to or removal of the reusable store
+   cannot change that snapshot or its frozen Nautilus replay.
+
+Preparation is also available through `POST /api/ml/features/prepare` in `/docs`.
+This endpoint processes local raw files only; S3 restoration is explicit through
+the CLI. Requests may contain one day, while experiment plans still require
+three or more source days and valid chronological partitions.
+
+Example preparation request using **synthetic test identifiers** (replace the
+contract, dates, IDs and quality limits with reviewed values for your data):
+
+```json
+{
+  "contract": "ESU6",
+  "sources": [
+    {"day": "2026-07-13", "instrumentId": 10, "publisherId": 1, "channelId": 0},
+    {"day": "2026-07-14", "instrumentId": 10, "publisherId": 1, "channelId": 0},
+    {"day": "2026-07-15", "instrumentId": 10, "publisherId": 1, "channelId": 0}
+  ],
+  "depthLevels": 2,
+  "featureWindowSeconds": 60,
+  "maxBookAgeMs": 120000,
+  "maxEventLagMs": 120000,
+  "maxUnknownTradeFraction": 0.0
+}
+```
+
+Each immutable partition lives under
+`data/market/mbo_features/contract=<contract>/date=<day>/<identity>/`, with
+`rows.parquet` and `metadata.json`. The rows contain minute-open timestamps,
+OHLCV and the six causal features, with no outcomes or model parameters. DuckDB
+queries the exact hash-verified Parquet bytes. The identity includes the daily
+source mapping, contract, tick size, extraction/quality settings, feature
+version, extractor source hashes and dependency versions. Changing any of those
+requires preparation under a new identity. Existing partitions are not overwritten;
+preparation rejects raw files that differ from an existing partition's source hash.
+
+The store can contain many contracts and dates, including overlapping days.
+Each experiment still chooses **one fixed contract** and stays inside approved
+platform in-sample sessions. Automatic rolls and joint multi-contract fitting
+remain unsupported. Preparation can be done in batches; the 50,000-row and 12 MB
+experiment snapshot limits still apply to each selected experiment.
 
 ## Explicit plan inputs
 
@@ -133,6 +230,7 @@ All common fields are required; there is no executable default request:
 | `minEvaluationSignals`, `minMeanNetTicks`, `minImprovementOverBaselineTicks` | Explicit evaluation/stop criteria |
 | `multipleTestingPolicy` | `descriptive_only_no_significance_claim` |
 | `contract`, `contractSelection` | Outright such as ESU6; `fixed_contract_before_experiment` |
+| `dataSource` | Optional for compatibility: `raw_DBN_MBO` (default) or `prepared_MBO_features` |
 | `sources` | Sorted entries `{day, instrumentId, publisherId, channelId}` for every frozen session in the date range |
 | `depthLevels`, `featureWindowSeconds` | Explicit 1–50 best price levels; 60-second windows |
 | `maxBookAgeMs`, `maxEventLagMs`, `maxUnknownTradeFraction` | Explicit freshness/clock/unknown-aggressor quality tolerances |

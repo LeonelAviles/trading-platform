@@ -21,7 +21,7 @@ from config.instruments import CONFIG_PATH, load_instruments
 from engine import validation
 from engine.session import et_to_ns, NS
 from market.paths import get_paths
-from models import AgentThread, MLExperiment, new_id, utc_now
+from models import AgentThread, MLDiscovery, MLExperiment, new_id, utc_now
 from research_agent import memory
 from research_ml import core
 from research_ml.schema import Plan, parse_plan
@@ -69,7 +69,8 @@ def _row(db, thread_id, experiment_id):
 def _public(row):
     return {"id": row.id, "threadId": row.thread_id, "digest": row.digest,
             "document": row.document_json, "decision": row.decision_json,
-            "status": row.status, "result": row.result_json, "createdAt": row.created_at}
+            "status": row.status, "result": row.result_json, "createdAt": row.created_at,
+            "discoveryId": row.discovery_id}
 
 
 def history(thread_id):
@@ -91,30 +92,12 @@ def propose(thread_id: str, plan: Plan):
             raise ValueError("thread not found")
         if db.query(MLExperiment).filter_by(thread_id=thread_id).first() or memory.thread_stopped(db, thread_id):
             raise memory.ResearchConflict("one discovery plan per thread; start a new thread to revise or restart")
-    # The store's bounds are inclusive UNIX seconds. Request the final second
-    # of testEnd so the next ET midnight cannot enter the approved snapshot.
-    end_second = et_to_ns(plan.testEnd + timedelta(days=1), "00:00") // NS - 1
-    tick = load_instruments().roots["ES"].tick_size
-    source = {"source": "existing_ES_Parquet_via_data_store", "identityPolicy": "immutable_derived_OHLCV_snapshot",
-              "rawDataQuality": "unverified"}
-    if plan.method.startswith("mbo_"):
-        from research_ml.mbo_source import load
-        bars, source = load(plan, sessions, tick)
-    else:
-        bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)
-    bars = core.validate_bars(bars)
-    days = set(bars.index.tz_convert("America/New_York").strftime("%Y-%m-%d"))
-    if not days <= set(sessions):
-        raise ValueError("snapshot contains sessions outside approved in-sample range")
-    if not set(sessions) <= days:
-        raise ValueError("snapshot is missing frozen sessions; repair ingestion before research")
+        if db.query(MLDiscovery).filter_by(thread_id=thread_id).first():
+            raise memory.ResearchConflict("this thread uses staged discovery; submit its reviewed hypothesis")
+    bars, source, sessions, tick = capture(plan)
     # Check target feasibility before asking for approval, without fitting.
     partitions = core.samples(bars, plan, tick)
-    payload = {"timestamps": bars.index.as_unit("ns").asi8.tolist(), "columns": list(bars.columns),
-               "values": bars.to_numpy().tolist()}
-    content = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
-    if len(content) > MAX_SNAPSHOT_BYTES:
-        raise ValueError("snapshot exceeds 12 MB")
+    content = snapshot_bytes(bars)
     eid = new_id()
     document = {"plan": plan.model_dump(mode="json"), "provenance": provenance(),
                 "dataset": {"sha256": hashlib.sha256(content).hexdigest(), "rows": len(bars),
@@ -128,7 +111,8 @@ def propose(thread_id: str, plan: Plan):
     try:
         with database.session_scope() as db:
             memory._write_reservation(db)
-            if db.query(MLExperiment).filter_by(thread_id=thread_id).first() or memory.thread_stopped(db, thread_id):
+            if (db.query(MLExperiment).filter_by(thread_id=thread_id).first() or memory.thread_stopped(db, thread_id)
+                    or db.query(MLDiscovery).filter_by(thread_id=thread_id).first()):
                 raise memory.ResearchConflict("thread already contains a discovery plan or stop decision")
             row = MLExperiment(id=eid, thread_id=thread_id, digest=memory.digest(document),
                                document_json=document, status="proposed")
@@ -139,6 +123,51 @@ def propose(thread_id: str, plan: Plan):
     except Exception:
         path.unlink(missing_ok=True)
         raise
+
+
+def capture(plan):
+    """Freeze source selection without learning or scoring outcomes."""
+    sessions = _scope(plan)
+    # The store's bounds are inclusive UNIX seconds. Request the final second
+    # of testEnd so the next ET midnight cannot enter the approved snapshot.
+    end_second = et_to_ns(plan.testEnd + timedelta(days=1), "00:00") // NS - 1
+    tick = load_instruments().roots["ES"].tick_size
+    source = {"source": "existing_ES_Parquet_via_data_store", "identityPolicy": "immutable_derived_OHLCV_snapshot",
+              "rawDataQuality": "unverified"}
+    if plan.method.startswith("mbo_"):
+        if plan.dataSource == "prepared_MBO_features":
+            from research_ml.feature_store import load
+        else:
+            from research_ml.mbo_source import load
+        bars, source = load(plan, sessions, tick)
+    else:
+        bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)
+    bars = core.validate_bars(bars)
+    days = set(bars.index.tz_convert("America/New_York").strftime("%Y-%m-%d"))
+    if not days <= set(sessions):
+        raise ValueError("snapshot contains sessions outside approved in-sample range")
+    if not set(sessions) <= days:
+        raise ValueError("snapshot is missing frozen sessions; repair ingestion before research")
+    return bars, source, sessions, tick
+
+
+def snapshot_bytes(bars):
+    payload = {"timestamps": bars.index.as_unit("ns").asi8.tolist(), "columns": list(bars.columns),
+               "values": bars.to_numpy().tolist()}
+    content = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
+    if len(content) > MAX_SNAPSHOT_BYTES:
+        raise ValueError("snapshot exceeds 12 MB")
+    return content
+
+
+def read_snapshot(path, dataset):
+    with path.open("rb") as snapshot:
+        content = snapshot.read(MAX_SNAPSHOT_BYTES + 1)
+    if len(content) > MAX_SNAPSHOT_BYTES or hashlib.sha256(content).hexdigest() != dataset["sha256"]:
+        raise ValueError("approved snapshot changed")
+    payload = json.loads(content)
+    return core.validate_bars(pd.DataFrame(payload["values"], columns=payload["columns"],
+                             index=pd.to_datetime(payload["timestamps"], unit="ns", utc=True)))
 
 
 def decide(thread_id, experiment_id, expected_digest, action, reason):
@@ -175,6 +204,10 @@ def run(thread_id, experiment_id):
             raise memory.ResearchConflict("approved experiment changed")
         if memory.thread_stopped(db, thread_id):
             raise memory.ResearchConflict("thread was stopped")
+        if row.discovery_id:
+            from research_ml import discovery
+            discovery.reserve_evaluation(db, row)
+        staged = bool(row.discovery_id)
         row.status = "running"  # committed before any model can fit
     try:
         plan = parse_plan(document["plan"])
@@ -190,7 +223,11 @@ def run(thread_id, experiment_id):
         payload = json.loads(content)
         bars = pd.DataFrame(payload["values"], columns=payload["columns"],
                             index=pd.to_datetime(payload["timestamps"], unit="ns", utc=True))
-        result = core.discover(bars, plan, document["dataset"]["tickSize"])
+        if staged:
+            from research_ml import discovery
+            result = discovery.evaluate_frozen(bars, plan, document)
+        else:
+            result = core.discover(bars, plan, document["dataset"]["tickSize"])
         result["experimentDigest"] = memory.digest(document)
         result["resultDigest"] = memory.digest(result)
         status = result["outcome"]

@@ -80,6 +80,10 @@ class Paths:
     def research_cache_dir(self) -> Path:
         return self.data_dir / "research_cache"
 
+    @property
+    def mbo_features_dir(self) -> Path:
+        return self.market_dir / "mbo_features"
+
     def partition(self, base: Path, root: str, date: str) -> Path:
         return base / f"root={root}" / f"date={date}"
 

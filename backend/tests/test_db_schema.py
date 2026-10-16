@@ -5,7 +5,7 @@ from sqlalchemy import inspect
 EXPECTED_TABLES = {
     "strategies", "backtests", "settings", "knowledge_sources", "knowledge_nodes",
     "knowledge_edges", "knowledge_chunks", "knowledge_chunks_fts", "agent_threads", "agent_messages",
-    "agent_runs", "ml_experiments",
+    "agent_runs", "ml_experiments", "ml_discoveries", "ml_heldout_uses",
 }
 REMOVED_TABLES = {
     "findings", "research_sources", "research_docs", "research_queue", "primitive_requests", "llm_usage",
@@ -23,6 +23,9 @@ def test_tables_exist(db_engine):
 
 
 def test_wal_mode(db_engine):
+    if db_engine.dialect.name != "sqlite":
+        import pytest
+        pytest.skip("WAL pragma is SQLite-specific")
     with db_engine.connect() as con:
         mode = con.exec_driver_sql("PRAGMA journal_mode").scalar()
     assert mode.lower() == "wal"

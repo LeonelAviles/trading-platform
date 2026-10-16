@@ -1,0 +1,25 @@
+# Optional local PostgreSQL, separate from the existing SQLite dev stack.
+# make postgres-up generates credentials, starts the service, and waits for health.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_features}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run make postgres-env first}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    shm_size: 128mb
+    mem_limit: 768m
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

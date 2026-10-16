@@ -36,34 +36,40 @@ class MBOKMeans:
     requires_targets = False
 
     def fit(self, train, plan):
-        x, mean, scale = standardize(train, False)
-        unique = np.unique(x, axis=0)  # lexicographic; independent of input ordering
-        k = plan.clusterCount
-        if len(unique) < k:
-            raise ValueError("fewer distinct feature vectors than clusters")
-        # Deterministic farthest-first, lexicographic tie break. No random restarts.
-        centers = [unique[0]]
-        for _ in range(1, k):
-            dist = ((unique[:, None, :] - np.asarray(centers)[None, :, :])**2).sum(axis=2).min(axis=1)
-            centers.append(unique[int(dist.argmax())])
-        centers = np.asarray(centers)
-        previous = None
-        for iteration in range(plan.maxIterations):
-            labels = ((x[:, None, :] - centers[None, :, :])**2).sum(axis=2).argmin(axis=1)
-            counts = np.bincount(labels, minlength=k)
-            if (counts < plan.minClusterSamples).any():
-                raise ValueError("undersized or empty cluster")
-            if previous is not None and np.array_equal(previous, labels):
-                break
-            centers = np.asarray([x[labels == i].mean(axis=0) for i in range(k)])
-            previous = labels
-        else:
-            raise ValueError("cluster iteration budget exhausted; no converged model")
-        # IDs are lexicographic standardized-center order, never outcome-ranked.
-        centers = np.asarray(sorted(centers.tolist()))
-        model = FrozenModel(kind="kmeans", features=FEATURES, mean=mean.tolist(), scale=scale.tolist(),
-                            centers=centers.tolist(), active=plan.activeClusters)
+        cluster, diagnostics = fit_clusters(train, plan)
+        model = FrozenModel(kind="kmeans", **cluster, active=plan.activeClusters)
+        diagnostics["interpretation"] = plan.interpretation
+        return model, [diagnostics]
+
+
+def fit_clusters(train, plan):
+    """Fit feature geometry without a trading direction or active IDs."""
+    x, mean, scale = standardize(train, False)
+    unique = np.unique(x, axis=0)  # lexicographic; independent of input ordering
+    k = plan.clusterCount
+    if len(unique) < k:
+        raise ValueError("fewer distinct feature vectors than clusters")
+    # Deterministic farthest-first, lexicographic tie break. No random restarts.
+    centers = [unique[0]]
+    for _ in range(1, k):
+        dist = ((unique[:, None, :] - np.asarray(centers)[None, :, :])**2).sum(axis=2).min(axis=1)
+        centers.append(unique[int(dist.argmax())])
+    centers = np.asarray(centers)
+    previous = None
+    for iteration in range(plan.maxIterations):
         labels = ((x[:, None, :] - centers[None, :, :])**2).sum(axis=2).argmin(axis=1)
-        return model, [{"iterations": iteration + 1, "counts": np.bincount(labels, minlength=k).tolist(),
-                        "jointFeatureCount": len(FEATURES), "clusterIds": "lexicographic_standardized_centers",
-                        "interpretation": plan.interpretation}]
+        counts = np.bincount(labels, minlength=k)
+        if (counts < plan.minClusterSamples).any():
+            raise ValueError("undersized or empty cluster")
+        if previous is not None and np.array_equal(previous, labels):
+            break
+        centers = np.asarray([x[labels == i].mean(axis=0) for i in range(k)])
+        previous = labels
+    else:
+        raise ValueError("cluster iteration budget exhausted; no converged model")
+    # IDs are lexicographic standardized-center order, never outcome-ranked.
+    centers = np.asarray(sorted(centers.tolist()))
+    labels = ((x[:, None, :] - centers[None, :, :])**2).sum(axis=2).argmin(axis=1)
+    return {"features": FEATURES, "mean": mean.tolist(), "scale": scale.tolist(), "centers": centers.tolist()}, {
+        "iterations": iteration + 1, "counts": np.bincount(labels, minlength=k).tolist(),
+        "jointFeatureCount": len(FEATURES), "clusterIds": "lexicographic_standardized_centers"}

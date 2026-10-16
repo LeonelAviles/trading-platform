@@ -76,10 +76,10 @@ class MBOSource(StrictModel):
     channelId: int = Field(strict=True, ge=0, le=255)
 
 
-class MBOPlan(CommonPlan):
+class MBOFeatureRequest(StrictModel):
+    """Data preparation only: no outcomes, fitting or trading choices."""
     contract: str = Field(pattern=r"^ES[HMUZ][0-9]{1,2}$")
-    contractSelection: Literal["fixed_contract_before_experiment"]
-    sources: list[MBOSource] = Field(min_length=3, max_length=366)
+    sources: list[MBOSource] = Field(min_length=1, max_length=366)
     depthLevels: int = Field(strict=True, ge=1, le=50)
     featureWindowSeconds: Literal[60]
     maxBookAgeMs: int = Field(strict=True, ge=1, le=3_600_000)
@@ -89,8 +89,20 @@ class MBOPlan(CommonPlan):
     @model_validator(mode="after")
     def source_days(self):
         days = [s.day for s in self.sources]
-        if days != sorted(set(days)) or any(not self.start <= d <= self.testEnd for d in days):
-            raise ValueError("sources must be unique, increasing days inside the experiment")
+        if days != sorted(set(days)):
+            raise ValueError("sources must be unique, increasing days")
+        return self
+
+
+class MBOPlan(CommonPlan, MBOFeatureRequest):
+    contractSelection: Literal["fixed_contract_before_experiment"]
+    sources: list[MBOSource] = Field(min_length=3, max_length=366)
+    dataSource: Literal["raw_DBN_MBO", "prepared_MBO_features"] = "raw_DBN_MBO"
+
+    @model_validator(mode="after")
+    def experiment_days(self):
+        if any(not self.start <= s.day <= self.testEnd for s in self.sources):
+            raise ValueError("sources must be inside the experiment")
         return self
 
 
@@ -115,6 +127,80 @@ class MBOClusterPlan(MBOPlan):
             raise ValueError("activeClusters must be unique zero-based IDs below clusterCount")
         if not self.interpretation.strip():
             raise ValueError("explicit cluster interpretation required")
+        return self
+
+
+class ClusterDiscoveryPlan(MBOFeatureRequest):
+    """Feature-only discovery. Trading direction and active IDs come later."""
+    method: Literal["mbo_cluster_discovery_v1"]
+    researchQuestion: str = Field(min_length=1, max_length=4000)
+    symbol: Literal["ES1!"]
+    interval: Literal["1min"]
+    start: date
+    trainEnd: date
+    validationEnd: date
+    testEnd: date
+    contractSelection: Literal["fixed_contract_before_experiment"]
+    sources: list[MBOSource] = Field(min_length=3, max_length=366)
+    dataSource: Literal["raw_DBN_MBO", "prepared_MBO_features"] = "prepared_MBO_features"
+    clusterCount: int = Field(strict=True, ge=2, le=8)
+    maxIterations: int = Field(strict=True, ge=1, le=100)
+    minClusterSamples: int = Field(strict=True, ge=1)
+
+    @model_validator(mode="after")
+    def discovery_dates(self):
+        if (not self.researchQuestion.strip() or
+                not self.start <= self.trainEnd < self.validationEnd < self.testEnd):
+            raise ValueError("research question and ordered discovery/validation/test dates required")
+        if (self.testEnd - self.start).days > 366 or any(
+                not self.start <= s.day <= self.testEnd for s in self.sources):
+            raise ValueError("sources must be within a discovery range of at most 366 days")
+        return self
+
+
+class ClusterInterpretation(StrictModel):
+    clusterId: int = Field(strict=True, ge=0, le=7)
+    label: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+    concerns: list[str] = Field(max_length=8)
+
+
+class ClusterHypothesis(StrictModel):
+    hypothesis: str = Field(min_length=1, max_length=4000)
+    activeClusters: list[Annotated[int, Field(strict=True, ge=0, le=7)]] = Field(min_length=1, max_length=8)
+    direction: Literal["long", "short"]
+    horizonBars: int = Field(strict=True, ge=1, le=60)
+    interpretation: str = Field(min_length=1, max_length=4000)
+    rationale: str = Field(min_length=1, max_length=4000)
+    falsification: str = Field(min_length=1, max_length=2000)
+
+
+class ClusterReview(StrictModel):
+    assessment: str = Field(min_length=1, max_length=4000)
+    clusters: list[ClusterInterpretation] = Field(min_length=2, max_length=8)
+    recommendation: Literal["propose", "stop"]
+    suggestion: ClusterHypothesis | None
+
+
+class ClusterHypothesisRequest(ClusterHypothesis):
+    discoveryDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reviewDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reviewDisposition: Literal["accept", "revise"]
+    reviewReason: str = Field(min_length=1, max_length=4000)
+    target: Literal["next_open_to_horizon_close_ticks"]
+    roundTripCostTicks: float = Field(strict=True, ge=0)
+    minEvaluationSignals: int = Field(strict=True, ge=1)
+    minMeanNetTicks: float = Field(strict=True)
+    minImprovementOverBaselineTicks: float = Field(strict=True, ge=0)
+    multipleTestingPolicy: Literal["descriptive_only_no_significance_claim"]
+
+    @model_validator(mode="after")
+    def explicit_text(self):
+        for field in ("hypothesis", "interpretation", "rationale", "falsification", "reviewReason"):
+            if not getattr(self, field).strip():
+                raise ValueError(f"{field} requires explicit text")
+        if len(set(self.activeClusters)) != len(self.activeClusters):
+            raise ValueError("activeClusters must be unique")
         return self
 
 
