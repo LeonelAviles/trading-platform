@@ -71,3 +71,21 @@ def review_context(thread_id: str, discovery_id: str, digest: str):
 def assistant_review(thread_id: str, discovery_id: str, body: AssistantReviewRequest):
     return _research_call(discovery.submit_review, thread_id, discovery_id, body.digest,
                           body.inputDigest, body.review, body.reviewer)
+
+
+from research_ml import iterations
+
+
+@router.get("/{discovery_id}/next-idea-context")
+def next_idea_context(thread_id: str, discovery_id: str):
+    return _research_call(iterations.context, thread_id, discovery_id)
+
+
+@router.get("/{discovery_id}/next-ideas")
+def next_ideas(thread_id: str, discovery_id: str):
+    return _research_call(iterations.history, thread_id, discovery_id)
+
+
+@router.post("/{discovery_id}/next-ideas")
+def propose_next_idea(thread_id: str, discovery_id: str, body: iterations.NextIdea):
+    return _research_call(iterations.propose, thread_id, discovery_id, body)

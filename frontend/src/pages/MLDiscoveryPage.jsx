@@ -5,6 +5,7 @@ import { datasetGroups, discoveryPlan, FEATURE_LABELS, hypothesisBody, verifyRec
 import "../ml/discovery.css";
 import ResearchRuns from "../ml/ResearchRuns";
 import AssistantReview from "../ml/AssistantReview";
+import TrainingIteration from "../ml/TrainingIteration";
 
 const initialPlan = { researchQuestion: "", start: "", trainEnd: "", validationEnd: "", testEnd: "",
   clusterCount: "", maxIterations: "", minClusterSamples: "" };
@@ -229,6 +230,7 @@ export default function MLDiscoveryPage() {
           {experiment.status === "candidate" && <p>A candidate still needs explicit strategy exits, sizing and risk choices, then separate backtest approval. <Link to="/agent">Open research</Link>.</p>}</>}
       </section>}
     </>}
+    {row?.result?.summary && <TrainingIteration key={row.id} thread={thread} row={row} />}
     {busy && <p role="status" className="ml-busy">Working… Your next action will be available when the recorded state returns.</p>}
     {action && <DecisionDialog action={action} busy={busy} onClose={() => setAction(null)} onConfirm={confirm} />}
   </main>;

@@ -35,3 +35,13 @@ from research_ml.consistency import ConsistencyPolicy
 def consistency(run_id: str, body: ConsistencyPolicy):
     from research_ml import run_evidence
     return _research_call(run_evidence.reassess, run_id, body.model_dump())
+
+
+@router.get("/runs/{run_id}")
+def research_run_detail(run_id: str):
+    from fastapi import HTTPException
+    from research_ml import run_evidence
+    try:
+        return _research_call(run_evidence.read, run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "research run not found") from exc

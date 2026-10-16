@@ -15,9 +15,13 @@ later internal test July 27–28. December 2025–March 2026 is the repository's
 a chronological forward test. It stays sealed. The previous market aggregates
 were inspected only for availability; no holdout fitting/scoring was performed.
 
-The frozen search space is one deterministic 3-cluster fit, maximum 50 Lloyd
+The initial frozen search space was one deterministic 3-cluster fit, maximum 50 Lloyd
 iterations, minimum 50 samples per cluster, one interpreted hypothesis and one
-execution configuration. There are no random restarts or alternative k values.
+execution configuration. That fit failed before outcomes were opened. A separately
+recorded training-only revision exposed groups down to one minute, while keeping
+groups below 50 training minutes ineligible for hypothesis selection. The final
+budget was two fit attempts total, one economic hypothesis and one execution
+configuration. Both attempts remain visible; this was not an automatic retry. There are no random restarts or alternative k values.
 Standardization uses discovery-only means and population standard deviations;
 constant columns get scale 1. Initial centers use deterministic farthest-first
 selection with lexicographic tie breaking. IDs follow sorted standardized
@@ -229,6 +233,166 @@ wipe, market-data deletion or irreversible purge occurred.
 
 ## Actual run ledger
 
-The source preparation and real discovery/execution outcomes are appended here
-when complete, including failures. QA failures are distinguished from economic
-rejections. No synthetic reviewer fixture is used as real-run evidence.
+All actual feature/discovery/economic computations below used implementation commit
+`a0c4de632011e91de1364b098c8eb9d9e80e12bb`; the later summary-only correction
+is explicitly described below. No synthetic reviewer fixture was used as real-run
+evidence. The run was exploratory technical research, not a profitable candidate.
+
+| Attempt | Inputs / change | Observed outcome |
+|---|---|---|
+| July 13 extraction smoke | One actual archived raw day, observed source IDs | 390 RTH rows; no quality omissions; no fit or outcomes |
+| Bounded preparation | 12 actual weekdays, July 13–28 | 154,303,363 selected-contract records; 4,680 rows; 2,889,365,905 compressed bytes retained; all 12 days had 390 rows and no late/unknown/omitted counters |
+| Discovery 1: `71c2fa4f2bd6` | 3 clusters, minimum 50 samples | `blocked`: undersized or empty cluster; no hypothesis/evaluation; thread `f6dfc7a3dc05` |
+| Training-only diagnosis | 3,120 training feature rows; no returns | Strong activity tails; no later-period inspection |
+| Discovery 2: `40c2a52eb68e` | Same data/k/iterations; minimum exposed group size 1; groups below 50 ineligible | Converged in 15 iterations; sizes 2,341 / 771 / 8; thread `c634e46067cc` |
+| Feature interpretation / rejection | Exact feature summary plus label-free training timestamp/distribution checks | Reject rare group: exactly 15:59 ET on each training day. Reject a strong directional interpretation: both dense regimes have nearly balanced buy/sell flow |
+| Hypothesis `89bd733a5dbe` | One predeclared long-side elevated-activity falsification control, cluster 1, 5 minutes | `no_edge`: validation failed; internal test not evaluated |
+| Nautilus validation diagnostic | Same approved frozen signal; July 23–24 only; one fixed execution configuration | Completed; 17 trades; after-cost/stress net −$339; no candidate |
+| Aggregation correction | Reaggregate already recorded stressed trades; no market replay or model/scoring run | 8 after-stress winners, 47.1% win rate; original immutable artifact retained |
+
+The second fit found ordinary activity (75.03% of training minutes), elevated
+two-sided activity (24.71%), and a rare final-RTH-minute group (0.256%). All were
+present in every training session. The dense groups' average aggressive buying
+and selling were close, and average depth imbalance was near zero. Therefore the
+assistant recorded **activity segmentation without persuasive directional
+separation**. Selecting elevated activity for a long strategy was explicitly a
+weak falsification/control choice to exercise the workflow, not a claim that
+clustering had discovered bullish pressure. This honest distinction is retained
+in the review and hypothesis. The rare cluster was rejected before returns.
+
+Validation exposed 770 complete five-minute label observations and 281 signals:
+mean net **−4.0895 ticks/signal**, net **−1.4924 ticks/observation**; always-signal
+baseline **−5.0821 ticks/observation**, never-signal baseline **0**. The control
+failed the positive-net and better-baseline requirements. July 27–28 stayed
+**unscored**, though both those dates and validation dates are consumed in the
+staged ledger. No final historical-holdout outcome was accessed.
+
+Nautilus closed 17 validation trades: base modeled net $511 after $76.50 commission,
+then $850 additional execution stress, leaving **−$339**. There were **8** positive
+after-stress trades (47.1%). Positive after-cost PnL totaled $2,151.50; the three
+largest winners totaled $961.50, a **44.6898%** share. Removing them leaves
+**−$1,300.50** net. July 23 lost $356.50; July 24 gained $17.50. One chronological
+block is empty because there are only two sessions; one populated block is positive.
+The consistency gate reports `insufficient_sample`, nonpositive PnL without the
+largest winners, and chronological instability. Prop fit remains unassessed.
+This sample does not establish statistical significance or forward generalization.
+
+The original execution artifact's summary counted 9 base-modeled winners (52.9%)
+before the added stress, while its individual `pnlUsd` and consistency correctly
+used stressed PnL. That inconsistency was discovered during review. The original
+artifact and report were preserved, a hash-linked `summary_correction` artifact
+records the accurate 8/17 result without rerunning any economic computation, and
+the current UI derives its visible summary from recorded after-cost `pnlUsd`.
+The implementation now reaggregates winners, win rate, daily results and the
+legacy `pnl` alias after stress, and rejects applying stress twice. Extra stress
+is a post-execution charge; it does not feed back into engine order/risk halts.
+
+Local evidence lives in the separate `research-runtime/` directory beside the
+isolated checkout. Important identities and hashes:
+
+| Artifact | Identity / SHA-256 |
+|---|---|
+| Real run report | `workflow-20261016T030133Z` |
+| Report digest | `c1d3cd6c842de6f64e755d4f288541dfc731076655837876aeba82c6813a170f` |
+| Frozen source snapshot | `a70202394485c8b7af0a3a9c473602a3427c36cf6551a275399552456220d543` |
+| Training summary input digest | `ddc4c09c8fd3bcf3f67a365f4a3d916e6a68950be74ece03d808716c60184c31` |
+| Recorded assistant review digest | `4fde9bea3afcb4e1515181339cf1f1d1960da6e3db4b44565c1278c68c259e12` |
+| Hypothesis digest | `3ed0be00984c575437bea78103f709cd30ac6c46594ea2f753ad27ba1de81f81` |
+| Original Nautilus artifact | `1117d8917bbe92234cc027c477bbd9fa67828958dd518e5ec2608ea699411b43` |
+| Recorded after-cost trade list | `68d728504f2acc4b7f7ae026e8439ec7e0115ba7e6ba94e24d45aed34e184c76` |
+| Aggregation correction artifact | `18da0312c0f145bea38b386a7c8b6c9dd8ed87fede044c09607ac0296704f992` |
+
+The standard input digest binds the exported feature summary. Additional label-free
+training timestamp/distribution checks are disclosed separately in
+`training-review-supporting-evidence.json`, linked to the same snapshot hash;
+they were also available to the assistant. This is caller-attested session
+interpretation, not an invented external API response. Source identifiers,
+per-day raw hashes, feature partition IDs/digests, frozen settings and dependency
+versions remain in the local immutable state/report. No licensed source rows,
+raw data, detailed trade artifacts or credentials are published in Git.
+
+The run used actual instrument ID `42140870`, publisher `1`, channel `0` for ESU6,
+verified from every selected raw day. The preparation log records all 12 attempts;
+there were no preparation failures. No preexisting data or cache was deleted.
+Approximately 32 GiB remained available after preparation and local dependencies.
+
+### QA and review ledger
+
+Initial targeted tests passed. Development of the new timing proof caught an
+incorrect `InstrumentId` type and a fixture that attempted to enter before the
+rules' warm-up; both were fixed before any historical evaluation. The final
+price-gap proof checks one- and three-minute horizons. A custom-profile test
+initially expected chronological instability from a fixture that actually had two
+positive blocks; the fixture was corrected. Early frontend checks ran while the
+isolated dependency copy was incomplete and failed to resolve React/Ajv/Vite;
+the partial task copy was stopped and lockfile dependencies installed in the clone.
+An initial read-only screenshot locator matched both a heading and hidden JSON;
+it was corrected, with no research mutation. These are software/QA failures,
+not hidden economic trials.
+
+The pre-iteration-plumbing regression checkpoint passed 404 tests on SQLite and
+404 on the dedicated PostgreSQL test database (one expected dialect-specific skip
+each), 38 frontend unit tests, frontend lint/build, and both mocked browser suites.
+The final backend suites, including iteration and read-only detail paths, pass
+407 tests on each database with the same expected skip. Frontend delivery checks
+pass lint, production build and all 38 unit tests; actual desktop/mobile browser
+checks show 17 trades and both unevaluated ideas with zero mutations and page errors.
+
+SQLite and dedicated PostgreSQL suites, frontend lint/build/unit tests, mocked
+desktop/mobile approval-flow checks, concentration reassessment/escaping checks,
+and actual-results desktop/mobile checks are used for delivery verification.
+Synthetic browser checks are explicitly separate from real run evidence.
+
+### Repeatable safe training-design iteration
+
+The implementation includes a bounded append-only next-idea chain, exposed in the
+ML UI, API and `scripts/research_next_idea.py`. It supports recording and revising
+up to five next-design recommendations per fitted discovery. Each record binds the
+exact training summary/result/snapshot, prior idea digest and explicit reasoning.
+Its fit, evaluation and execution budgets are all zero. Stale-context/previous-idea
+requests, tampered chains and excess revisions fail closed. Tests prove this path
+cannot call fitting/evaluation and does not change the heldout ledger.
+
+`GET .../ml-discoveries/{id}/next-idea-context` exports only training summaries,
+with an honest prior-exposure marker. `GET/POST .../{id}/next-ideas` reads/appends
+the chain. The UI's **Next training-design iteration** section shows the records
+and accepts a structured next-idea document. CLI equivalents:
+
+```bash
+python scripts/research_next_idea.py context --thread THREAD --discovery DISCOVERY
+python scripts/research_next_idea.py record --thread THREAD --discovery DISCOVERY --input next-idea.json
+python scripts/research_next_idea.py history --thread THREAD --discovery DISCOVERY
+```
+
+Two actual unevaluated records were appended to discovery `40c2a52eb68e`:
+
+1. Separate signed aggressive-flow ratio and resting-depth imbalance from activity.
+   The direction condition is new and untested; determine cutoffs on training only.
+2. Revise that design to control predeclared RTH time bins first, because the rare
+   training group is exactly the final RTH minute. Do not choose hours by profits.
+
+Their chain digests are
+`174c0c053f5a67137b8cdb534c7d4f0aa0c1719fe50e842b926ec8ff92d59555` and
+`848a38438d134c34b3d3e2d2cc4a016abacdb89ff276e961af2278b31740da8f`.
+Both explicitly record **not evaluated: current economic budget exhausted** and
+that the assistant had already seen the validation rejection. They are
+training-design recommendations, not independent blinded evidence. No new fit,
+Nautilus replay or heldout evaluation was performed. This provides repeatable safe
+iteration plumbing; it deliberately does not implement automatic economic search
+or silently expand tonight's permission into future runs.
+
+### Why this stopped, and the next bounded iteration
+
+The control's fixed-cost label result was negative and actual stressed trades
+also lost money. Removing three winners made it materially worse. Clusters
+mainly separated activity intensity rather than direction, and the selected
+sample was too small for the consistency gate. These are observed reasons for
+rejection. The idea that a separately specified signed-flow condition or a larger
+sample might help is an **untested hypothesis**, not an explanation proved by
+these results.
+
+No third fit, second economic hypothesis or execution variant was run. A next
+iteration should first specify a causal directional condition from training-only
+evidence, then use separately selected, unconsumed later sessions and a new finite
+scope. The already reserved July 23–24 and 27–28 sessions cannot become fresh
+heldout evidence again. The sealed historical partition remains untouched.

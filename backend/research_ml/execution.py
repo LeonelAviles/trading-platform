@@ -54,6 +54,19 @@ def run(thread_id, experiment_id, policy=None):
     sessions=[d for d in record['document']['dataset']['sessions'] if str(start)<=d<=str(end)]
     if not sessions: raise ValueError('no approved validation sessions')
     executed=backtest_worker.run_backtest(strategy,start,end,'bars',research_diagnostic=True)
+    apply_execution_stress(executed, sessions)
+    assessment=consistency.assess(executed['trades'],sessions,policy)
+    return {'strategy':strategy,'execution':executed,'consistency':assessment,'sessions':sessions,
+        'outcome':'rejected' if record['status']=='no_edge' or not assessment['passes'] else 'descriptive_candidate',
+        'limitations':['validation replay reuses exposed sessions; not fresh OOS',
+            'bar execution cannot prove tick fills or queue position',
+            'small sample and no statistical significance','prop fit unassessed: no firm profile']}
+
+
+def apply_execution_stress(executed, sessions):
+    """Reaggregate all net-dependent fields after the explicit stress charge."""
+    if any("executionStressUsd" in trade for trade in executed["trades"]):
+        raise ValueError("execution stress already applied")
     # Apply an explicit additional two-tick-per-side stress charge rather
     # than treating Nautilus's probabilistic one-tick FillModel as a precise
     # configurable two-tick fill. Keep raw fills/commissions for audit.
@@ -62,14 +75,13 @@ def run(thread_id, experiment_id, policy=None):
         trade['baseModeledNetPnlUsd']=trade['pnlUsd']
         trade['executionStressUsd']=stress
         trade['pnlUsd']=round(trade['pnlUsd']-stress,2)
+        trade['pnl']=trade['pnlUsd']
     executed['summary']['totalPnl']=round(sum(t['pnlUsd'] for t in executed['trades']),2)
+    wins=sum(t['pnlUsd']>0 for t in executed['trades'])
+    executed['summary']['wins']=wins
+    executed['summary']['winRate']=round(wins/len(executed['trades'])*100,1) if executed['trades'] else 0.0
     executed['meta']['additionalExecutionStressTicksRoundTrip']=4
     executed['meta']['stressScope']='additional to modeled fill slippage and commission; not observed fills'
     from engine.backtest_worker import daily_returns
     executed['dailyReturns']=daily_returns(executed['trades'],sessions,100000)
-    assessment=consistency.assess(executed['trades'],sessions,policy)
-    return {'strategy':strategy,'execution':executed,'consistency':assessment,'sessions':sessions,
-        'outcome':'rejected' if record['status']=='no_edge' or not assessment['passes'] else 'descriptive_candidate',
-        'limitations':['validation replay reuses exposed sessions; not fresh OOS',
-            'bar execution cannot prove tick fills or queue position',
-            'small sample and no statistical significance','prop fit unassessed: no firm profile']}
+    return executed

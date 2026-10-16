@@ -27,6 +27,7 @@ const suggestion = { hypothesis: "Synthetic hypothesis <img src=x onerror=alert(
     else if (url.pathname === "/api/agent/threads" && method === "POST") result = { id: tid, title: "Synthetic ML discovery" };
     else if (url.pathname === "/api/ml/features/runs") result = { runs: [] };
     else if (url.pathname === "/api/ml/features") result = { partitions: sources.map((source) => ({ document: { identity: { source, settings, extractor: { code: "v1" }, tickSize: 0.25 } } })) };
+    else if (url.pathname.endsWith("/next-ideas") && method === "GET") result = { ideas: [] };
     else if (url.pathname.endsWith("/ml-discoveries") && method === "GET") result = { discoveries: discovery ? [discovery] : [] };
     else if (url.pathname.endsWith("/ml-experiments") && method === "GET") result = { experiments: experiment ? [experiment] : [] };
     else if (url.pathname.endsWith("/ml-discoveries") && method === "POST") {

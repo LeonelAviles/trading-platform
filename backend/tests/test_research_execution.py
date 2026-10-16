@@ -33,3 +33,15 @@ def test_diagnostic_cannot_open_internal_test_after_failed_validation(raw_contex
     from tests.test_mbo_research import DAYS
     with pytest.raises(ValueError,match='restricted to already exposed validation'):
         frozen.replay(strategy,DAYS[2],DAYS[2],allow_rejected=True)
+
+
+def test_stress_reaggregates_winners_aliases_and_daily_results():
+    executed={'trades':[{'contracts':1,'pnlUsd':40,'pnl':40,'sessionDate':'2026-07-23','exitTime':1},
+        {'contracts':1,'pnlUsd':100,'pnl':100,'sessionDate':'2026-07-23','exitTime':2}],
+        'summary':{'wins':2,'winRate':100,'totalPnl':140},'meta':{}}
+    execution.apply_execution_stress(executed,['2026-07-23'])
+    assert executed['summary']=={'wins':1,'winRate':50.0,'totalPnl':40}
+    assert [t['pnl'] for t in executed['trades']]==[-10,50]
+    assert executed['dailyReturns'][0]['pnlUsd']==40
+    with pytest.raises(ValueError,match='already applied'):
+        execution.apply_execution_stress(executed,['2026-07-23'])

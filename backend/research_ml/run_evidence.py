@@ -37,7 +37,14 @@ def inventory():
     for path in sorted(directory().glob("*.json"), reverse=True)[:50]:
         try:
             report = read(path.stem)
-            reports.append({k: v for k, v in report.items() if k != "trades"})
+            public = {k: v for k, v in report.items() if k != "trades"}
+            trades = [t for t in report.get("trades", []) if t.get("exitTime") is not None]
+            wins = sum(t["pnlUsd"] > 0 for t in trades)
+            public["derivedAfterCostSummary"] = {"trades": len(trades), "wins": wins,
+                "winRate": round(wins / len(trades) * 100, 1) if trades else 0.0,
+                "netPnl": round(sum(t["pnlUsd"] for t in trades), 2),
+                "scope": "derived from recorded after-cost trades; original report remains unchanged"}
+            reports.append(public)
         except (ValueError, OSError):
             reports.append({"id": path.stem, "status": "unreadable", "reason": "local report unavailable or invalid"})
     return {"runs": reports, "scope": "recorded research and diagnostic execution; no trading permission"}
