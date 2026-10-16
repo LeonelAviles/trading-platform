@@ -18,8 +18,8 @@ def load_strategy(strategy_id: str) -> dict:
 
 
 @router.get("")
-def list_strategies():
-    return strategy_store.list_strategies()
+def list_strategies(include_archived: bool = False):
+    return strategy_store.list_strategies(include_archived=include_archived)
 
 
 @router.post("")

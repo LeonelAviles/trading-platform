@@ -3,6 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { discoveriesPath, experimentsPath, request } from "../ml/api";
 import { datasetGroups, discoveryPlan, FEATURE_LABELS, hypothesisBody, verifyRecord } from "../ml/model";
 import "../ml/discovery.css";
+import ResearchRuns from "../ml/ResearchRuns";
+import AssistantReview from "../ml/AssistantReview";
 
 const initialPlan = { researchQuestion: "", start: "", trainEnd: "", validationEnd: "", testEnd: "",
   clusterCount: "", maxIterations: "", minClusterSamples: "" };
@@ -135,6 +137,7 @@ export default function MLDiscoveryPage() {
     <header className="ml-heading"><div><div className="terminal-eyebrow">Research lab</div><h1>Discover, question, test</h1>
       <p>Find recurring order-flow conditions. Review an AI hypothesis, then test it on reserved later sessions.</p></div>
       <button disabled={busy} onClick={() => { setParams({}); setPlan(initialPlan); }}>New discovery</button></header>
+    <ResearchRuns revision={revision} />
     <nav className="ml-steps" aria-label="Discovery workflow">
       {["1 · Discover patterns", "2 · AI review", "3 · Approve hypothesis", "4 · Evaluate"].map((step) => <span key={step}>{step}</span>)}
     </nav>
@@ -212,6 +215,7 @@ export default function MLDiscoveryPage() {
             <button className="ml-primary" disabled={!hypothesis.activeClusters.length}>Prepare hypothesis for approval</button>
           </fieldset></form>}
       </section>}
+      {row?.status === "discovered" && <section className="ml-panel"><AssistantReview key={row.id} thread={thread} row={row} disabled={locked} onRecorded={() => setRevision((value) => value + 1)} /></section>}
       {experiment && <section className="ml-panel"><div className="ml-panel-title"><h2>Frozen hypothesis</h2><span className="ml-status">{experiment.status.replaceAll("_", " ")}</span></div>
         <p>{experiment.document.plan.hypothesis}</p><p>{experiment.document.plan.direction} · clusters {experiment.document.plan.activeClusters.join(", ")} · {experiment.document.plan.horizonBars} minutes · {experiment.document.plan.roundTripCostTicks} ticks round-trip cost</p>
         <details><summary>Full hypothesis, criteria and recorded evidence</summary><pre>{JSON.stringify(experiment.document, null, 2)}</pre></details>

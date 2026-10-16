@@ -193,3 +193,7 @@ engine test runs without real data — including the L3 book (checked against a
 brute-force reference) and the replay session (fake clock). CI
 (`.github/workflows/ci.yml`) runs pytest, oxlint, vitest and the Vite build on
 every push.
+
+## Bounded real-data workflow
+
+See [the bounded research runbook](docs/11-bounded-real-data-workflow.md) for the real-data run ledger, scoped assistant review, frozen chronological partitions, Nautilus execution convention, consistency diagnostics, recoverable archival and reproduction commands.

@@ -4,7 +4,7 @@ from pydantic import Field
 
 from research_agent import service as agent
 from research_ml import discovery
-from research_ml.schema import ClusterDiscoveryPlan, ClusterHypothesisRequest, StrictModel
+from research_ml.schema import ClusterDiscoveryPlan, ClusterHypothesisRequest, ClusterReview, StrictModel
 from routers.agent import DecisionRequest, _research_call
 
 router = APIRouter(prefix="/api/agent/threads/{thread_id}/ml-discoveries", tags=["ml-discovery"])
@@ -54,3 +54,20 @@ def hypothesis(thread_id: str, discovery_id: str, body: ClusterHypothesisRequest
 @router.post("/{discovery_id}/stop")
 def stop(thread_id: str, discovery_id: str, body: StopRequest):
     return _research_call(discovery.stop, thread_id, discovery_id, body.digest, body.reason)
+
+
+class AssistantReviewRequest(DigestRequest):
+    inputDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reviewer: str = Field(min_length=1, max_length=200)
+    review: ClusterReview
+
+
+@router.get("/{discovery_id}/review-context")
+def review_context(thread_id: str, discovery_id: str, digest: str):
+    return _research_call(discovery.review_context, thread_id, discovery_id, digest)
+
+
+@router.post("/{discovery_id}/assistant-review")
+def assistant_review(thread_id: str, discovery_id: str, body: AssistantReviewRequest):
+    return _research_call(discovery.submit_review, thread_id, discovery_id, body.digest,
+                          body.inputDigest, body.review, body.reviewer)
