@@ -153,4 +153,3 @@ def inventory(contract=None, start=None, end=None):
             continue
         out.append(_metadata(file.parent))
     return {"partitions": out, "rowChecksumsVerified": False}
-
