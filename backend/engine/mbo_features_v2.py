@@ -6,11 +6,14 @@ one second. This excludes same-event matching, M updates and hidden-liquidity
 claims. Matching budgets reset each minute; all session accumulators reset per
 invocation. No events at/after cutoff are observed.
 """
+from collections import deque
+
 import pandas as pd
 from engine import mbo_features as v1
 from engine.feature_schema import RICH_FEATURES
 
 MAX_MATCH_PRICES = 100_000
+MAX_MATCH_LOTS = 100_000
 
 
 def build_minutes(records, **settings):
@@ -23,10 +26,11 @@ def build_minutes(records, **settings):
     previous_vwap = None
     observed = {}
     matches = {}
+    matching_lots = 0
     state = dict(buy=0, sell=0, ask=0, bid=0, repeated=0, open=None, close=None)
 
     def emit():
-        nonlocal boundary, previous_vwap
+        nonlocal boundary, previous_vwap, matching_lots
         vwap = numerator / volume / v1.NS if volume else None
         if state["open"] is not None and vwap is not None:
             response = (state["close"] - state["open"]) / tick
@@ -43,10 +47,17 @@ def build_minutes(records, **settings):
         previous_vwap = vwap
         state.update(buy=0, sell=0, ask=0, bid=0, repeated=0, open=None, close=None)
         matches.clear()
+        matching_lots = 0
         boundary += v1.MINUTE
 
+    def expire(item, t):
+        nonlocal matching_lots
+        while item["lots"] and item["lots"][0][0] < t-v1.NS:
+            item["lots"].popleft()
+            matching_lots -= 1
+
     def stream():
-        nonlocal numerator, volume
+        nonlocal numerator, volume, matching_lots
         pending = []
         for record in records:
             if tuple(int(record[k]) for k in ("instrument_id", "publisher_id", "channel_id")) != (
@@ -69,12 +80,25 @@ def build_minutes(records, **settings):
                         continue
                     key = (str(r["side"]), int(r["price"]))
                     item = matches.get(key)
-                    if item is not None and 0 < t-item[0] <= v1.NS and item[1] > 0:
-                        matched = min(int(r["size"]), item[1])
-                        item[1] -= matched
-                        item[2] += 1
+                    if item is None:
+                        continue
+                    expire(item, t)
+                    remaining, matched = int(r["size"]), 0
+                    while remaining > 0 and item["lots"] and item["lots"][0][0] < t:
+                        lot = item["lots"][0]
+                        quantity = min(remaining, lot[1])
+                        remaining -= quantity
+                        matched += quantity
+                        lot[1] -= quantity
+                        if lot[1] == 0:
+                            item["lots"].popleft()
+                            matching_lots -= 1
+                    if matched:
+                        # Count an observed A once, even when it consumes
+                        # several eligible trade lots.
+                        item["adds"] += 1
                         state["ask" if key[0] == "A" else "bid"] += matched
-                        if item[2] >= 2:
+                        if item["adds"] >= 2:
                             state["repeated"] += matched
                 for r in pending:
                     if r["action"] != "T":
@@ -90,10 +114,21 @@ def build_minutes(records, **settings):
                         state["buy" if side == "B" else "sell"] += z
                         key = ("A" if side == "B" else "B", p)
                         item = matches.get(key)
-                        if item is None or t-item[0] > v1.NS:
-                            matches[key] = [t, z, 0]
+                        if item is None or t-item["last"] > v1.NS:
+                            if item is not None:
+                                matching_lots -= len(item["lots"])
+                            item = {"last": t, "lots": deque(), "adds": 0}
+                            matches[key] = item
                         else:
-                            item[0], item[1] = t, item[1]+z
+                            expire(item, t)
+                            item["last"] = t
+                        if item["lots"] and item["lots"][-1][0] == t:
+                            item["lots"][-1][1] += z
+                        else:
+                            item["lots"].append([t, z])
+                            matching_lots += 1
+                        if matching_lots > MAX_MATCH_LOTS:
+                            raise ValueError("replenishment credit-lot budget exceeded")
                         if len(matches) > MAX_MATCH_PRICES:
                             raise ValueError("replenishment price budget exceeded")
             yield from pending
@@ -111,5 +146,6 @@ def build_minutes(records, **settings):
     result = frame.join(extras, how="left")
     audit = {**audit, "replenishmentPolicy": "earlier_complete_event_same_price_1s_capped_A_only_proxy",
              "sessionVWAPPolicy": "RTH_T_volume_including_unknown_and_omitted_minutes",
-             "maxReplenishmentPrices": MAX_MATCH_PRICES}
+             "maxReplenishmentPrices": MAX_MATCH_PRICES,
+             "maxReplenishmentCreditLots": MAX_MATCH_LOTS}
     return result, audit

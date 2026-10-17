@@ -237,8 +237,9 @@ same price and opposite resting side from an **earlier complete event with a
 strictly earlier receive timestamp**, at most one second earlier. Same-event
 adds, snapshots and `M` size modifications are excluded. A side/price episode
 expires after a gap exceeding one second since its last trade; matching credit
-is capped by the episode's unconsumed observed aggressive volume, so repeated
-adds cannot inflate the credited contracts beyond trades. Credits/counts reset
+uses FIFO unconsumed trade credits that each expire after one second, even
+when later trades keep the same-price episode active. Repeated adds cannot
+inflate credited contracts beyond eligible trades. Credits/counts reset
 every minute and every session. No future price response, execution outcomes,
 subsequent minute or later snapshot enters these inputs.
 
@@ -267,3 +268,9 @@ book. CME documents that native iceberg refresh can retain an order ID while
 synthetic refresh can receive a new one in its [MBO FAQ](https://www.cmegroup.com/articles/faqs/market-by-order-mbo.html).
 This implementation does **not** classify those mechanisms or track native
 same-ID refresh; its repeated-add observation is a deliberately narrower proxy.
+
+V2 intentionally includes correlated inputs: signed flow is algebraically
+derivable from the existing buy/sell rates, and VWAP/absorption ratios share
+trade observations. Their joint use changes ridge penalties and cluster geometry;
+there is no automatic feature selection or claim that eighteen inputs improve
+prediction. That comparison requires a separately approved real-data experiment.

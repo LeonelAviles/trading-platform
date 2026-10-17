@@ -475,7 +475,8 @@ From `backend/`, with the repository's original DATA_DIR and dependencies:
 ```
 
 The importer validates bounded metadata and exact original Parquet bytes/hash,
-checks the numeric schema and at most 390 rows **before decoding**, then commits
+checks the numeric schema, at most 390 rows, at most 390 row groups, a 128 KB
+footer and at most 8 MB of declared uncompressed data **before decoding**, then commits
 and reads back one day. Each committed DB identity is its durable checkpoint;
 stdout reports `validated`, `committed` or `reused`. A failed transaction leaves
 no visible batch/rows. Stop on any missing metadata, corrupt source, conflicting
@@ -596,8 +597,8 @@ feature databases and backups remain finite. The earlier small synthetic storage
 measurement above describes the v1 migration checkpoint, before the v2 table.
 
 The v2 observer streams the unchanged v1 quality engine, retains at most one
-100,000-record pending event and 100,000 side/price match entries (fail closed
-above that cap), and at most 390 minute observation vectors. It does not build
+100,000-record pending event, 100,000 side/price match entries and 100,000
+FIFO trade-credit lots (fail closed above either cap), and at most 390 minute observation vectors. It does not build
 a second full order book. V2 raw research additionally stops before accumulating
 more than 50,000 rows. Session accumulators reset each source-day invocation.
 Snapshot/model limits and approval guards remain unchanged. Frozen models carry
@@ -642,3 +643,32 @@ Frontend lint/build and **39 tests** passed. Changed Python files compiled and
 `git diff --check` passed. Only the existing FastAPI/Starlette httpx deprecation
 warning was observed. These checks use synthetic inputs and disposable schemas;
 no historical economic experiment, real-data migration or cloud deployment ran.
+
+### Independent review and corrections
+
+A separate reviewer inspected the migration and v2 commits read-only and then
+reviewed the corrective patch. Two issues were addressed:
+
+- A later trade could refresh an aggregate replenishment-credit timestamp and
+  extend older credits beyond the one-second contract. Credits now use bounded
+  FIFO timestamped lots. Every lot expires individually; exact one-second age is
+  included, later age is excluded, and one displayed add counts only once even
+  when it consumes several lots. Minute reset clears lots and episode counts.
+- The importer now bounds declared uncompressed row-group/column bytes and
+  footer size before native decoding, with explicit Thrift string/container
+  limits. These are validation guards for supported prepared Parquet, not an OS
+  memory quota or a guarantee about arbitrary malicious decoder inputs.
+
+The reviewer reported no remaining confirmed defects after those corrections.
+Its independent updated pure-synthetic subset passed 16 tests (6 deselected).
+A regression also uses PR4's actual source-code fingerprint to verify that old
+v1 snapshot/model bytes remain readable while execution fails closed under
+changed provenance. Old execution compatibility requires its original environment
+or new exact approval; no approval guard was relaxed.
+
+After independent-review corrections, both full backend runs passed **450 tests**
+with one expected metadata-backend-specific skip each, using real disposable
+PostgreSQL for feature storage. The focused storage/v2 regression run passed
+**54 tests**. Frontend code was unchanged by the corrective patch; its previous
+lint/build and 39-test pass still apply. Changed Python compilation and
+`git diff --check` passed. Publication remains held for explicit user approval.

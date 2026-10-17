@@ -353,3 +353,26 @@ def test_import_rejects_oversized_footer_before_allocating_rows(raw_context, mon
     with pytest.raises(ValueError, match="row bound"):
         feature_store.import_partition(folder)
     assert not feature_store.inventory()["partitions"]
+
+
+@pytest.mark.parametrize("kind", ["rowgroup", "column", "footer"])
+def test_import_rejects_declared_decompression_bound_before_read(raw_context, monkeypatch, kind):
+    import pyarrow.parquet as pq
+    folder, _, _ = legacy_partition(raw_context)
+    original = pq.ParquetFile
+    def bounded_reader(*args, **kwargs):
+        reader = original(*args, **kwargs)
+        meta = reader.metadata
+        column_size = feature_store.legacy.MAX_UNCOMPRESSED_BYTES+1 if kind == "column" else 1
+        group_size = feature_store.legacy.MAX_UNCOMPRESSED_BYTES+1 if kind == "rowgroup" else 1
+        footer_size = feature_store.legacy.MAX_METADATA_BYTES+1 if kind == "footer" else meta.serialized_size
+        fake_meta = SimpleNamespace(num_rows=meta.num_rows, num_columns=meta.num_columns,
+            num_row_groups=1, serialized_size=footer_size,
+            row_group=lambda _: SimpleNamespace(total_byte_size=group_size,
+                column=lambda _: SimpleNamespace(total_uncompressed_size=column_size)))
+        return SimpleNamespace(metadata=fake_meta, schema_arrow=reader.schema_arrow,
+                               read=lambda: pytest.fail("oversized pages must not be decoded"))
+    monkeypatch.setattr(pq, "ParquetFile", bounded_reader)
+    with pytest.raises(ValueError, match="uncompressed size|footer bound"):
+        feature_store.import_partition(folder)
+    assert not feature_store.inventory()["partitions"]

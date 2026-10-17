@@ -22,6 +22,7 @@ LEGACY_STORE_SHA256 = "d185e7be55a0715a15be9c7e32c2b9d2c81e6456268c5caa4c191d277
 FORMAT_VERSION = "mbo_feature_partition_v1"
 MAX_PARQUET_BYTES = 8_000_000
 MAX_METADATA_BYTES = 128_000
+MAX_UNCOMPRESSED_BYTES = 8_000_000
 
 
 def _digest(value):
@@ -103,13 +104,23 @@ def _read(identity):
             raise ValueError("prepared MBO partition checksum changed")
         import pyarrow as pa
         import pyarrow.parquet as pq
-        reader = pq.ParquetFile(pa.BufferReader(content))
+        reader = pq.ParquetFile(pa.BufferReader(content),
+            thrift_string_size_limit=MAX_METADATA_BYTES, thrift_container_size_limit=100_000)
         expected = ["timestamp_ns", *core.COLUMNS, *FEATURES]
         if (reader.metadata.num_rows > 390 or reader.schema_arrow.names != expected
                 or not pa.types.is_int64(reader.schema_arrow.field("timestamp_ns").type)
                 or any(not (pa.types.is_integer(f.type) or pa.types.is_floating(f.type))
                        for f in reader.schema_arrow)):
             raise ValueError("prepared MBO feature schema or row bound changed")
+        # Bound declared decompression/metadata before asking the native
+        # decoder to allocate pages. Hashes protect identity, not memory use.
+        metadata = reader.metadata
+        if (metadata.num_row_groups > 390 or metadata.serialized_size > MAX_METADATA_BYTES
+                or sum(metadata.row_group(i).total_byte_size for i in range(metadata.num_row_groups)) > MAX_UNCOMPRESSED_BYTES
+                or sum(metadata.row_group(i).column(j).total_uncompressed_size
+                       for i in range(metadata.num_row_groups)
+                       for j in range(metadata.num_columns)) > MAX_UNCOMPRESSED_BYTES):
+            raise ValueError("prepared MBO uncompressed size or footer bound exceeded")
         table = reader.read()
         with duckdb.connect() as con:
             con.register("prepared_rows", table)

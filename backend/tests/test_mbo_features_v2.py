@@ -237,3 +237,82 @@ def test_postgres_v2_duplicate_and_partial_batches_fail_closed(raw_context):
         conn.execute("DELETE FROM prepared_mbo_v2_rows WHERE timestamp_ns=(SELECT min(timestamp_ns) FROM prepared_mbo_v2_rows)")
     with pytest.raises(ValueError, match="row count|checksum"):
         feature_store.prepare(first, .25)
+
+
+def test_trade_credit_expires_even_when_same_price_episode_continues():
+    rows = replenishment_rows()
+    old_trade, fresh_trade, addition = (rows[i].copy() for i in (3, 3, 4))
+    start = et_to_ns(DAYS[0], "09:30")
+    fresh_trade.update(ts_recv=start+1_900_000_000, ts_event=start+1_900_000_000, size=1, sequence=5)
+    old_trade.update(size=100, sequence=4)
+    addition.update(ts_recv=start+2_500_000_000, ts_event=start+2_500_000_000, size=101, sequence=6)
+    frame, _ = rich_extract(rows[:3]+[old_trade, fresh_trade, addition], minutes=1)
+    assert frame.iloc[0].volume == 101
+    assert frame.iloc[0].ask_replenishment_rate_proxy == pytest.approx(1/60)
+
+
+@pytest.mark.parametrize("offset,matched", [(2*NS, 10), (2*NS+1, 0)])
+def test_credit_window_includes_exactly_one_second(offset, matched):
+    rows = replenishment_rows()[:5]
+    start = et_to_ns(DAYS[0], "09:30")
+    rows[-1].update(ts_recv=start+offset, ts_event=start+offset, size=20)
+    frame, _ = rich_extract(rows, minutes=1)
+    assert frame.iloc[0].ask_replenishment_rate_proxy == pytest.approx(matched/60)
+
+
+def test_one_add_consuming_several_credit_lots_counts_once():
+    rows = replenishment_rows()
+    old_trade, fresh_trade, addition = (rows[i].copy() for i in (3, 3, 4))
+    start = et_to_ns(DAYS[0], "09:30")
+    fresh_trade.update(ts_recv=start+1_100_000_000, ts_event=start+1_100_000_000, size=5, sequence=5)
+    addition.update(ts_recv=start+1_200_000_000, ts_event=start+1_200_000_000, size=15, sequence=6)
+    frame, _ = rich_extract(rows[:3]+[old_trade, fresh_trade, addition], minutes=1)
+    assert frame.iloc[0].ask_replenishment_rate_proxy == pytest.approx(15/60)
+    assert frame.iloc[0].iceberg_repeat_replenishment_proxy == 0
+
+
+def test_credit_lots_have_independent_memory_bound(monkeypatch):
+    monkeypatch.setattr(mbo_features_v2, "MAX_MATCH_LOTS", 1)
+    with pytest.raises(ValueError, match="credit-lot budget"):
+        rows = replenishment_rows()
+        second = {**rows[3], "ts_recv": rows[3]["ts_recv"]+100_000_000,
+                  "ts_event": rows[3]["ts_event"]+100_000_000, "sequence": 5}
+        rich_extract(rows[:4]+[second], minutes=1)
+
+
+def test_pr4_provenance_blocks_replay_but_v1_snapshot_and_model_remain_readable(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    import hashlib
+    import database
+    from research_agent import memory
+    from research_ml import service
+    # Actual source-code provenance fingerprint of PR4 (9f6e727), computed
+    # with that commit's service.provenance() file selection and digest policy.
+    pr4_code = "75a7b8e0afc456fb6ad0b47b865dff00e145c3161ab60886014195ec817660d1"
+    old_frame = extract(events())[0]
+    content = service.snapshot_bytes(old_frame)
+    path = tmp_path / "legacy-approved-snapshot.json"
+    path.write_bytes(content)
+    dataset = {"sha256": hashlib.sha256(content).hexdigest()}
+    pd.testing.assert_frame_equal(service.read_snapshot(path, dataset), core.validate_bars(old_frame))
+    old_model = FrozenModel(kind="ridge", features=FEATURES, mean=[0]*6,
+                            scale=[1]*6, coefficients=[0]*6)
+    assert parse_frozen(old_model.model_dump_json()).features == FEATURES
+    assert old_model.predict(old_frame[FEATURES]).tolist() == [False]*len(old_frame)
+    document = {"plan": plan().model_dump(mode="json", exclude={"featureVersion"}),
+                "provenance": {**service.provenance(), "codeSha256": pr4_code}, "dataset": dataset}
+    digest = memory.digest(document)
+    result = {"experimentDigest": digest}
+    result_digest = memory.digest(result)
+    row = SimpleNamespace(status="candidate", decision_json={"action": "approve"},
+                          document_json=document, digest=digest,
+                          result_json={**result, "resultDigest": result_digest})
+    @contextmanager
+    def old_records():
+        yield SimpleNamespace(get=lambda *args: row)
+    monkeypatch.setattr(database, "session_scope", old_records)
+    strategy = {"meta": {"mlDiscovery": {"experimentId": "legacy-v1",
+                "experimentDigest": digest, "resultDigest": result_digest}}}
+    assert pr4_code != service.provenance()["codeSha256"]
+    with pytest.raises(ValueError, match="code/config/sessions changed"):
+        frozen.load(strategy)
