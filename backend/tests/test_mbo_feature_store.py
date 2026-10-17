@@ -47,7 +47,7 @@ def test_reuse_without_raw_preserves_features_model_and_approval(raw_context, mo
     service.decide(tid, proposal["id"], proposal["digest"], "approve", "Synthetic cached dataset check")
     # The experiment snapshot survives deletion of the reusable store as well.
     with feature_store.connect() as conn:
-        conn.execute("TRUNCATE prepared_mbo_rows, prepared_mbo_batches")
+        conn.execute("TRUNCATE prepared_mbo_rows, prepared_mbo_v2_rows, prepared_mbo_batches")
     result = service.run(tid, proposal["id"])
     assert result["status"] == "candidate", result
 
@@ -67,9 +67,8 @@ def test_tick_source_and_extractor_versions_are_part_of_identity(raw_context, mo
     for p, tick in [(plan(), .5), (plan(sources=[dict(s.model_dump(), instrumentId=20) for s in plan().sources]), .25)]:
         with pytest.raises(ValueError, match="prepare these settings first"):
             feature_store.load(p, [str(d) for d in DAYS], tick)
-    monkeypatch.setattr(feature_store, "FEATURE_VERSION", "new_feature_semantics")
     with pytest.raises(ValueError, match="prepare these settings first"):
-        feature_store.load(plan(), [str(d) for d in DAYS], .25)
+        feature_store.load(plan(featureVersion="mbo_receive_minute_v2"), [str(d) for d in DAYS], .25)
 
 
 def test_corrupt_partition_blocks_proposal_without_raw_fallback(raw_context, monkeypatch):

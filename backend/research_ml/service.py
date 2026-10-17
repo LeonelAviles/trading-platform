@@ -139,6 +139,8 @@ def capture(plan):
             from research_ml.feature_store import load
         else:
             from research_ml.mbo_source import load
+            if plan.featureVersion == "mbo_receive_minute_v2":
+                from research_ml.mbo_source_v2 import load
         bars, source = load(plan, sessions, tick)
     else:
         bars = data_store.get_bars("ES1!", "1min", et_to_ns(plan.start, "00:00") // NS, end_second)

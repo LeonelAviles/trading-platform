@@ -254,11 +254,12 @@ def export(tid, eid):
 
 @pytest.mark.parametrize("kind", ["ridge", "kmeans"])
 @pytest.mark.parametrize("data_source", ["raw_DBN_MBO", "prepared_MBO_features"])
-def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data_source, request):
+@pytest.mark.parametrize("feature_version", ["mbo_receive_minute_v1", "mbo_receive_minute_v2"])
+def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data_source, request, feature_version):
     if data_source == "prepared_MBO_features":
         request.getfixturevalue("feature_database")
     tid, paths_ = raw_context
-    chosen = plan(kind, dataSource=data_source)
+    chosen = plan(kind, dataSource=data_source, featureVersion=feature_version)
     if data_source == "prepared_MBO_features":
         from research_ml import feature_store
         from research_ml.schema import MBOFeatureRequest
@@ -320,7 +321,7 @@ def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data
     _, _, f = frozen.load(strategy)
     f = f[f.index.date == DAYS[2]]
     model = FrozenModel.model_validate(result["result"]["model"]["frozen"])
-    expected = dict(zip((f.index.as_unit("ns").asi8+60*NS).tolist(), model.predict(f[FEATURES]).tolist()))
+    expected = dict(zip((f.index.as_unit("ns").asi8+60*NS).tolist(), model.predict(f[model.features]).tolist()))
     assert first_seen and all(expected[t] == v for t, v in first_seen)
     for change in ("dates", "trigger", "snapshot"):
         altered = copy.deepcopy(strategy)

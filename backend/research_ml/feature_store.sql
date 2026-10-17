@@ -24,3 +24,21 @@ CREATE TABLE IF NOT EXISTS prepared_mbo_rows (
     cancel_reduction_rate double precision NOT NULL,
     PRIMARY KEY (partition_id,timestamp_ns)
 );
+
+-- v2 is additive: old rows/checksums and v1 column ordering are untouched.
+CREATE TABLE IF NOT EXISTS prepared_mbo_v2_rows (
+    LIKE prepared_mbo_rows INCLUDING ALL,
+    session_vwap double precision NOT NULL,
+    distance_to_session_vwap_ticks double precision NOT NULL,
+    session_vwap_slope_ticks double precision NOT NULL,
+    signed_aggressive_flow_rate double precision NOT NULL,
+    aggressive_flow_imbalance double precision NOT NULL,
+    buy_absorption_proxy double precision NOT NULL,
+    sell_absorption_proxy double precision NOT NULL,
+    ask_replenishment_rate_proxy double precision NOT NULL,
+    bid_replenishment_rate_proxy double precision NOT NULL,
+    buy_absorption_replenishment_proxy double precision NOT NULL,
+    sell_absorption_replenishment_proxy double precision NOT NULL,
+    iceberg_repeat_replenishment_proxy double precision NOT NULL,
+    FOREIGN KEY (partition_id) REFERENCES prepared_mbo_batches(partition_id)
+);

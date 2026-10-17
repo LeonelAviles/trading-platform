@@ -418,7 +418,7 @@ Parquet fallback. Raw DBN, trades, bars, replay/catalog Parquet, and immutable
 experiment JSON snapshots retain their existing storage. No economic experiment
 is authorized by this migration. The historical overnight waiver above expired.
 
-The additive `backend/research_ml/feature_store.sql` creates two tables in the
+The additive `backend/research_ml/feature_store.sql` creates two base tables plus the additive v2 row table described below in the
 connection's search path: `prepared_mbo_batches` holds the original identity,
 metadata/provenance document and its digest, plus a logical rows SHA-256;
 `prepared_mbo_rows` holds bigint minute-open nanoseconds, five float64 OHLCV
@@ -498,7 +498,7 @@ No actual Mac/Postgres/data migration has been verified in this cloud task.
 ### Capacity, bounded processing and portability
 
 Default feature relation budget is **1 GiB**, not unlimited disk.
-`FEATURE_STORE_MAX_BYTES` counts both tables, indexes and TOAST with
+`FEATURE_STORE_MAX_BYTES` counts batch metadata and all versioned row tables, indexes and TOAST with
 `pg_total_relation_size`; a global transaction lock serializes capacity checks,
 reserving 256 KiB before COPY and checking actual relation sizes afterward.
 Capacity failures roll back. This is a relation budget, **not** a filesystem
@@ -529,7 +529,8 @@ Extraction retains the existing 100,000-record decoder chunks, 500,000-order
 book cap and 100,000-record incomplete-event cap. Import buffers at most one
 8 MB source Parquet plus one 390-row numeric frame; metadata is at most 128 KB.
 Experiment reads remain capped at 50,000 bars; inventory is capped at 10,000
-batches and asks for narrower filters beyond that. Day transactions and durable
+batches and 8 MB of metadata, and asks for narrower filters beyond either bound.
+The server cursor fetches only 64 metadata records at a time. Day transactions and durable
 identity checkpoints support bounded workers; no whole-archive load is needed.
 No cache eviction is implemented: any future opt-in eviction must be limited to
 verified newly downloaded recoverable cache after durable DB import, never live
@@ -572,3 +573,72 @@ Synthetic fixtures only, disposable PostgreSQL 16.15, Python 3.12:
 
 These are code/synthetic migration checks, not proof of real Mac migration,
 real-data quality, economic validity, Oracle capacity or ARM execution.
+
+## Rich-feature v2 extension
+
+`MBOFeatureRequest`, experiment and discovery plans accept an explicit
+`featureVersion: "mbo_receive_minute_v2"`; omitted values remain six-input v1.
+The [README feature contract](../README.md#versioned-causal-mbo-features) specifies
+all twelve additional inputs, units, event rules, resets and proxy limitations.
+No GEX/options source is implied. V1 extractor/source files are unchanged; its
+identity settings omit the new default field for exact legacy compatibility.
+V2 identities additionally hash the schema, v2 observation code and v2 raw
+source reader. Never backfill rich fields from v1 aggregates or invent provenance.
+
+Rerun explicit additive initialization for the new `prepared_mbo_v2_rows` table.
+It copies the original typed timestamp/OHLCV/six-input prefix and adds twelve
+float64 columns; v1 rows remain in `prepared_mbo_rows`. Both share immutable batch
+metadata, capacity locks, transactional publication, parity checks and checksums.
+The relation budget now counts **all three tables**, their indexes and TOAST.
+At 390 rows, v2 timestamp/numeric payload is 390 × (8 + 23 × 8) = **74,880 bytes**
+before metadata/tuple/index/WAL overhead. This doubles numeric payload versus v1;
+feature databases and backups remain finite. The earlier small synthetic storage
+measurement above describes the v1 migration checkpoint, before the v2 table.
+
+The v2 observer streams the unchanged v1 quality engine, retains at most one
+100,000-record pending event and 100,000 side/price match entries (fail closed
+above that cap), and at most 390 minute observation vectors. It does not build
+a second full order book. V2 raw research additionally stops before accumulating
+more than 50,000 rows. Session accumulators reset each source-day invocation.
+Snapshot/model limits and approval guards remain unchanged. Frozen models carry
+`frozen_mbo_v2` plus `mbo_receive_minute_v2`; validation rejects wrong feature
+ordering, dimensions and mismatched versions. The existing frozen Nautilus replay
+uses exactly the approved version's vectors at minute close.
+
+The existing request preparer accepts up to 366 explicit ordered source days and
+commits/reuses them day by day. The S3 bounded preparer now accepts
+`--feature-version mbo_receive_minute_v2` and an explicit `--max-days-per-run N`
+(default 20, maximum 366), still limited to approved in-sample weekdays. This
+supports broader historical **preparation**, without opening holdouts or fitting
+any model. Raw-cache and free-space caps still stop before another download when
+capacity is exhausted. A successful day atomically updates a feature request
+checkpoint; v2 audit/checkpoints use
+`DATA_DIR/preparation/<contract>/mbo_receive_minute_v2/`. Reuse the saved explicit
+request with `prepare_mbo_features.py` to resume from durable DB batches without
+S3 downloads or repeated raw extraction. No cache is removed automatically.
+
+A second synthetic Postgres 16.15 measurement with both versions populated
+(3 v1 + 3 v2 batches, 90 rows each) used 286,720 bytes total:
+98,304 metadata, 90,112 v1 rows/indexes, and 98,304 v2 rows/indexes. These are
+small-table physical allocations, not archive-size projections. Include the v2
+relation when measuring capacity:
+
+```sql
+SELECT pg_total_relation_size('prepared_mbo_batches')
+     + pg_total_relation_size('prepared_mbo_rows')
+     + pg_total_relation_size('prepared_mbo_v2_rows') AS total_feature_bytes;
+```
+
+### Combined migration and v2 verification
+
+After the richer schema and consumers were implemented, full backend checks
+passed with **440 tests** against each application-metadata backend (one expected
+backend-specific skip each), with actual PostgreSQL feature storage in both
+runs. The focused v2 suite passed **17 tests**, including its final additional
+Postgres duplicate/partial-batch regression. The focused cross-version research,
+staged discovery, storage and Nautilus suite passed 96 tests before the final
+memory/disk guard additions; those additions are covered by the full runs.
+Frontend lint/build and **39 tests** passed. Changed Python files compiled and
+`git diff --check` passed. Only the existing FastAPI/Starlette httpx deprecation
+warning was observed. These checks use synthetic inputs and disposable schemas;
+no historical economic experiment, real-data migration or cloud deployment ran.

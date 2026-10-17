@@ -6,6 +6,7 @@ identical batches. Stop on the first corrupt/conflicting partition.
 """
 import argparse
 import json
+import math
 import shutil
 from pathlib import Path
 import sys
@@ -24,7 +25,7 @@ def main(argv=None):
     parser.add_argument("--contract")
     parser.add_argument("--min-free-gib", type=float, default=2)
     args = parser.parse_args(argv)
-    if args.min_free_gib < 1:
+    if not math.isfinite(args.min_free_gib) or args.min_free_gib < 1:
         parser.error("at least 1 GiB local safety floor required")
     if args.initialize:
         store.initialize()

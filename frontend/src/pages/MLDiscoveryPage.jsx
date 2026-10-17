@@ -154,7 +154,7 @@ export default function MLDiscoveryPage() {
         : <form onSubmit={create}><fieldset disabled={locked}>
           <label className="ml-field"><span>Prepared contract and extraction settings</span><select required value={groupKey} onChange={(e) => setGroupKey(e.target.value)}>
             <option value="">Select a dataset</option>{groups.map((g) => <option key={g.key} value={g.key} disabled={g.duplicate}>
-              {g.settings.contract} · {g.sources.length} sessions · depth {g.settings.depthLevels} · {g.sources[0].day} to {g.sources.at(-1).day}</option>)}
+              {g.settings.contract} · {g.settings.featureVersion === "mbo_receive_minute_v2" ? "18 features · v2 proxies" : "6 features · v1"} · {g.sources.length} sessions · depth {g.settings.depthLevels} · {g.sources[0].day} to {g.sources.at(-1).day}</option>)}
           </select></label>
           {group && <details><summary>Source IDs and extraction quality settings</summary><pre>{JSON.stringify({ ...group.settings, sources: group.sources }, null, 2)}</pre></details>}
           <label className="ml-field"><span>Research question</span><textarea required maxLength={4000} value={plan.researchQuestion}

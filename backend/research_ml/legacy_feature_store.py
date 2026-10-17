@@ -45,7 +45,7 @@ def _identity(request, source, tick_size):
     # same day can be reused in different experiments and date ranges.
     settings = MBOFeatureRequest.model_validate({
         k: getattr(request, k) for k in MBOFeatureRequest.model_fields
-    }).model_dump(mode="json", exclude={"sources"})
+    }).model_dump(mode="json", exclude={"sources", "featureVersion"})
     return {"formatVersion": FORMAT_VERSION, "featureVersion": FEATURE_VERSION,
             "settings": settings, "source": source.model_dump(mode="json"),
             "tickSize": tick_size, "extractor": _extractor()}

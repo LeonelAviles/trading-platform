@@ -13,6 +13,7 @@ import pandas as pd
 from research_ml.schema import Plan
 from research_ml.regimes import VolumeRegimes
 from engine.mbo_features import FEATURES
+from engine.feature_schema import RICH_FEATURES, features_for, frame_features
 from research_ml.multivariate import MBORidge, MBOKMeans
 
 MAX_BARS = 50_000
@@ -28,7 +29,7 @@ def validate_bars(bars: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("timestamps must be unique and increasing")
     if any(c not in bars for c in COLUMNS):
         raise ValueError("OHLCV columns are required")
-    extra = FEATURES if any(c in bars for c in FEATURES) else []
+    extra = frame_features(bars.columns) if any(c in bars for c in RICH_FEATURES) else []
     if any(c not in bars for c in extra):
         raise ValueError("all ordered MBO features are required")
     frame = bars[COLUMNS + extra].astype(float).copy()
@@ -70,7 +71,7 @@ def samples(bars: pd.DataFrame, plan: Plan, tick_size: float) -> dict[str, pd.Da
         sign = 1 if plan.direction == "long" else -1
         part["netTicks"] = sign * (part.close.shift(-h) - part.open.shift(-1)) / tick_size - plan.roundTripCostTicks
         part["labelEnd"] = ts.shift(-h) + pd.Timedelta(minutes=1)
-        inputs = FEATURES if plan.method.startswith("mbo_") else ["volume"]
+        inputs = features_for(plan.featureVersion) if plan.method.startswith("mbo_") else ["volume"]
         if any(c not in part for c in inputs):
             raise ValueError("MBO methods require verified raw-event features; OHLCV cannot substitute")
         out[key] = part.loc[valid, [*inputs, "netTicks", "labelEnd"]]
@@ -140,7 +141,7 @@ METHODS: dict[str, Method] = {
 
 
 def evaluate(model, data):
-    selected = model.predict(data[FEATURES] if "spread_ticks" in data else data.volume)
+    selected = model.predict(data[model.features] if "spread_ticks" in data else data.volume)
     values = data.netTicks[selected]
     return {"observations": len(data), "signals": len(values),
             "meanNetTicks": float(values.mean()) if len(values) else None,
@@ -161,7 +162,7 @@ def accepted(metrics, plan):
 def discover(bars, plan: Plan, tick_size: float) -> dict:
     parts = samples(bars, plan, tick_size)
     method = METHODS[plan.method]
-    inputs = FEATURES if plan.method.startswith("mbo_") else ["volume"]
+    inputs = features_for(plan.featureVersion) if plan.method.startswith("mbo_") else ["volume"]
     columns = inputs + (["netTicks"] if method.requires_targets else [])
     model, trials = method.fit(parts["train"][columns].copy(), plan)
     result = {"outcome": "no_edge", "reason": "insufficient training signals", "trials": trials,
