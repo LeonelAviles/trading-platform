@@ -40,7 +40,7 @@ def main(argv=None):
         for source in request.sources:
             identity = feature_store._identity(request, source, tick)
             raw = get_paths().raw_dir / "ES" / f"{source.day}.mbo.dbn.zst"
-            if args.restore and not feature_store._path(identity).exists() and not raw.exists():
+            if args.restore and not feature_store.exists(identity) and not raw.exists():
                 from scripts.restore import main as restore
                 restore(["ES", str(source.day)])
             print(f"prepare {request.contract} {source.day}", flush=True)

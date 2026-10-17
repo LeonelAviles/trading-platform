@@ -45,7 +45,7 @@ proved absent; this is documented rather than labeled pristine evidence.
 
 ## Data, formulas and quality
 
-Postgres contains application/research metadata, not raw market events. Raw
+Postgres contains application/research metadata and prepared ML features, not raw market events. Raw
 GLBX.MDP3 MBO is retrieved through existing local AWS access using the local
 manifest. No credential setup or AWS permission changes are needed. The bounded
 preparer HEADs selected missing objects, enforces a 6 GiB raw-cache limit and
@@ -86,7 +86,7 @@ rejects unsupported flags, corrupt order transitions, absent snapshots,
 incomplete terminal events and regressing per-instrument sequences. It cannot
 prove full-channel gap continuity from an instrument-filtered feed.
 
-Verified prepared contract/day Parquet partitions include extraction settings,
+Verified prepared contract/day batches (originally Parquet, now Postgres) include extraction settings,
 source identifiers/hashes, dependency/code hashes, quality counters and a content
 hash. An immutable experiment snapshot pins its selected rows. Neither licensed
 raw files nor source feature/trade rows are committed to Git.
@@ -409,3 +409,166 @@ iteration should first specify a causal directional condition from training-only
 evidence, then use separately selected, unconsumed later sessions and a new finite
 scope. The already reserved July 23–24 and 27–28 sessions cannot become fresh
 heldout evidence again. The sealed historical partition remains untouched.
+
+## Prepared feature storage: Postgres cutover
+
+Prepared ML features now use PostgreSQL (`FEATURE_DATABASE_URL`, a native
+`postgresql://` DSN, independent of SQLAlchemy `DATABASE_URL`). There is no runtime
+Parquet fallback. Raw DBN, trades, bars, replay/catalog Parquet, and immutable
+experiment JSON snapshots retain their existing storage. No economic experiment
+is authorized by this migration. The historical overnight waiver above expired.
+
+The additive `backend/research_ml/feature_store.sql` creates two tables in the
+connection's search path: `prepared_mbo_batches` holds the original identity,
+metadata/provenance document and its digest, plus a logical rows SHA-256;
+`prepared_mbo_rows` holds bigint minute-open nanoseconds, five float64 OHLCV
+columns and the ordered six float64 features. The primary key is
+`(partition_id, timestamp_ns)`; batch lookup uses `(contract, source_day)`.
+Nanoseconds remain integers instead of passing through Postgres microsecond
+`timestamp` precision. Receive-time causality, quality omissions, exact extraction
+settings, raw hashes and source identifiers are unchanged.
+
+Writes use a single transaction per contract/day, a same-identity advisory lock,
+COPY, exact ordered read-back parity, and checksum validation before commit.
+Duplicate identities reuse only fully validated identical content; conflicts and
+partial/corrupt batches fail closed. Readers verify metadata, row count, schema,
+quality and logical checksum; SQL orders by timestamp and limits a day to 391
+rows to detect oversized batches. Expected maximum is 390 rows. Never repair a
+partial batch by accepting fewer rows or by falling back to raw extraction.
+
+Storage mechanics are excluded from extraction identity: the PR4 feature-store
+module hash is pinned explicitly in the read-only legacy adapter. All actual
+extractor files, source settings and dependency versions still participate in
+identity. Imported `partitionId`, metadata digest and `parquetSha256` remain
+unchanged. New batches compute that compatibility Parquet checksum in memory
+without writing a prepared Parquet file; the database independently verifies a
+canonical ordered logical-row checksum. Dependency/extraction changes still
+require new preparation, never reinterpret an old partition.
+
+Existing experiment documents/snapshot bytes are not rewritten. Historical
+snapshot reading and evidence remain compatible without a feature database.
+The existing exact code/config/dependency approval guard remains active:
+executing an old approved-but-unrun experiment after this code change may need
+the original environment or a newly approved experiment. Do not weaken that
+guard or claim a rerun under changed code reproduces the original approval.
+Nautilus consumes the same verified frozen snapshot through the existing path.
+
+### Safe import and recovery (pending on the offline Mac)
+
+Use a backed-up dedicated feature database/schema and a restricted runtime role
+with SELECT/INSERT only on these tables (no UPDATE/DELETE/TRUNCATE or DDL). The
+owner performs explicit schema initialization. Keep credentials in the existing
+ignored `.env` or environment; never put a password in a command argument/log.
+Set a finite `FEATURE_STORE_MAX_BYTES` and verify database-volume free space
+before starting. `FEATURE_DATABASE_URL` is required for normal feature reads and
+preparation; it does not redirect application metadata.
+
+From `backend/`, with the repository's original DATA_DIR and dependencies:
+
+```sh
+# Validation only; no DB writes and no downloads, every original retained.
+../.venv/bin/python scripts/import_mbo_features.py --contract ESU6
+# Add tables explicitly (omit --initialize when runtime lacks DDL permission).
+../.venv/bin/python scripts/import_mbo_features.py --initialize --apply --contract ESU6
+# Repeat the same command after interruption; verified commits become reused.
+../.venv/bin/python scripts/import_mbo_features.py --apply --contract ESU6
+```
+
+The importer validates bounded metadata and exact original Parquet bytes/hash,
+checks the numeric schema and at most 390 rows **before decoding**, then commits
+and reads back one day. Each committed DB identity is its durable checkpoint;
+stdout reports `validated`, `committed` or `reused`. A failed transaction leaves
+no visible batch/rows. Stop on any missing metadata, corrupt source, conflicting
+identity, partial database batch or disk-budget failure; retain originals and
+logs for investigation. Correct the cause and rerun, never overwrite a conflict.
+An uncertain client disconnect may have committed: rerunning verifies that
+identity before doing anything else. Previously committed days survive a later
+day's failure. There is no deletion, eviction, wipe, or automatic repair option.
+
+Before application cutover, compare inventory/counts and run a prepared-read
+check for every requested identity using its pinned settings/dependency versions;
+verify an already frozen historical snapshot separately. Do not change
+`DATABASE_URL` as part of this operation. Rollback code/config using the original
+checkout and retained prepared directories; keep the additive feature database
+for investigation. Newly prepared Postgres-only days need their verified database
+backup or re-preparation, and are not magically available to the old checkout.
+Keep regular `pg_dump` backups and verify restoration in a separate database.
+No actual Mac/Postgres/data migration has been verified in this cloud task.
+
+### Capacity, bounded processing and portability
+
+Default feature relation budget is **1 GiB**, not unlimited disk.
+`FEATURE_STORE_MAX_BYTES` counts both tables, indexes and TOAST with
+`pg_total_relation_size`; a global transaction lock serializes capacity checks,
+reserving 256 KiB before COPY and checking actual relation sizes afterward.
+Capacity failures roll back. This is a relation budget, **not** a filesystem
+quota: WAL, temporary files, dead tuples, other databases and backups need extra
+space. Failed transactions can still allocate physical pages/WAL. Monitor the
+actual server volume externally and stop before its free-space floor. PostgreSQL
+cannot infer remote volume free bytes from the client. Local extraction and
+import enforce a default 2 GiB floor (`FEATURE_MIN_FREE_GIB` for extraction,
+`--min-free-gib` for import; minimum 1 GiB). Existing bounded S3 preparation keeps
+its stricter raw-cache/download guards and never removes S3 or local originals.
+
+An uncompressed 390-row day has 390 × (8 + 11 × 8) = **37,440 bytes** of timestamp
+and numeric payload before tuple/index/metadata/WAL overhead; Parquet may compress
+better, so moving to Postgres is not a promise of smaller disk use. A cloud
+Postgres 16.15 synthetic measurement (3 batches, 90 rows) used **155,648 bytes**
+for both relations including indexes/TOAST. Small-table page overhead makes this
+unsuitable for linear real-archive sizing. Measure actual representative batches
+and backup/WAL peaks before choosing the budget:
+
+```sql
+SELECT count(*), sum((metadata->'document'->>'rows')::integer)
+FROM prepared_mbo_batches;
+SELECT pg_total_relation_size('prepared_mbo_batches') AS metadata_bytes,
+       pg_total_relation_size('prepared_mbo_rows') AS row_bytes;
+```
+
+Extraction retains the existing 100,000-record decoder chunks, 500,000-order
+book cap and 100,000-record incomplete-event cap. Import buffers at most one
+8 MB source Parquet plus one 390-row numeric frame; metadata is at most 128 KB.
+Experiment reads remain capped at 50,000 bars; inventory is capped at 10,000
+batches and asks for narrower filters beyond that. Day transactions and durable
+identity checkpoints support bounded workers; no whole-archive load is needed.
+No cache eviction is implemented: any future opt-in eviction must be limited to
+verified newly downloaded recoverable cache after durable DB import, never live
+data or preexisting files.
+
+The code uses portable SQL and psycopg COPY without host-specific paths. An
+Oracle Always Free ARM64 host is only a prospective target; no server, capacity,
+account access, deployment or free-tier availability is assumed. Verify the exact
+Python/package wheels and memory limits on the target before installation; wheel
+availability does not establish runtime compatibility. Preserve the tested
+Nautilus API/version and do not jump to a newer major version for deployment.
+
+PyPI release-file checks on this cloud environment found CPython 3.12 Linux
+ARM64 wheels for the exact installed versions: Nautilus Trader 1.231.0
+(`manylinux_2_35`), databento-dbn 0.70.0 (`manylinux2014`), psycopg-binary 3.3.6
+(`manylinux_2_28`), PyArrow 26.0.0 (`manylinux_2_28`) and DuckDB 1.5.6
+(`manylinux_2_28`). Thus the strictest checked wheel requires glibc 2.35+;
+Ubuntu 22.04 ARM64 is a candidate, not a verified installation. This check used
+[PyPI's release JSON API](https://pypi.org/pypi/nautilus_trader/1.231.0/json),
+not an ARM64 execution test. Repository dependencies remain unchanged; preserve
+an exact environment lock before moving approved research between machines.
+
+Batch publication, validation reads, inventory and explicit schema initialization
+use 10-second lock and 60-second statement timeouts. A busy/failed server stops
+that attempt; resumption uses the same identity checkpoint rather than starting
+unbounded retries or bypassing quality checks.
+
+### Cloud verification checkpoint
+
+Synthetic fixtures only, disposable PostgreSQL 16.15, Python 3.12:
+
+- Full backend with PostgreSQL application metadata and feature storage:
+  419 passed, 1 expected SQLite-WAL-specific skip.
+- Full backend with SQLite application metadata and PostgreSQL feature storage:
+  419 passed, 1 expected Postgres-destination-specific skip.
+- Frontend: lint and production build passed; 38 tests passed.
+- CI's PostgreSQL job now sets `TEST_FEATURE_POSTGRES_URL`; the integration
+  fixture creates/drops a unique test schema and never targets existing data.
+  Without that test-only variable, integration cases explicitly skip.
+
+These are code/synthetic migration checks, not proof of real Mac migration,
+real-data quality, economic validity, Oracle capacity or ARM execution.

@@ -117,8 +117,10 @@ bind mounts.
 `make dev` runs `uvicorn app:app` from `backend/`; `uvicorn main:app` still
 works as an alias.
 
-MBO research can reuse local Parquet features instead of rereading raw files for
-each experiment. Add `RESTORE=1` to the preparation command to download only
+MBO research reuses prepared PostgreSQL features instead of rereading raw files
+for each experiment. Configure `FEATURE_DATABASE_URL` and initialize/import with
+[the prepared-feature cutover runbook](docs/11-bounded-real-data-workflow.md#prepared-feature-storage-postgres-cutover)
+before preparation. Add `RESTORE=1` to the preparation command to download only
 missing selected days from S3, then select `dataSource: "prepared_MBO_features"`
 in the experiment plan. Preparation does not train a model. See
 [ML research preparation and API workflow](docs/08-ml-research.md#prepare-once-and-reuse-local-feature-rows).

@@ -254,7 +254,9 @@ def export(tid, eid):
 
 @pytest.mark.parametrize("kind", ["ridge", "kmeans"])
 @pytest.mark.parametrize("data_source", ["raw_DBN_MBO", "prepared_MBO_features"])
-def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data_source):
+def test_raw_to_approval_to_frozen_nautilus(raw_context, kind, monkeypatch, data_source, request):
+    if data_source == "prepared_MBO_features":
+        request.getfixturevalue("feature_database")
     tid, paths_ = raw_context
     chosen = plan(kind, dataSource=data_source)
     if data_source == "prepared_MBO_features":

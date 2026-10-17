@@ -55,7 +55,9 @@ The MBO path supports raw extraction and reusable prepared features. The default
 `dataSource: "raw_DBN_MBO"` reads local
 `market-data/raw/ES/YYYY-MM-DD.mbo.dbn.zst` files directly. With
 `dataSource: "prepared_MBO_features"`, it reads verified contract/day partitions
-from `data/market/mbo_features/` instead; raw files need not remain local.
+from PostgreSQL through `FEATURE_DATABASE_URL`; raw files need not remain local.
+Retain original prepared files during migration; see the
+[cutover and recovery runbook](11-bounded-real-data-workflow.md#prepared-feature-storage-postgres-cutover).
 There is no fallback to OHLCV zero-filled flow, the identity-stripped replay cache,
 end-of-second aggregated checkpoints, or the heatmap feed that omits small levels.
 One fixed outright ES contract and daily publisher/instrument/channel IDs are approved
@@ -200,11 +202,14 @@ contract, dates, IDs and quality limits with reviewed values for your data):
 }
 ```
 
-Each immutable partition lives under
-`data/market/mbo_features/contract=<contract>/date=<day>/<identity>/`, with
-`rows.parquet` and `metadata.json`. The rows contain minute-open timestamps,
-OHLCV and the six causal features, with no outcomes or model parameters. DuckDB
-queries the exact hash-verified Parquet bytes. The identity includes the daily
+Each immutable contract/day partition lives in PostgreSQL
+`prepared_mbo_batches` and `prepared_mbo_rows`. Configure the separate
+`FEATURE_DATABASE_URL` native PostgreSQL DSN and initialize/import explicitly
+using `scripts/import_mbo_features.py`; dry-run validation is the default.
+Original `data/market/mbo_features/.../{rows.parquet,metadata.json}` files are
+read-only import sources and remain retained. The rows contain bigint
+minute-open nanoseconds, OHLCV and the six causal features, with no outcomes or
+model parameters. Reads verify ordered rows, counts and checksums. The identity includes the daily
 source mapping, contract, tick size, extraction/quality settings, feature
 version, extractor source hashes and dependency versions. Changing any of those
 requires preparation under a new identity. Existing partitions are not overwritten;
