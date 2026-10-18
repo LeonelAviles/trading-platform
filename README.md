@@ -117,8 +117,10 @@ bind mounts.
 `make dev` runs `uvicorn app:app` from `backend/`; `uvicorn main:app` still
 works as an alias.
 
-MBO research can reuse local Parquet features instead of rereading raw files for
-each experiment. Add `RESTORE=1` to the preparation command to download only
+MBO research reuses prepared PostgreSQL features instead of rereading raw files
+for each experiment. Configure `FEATURE_DATABASE_URL` and initialize/import with
+[the prepared-feature cutover runbook](docs/11-bounded-real-data-workflow.md#prepared-feature-storage-postgres-cutover)
+before preparation. Add `RESTORE=1` to the preparation command to download only
 missing selected days from S3, then select `dataSource: "prepared_MBO_features"`
 in the experiment plan. Preparation does not train a model. See
 [ML research preparation and API workflow](docs/08-ml-research.md#prepare-once-and-reuse-local-feature-rows).
@@ -197,3 +199,78 @@ every push.
 ## Bounded real-data workflow
 
 See [the bounded research runbook](docs/11-bounded-real-data-workflow.md) for the real-data run ledger, scoped assistant review, frozen chronological partitions, Nautilus execution convention, consistency diagnostics, recoverable archival and reproduction commands.
+
+### Versioned causal MBO features
+
+Preparation and research accept `featureVersion: "mbo_receive_minute_v2"` for
+18 ordered inputs: the original six plus the twelve observations below. The
+default remains `mbo_receive_minute_v1`; existing six-input frozen models,
+prepared identities and snapshots are retained. V2 requires raw MBO extraction;
+importing six-column prepared data does not create unavailable v2 observations.
+The discovery dataset selector shows each version separately.
+
+All windows use completed F_LAST events at receive time in `[minute open, close)`.
+Signals become available only at minute close. VWAP resets at 09:30 New York
+each session; snapshots and premarket events do not contribute. `T` is a trade
+counted once, `F` is not another execution. No options/GEX inputs are available.
+Let `B/S` be known-side aggressive buy/sell contracts in the minute, `q` its
+last-minus-first trade price in ticks, and `Ra/Rb` the matched replenishment
+contracts defined below. Feature order after the original six is:
+
+| Input | Definition and units |
+|---|---|
+| `session_vwap` | Cumulative sum(trade price × contracts) / sum(contracts), price points; includes unknown-side trades and trades in omitted-quality minutes |
+| `distance_to_session_vwap_ticks` | (Minute last trade − session VWAP) / tick size, signed ticks |
+| `session_vwap_slope_ticks` | Change since the preceding minute boundary / tick size, ticks per minute; zero at the first nonempty session boundary |
+| `signed_aggressive_flow_rate` | `(B − S) / 60`, contracts per second |
+| `aggressive_flow_imbalance` | `(B − S) / (B + S)`, dimensionless; zero when no known-side trades |
+| `buy_absorption_proxy` | `B / (1 + max(q, 0))`, contracts per tick-regularized favorable buy response |
+| `sell_absorption_proxy` | `S / (1 + max(-q, 0))`, contracts per tick-regularized favorable sell response |
+| `ask_replenishment_rate_proxy` | `Ra / 60`, observed matched ask-add contracts per second |
+| `bid_replenishment_rate_proxy` | `Rb / 60`, observed matched bid-add contracts per second |
+| `buy_absorption_replenishment_proxy` | `Ra / (1 + max(q, 0))`, matched ask contracts per tick-regularized response |
+| `sell_absorption_replenishment_proxy` | `Rb / (1 + max(-q, 0))`, matched bid contracts per tick-regularized response |
+| `iceberg_repeat_replenishment_proxy` | Matched contracts from the second and later displayed adds in a same-price trade episode / `(B + S)`; zero denominator gives zero |
+
+Replenishment matches an ordinary displayed `A` against a known-side `T` at the
+same price and opposite resting side from an **earlier complete event with a
+strictly earlier receive timestamp**, at most one second earlier. Same-event
+adds, snapshots and `M` size modifications are excluded. A side/price episode
+expires after a gap exceeding one second since its last trade; matching credit
+uses FIFO unconsumed trade credits that each expire after one second, even
+when later trades keep the same-price episode active. Repeated adds cannot
+inflate credited contracts beyond eligible trades. Credits/counts reset
+every minute and every session. No future price response, execution outcomes,
+subsequent minute or later snapshot enters these inputs.
+
+These are **proxies, not evidence of hidden/iceberg liquidity or true passive
+absorption**. The feed does not establish reserve size, order ownership or why
+an order replenished. Independent displayed orders can produce the same pattern;
+modifications, same-event replenishment and boundary-crossing episodes are
+intentionally missed. High ratios can reflect mechanically flat prices, and
+unknown aggressors reduce observed signed flow. Absorption uses the minute's
+first/last trade response, not a causal intervention or future outcome.
+
+No-trade, stale/missing/crossed-book minutes retain the existing omission policy;
+no features or outcomes are imputed. Session VWAP still incorporates valid
+completed trades from omitted minutes, and slope compares adjacent clock-minute
+boundaries. Unknown-only eligible minutes retain VWAP with zero known-flow
+ratios/proxies. Non-finite or incomplete inputs fail closed. Training-only
+population standardization and frozen inference enforce the chosen version's
+exact order; v1/v2 vectors cannot be substituted. Predictive value and real-data
+behavior remain unverified until data/runtime access and separate experiment
+approval. See [storage and batch limits](docs/11-bounded-real-data-workflow.md#prepared-feature-storage-postgres-cutover).
+
+Feed semantics follow Databento's [trade-side definition](https://databento.com/docs/schemas-and-data-formats/trades)
+and [MBO order tracking/F_LAST rules](https://databento.com/docs/examples/order-book/order-tracking):
+trade side identifies the aggressor, while T/F do not independently mutate the
+book. CME documents that native iceberg refresh can retain an order ID while
+synthetic refresh can receive a new one in its [MBO FAQ](https://www.cmegroup.com/articles/faqs/market-by-order-mbo.html).
+This implementation does **not** classify those mechanisms or track native
+same-ID refresh; its repeated-add observation is a deliberately narrower proxy.
+
+V2 intentionally includes correlated inputs: signed flow is algebraically
+derivable from the existing buy/sell rates, and VWAP/absorption ratios share
+trade observations. Their joint use changes ridge penalties and cluster geometry;
+there is no automatic feature selection or claim that eighteen inputs improve
+prediction. That comparison requires a separately approved real-data experiment.

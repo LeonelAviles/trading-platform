@@ -6,11 +6,12 @@ from pydantic import Field, model_validator
 from typing import Literal
 from research_ml.schema import StrictModel
 from engine.mbo_features import FEATURES, FEATURE_VERSION
+from engine.feature_schema import V2, features_for
 
 
 class FrozenModel(StrictModel):
-    version: Literal["frozen_mbo_v1"] = "frozen_mbo_v1"
-    featureVersion: Literal["mbo_receive_minute_v1"] = FEATURE_VERSION
+    version: Literal["frozen_mbo_v1", "frozen_mbo_v2"] = "frozen_mbo_v1"
+    featureVersion: Literal["mbo_receive_minute_v1", "mbo_receive_minute_v2"] = FEATURE_VERSION
     kind: Literal["ridge", "kmeans"]
     features: list[str]
     mean: list[float]
@@ -23,8 +24,11 @@ class FrozenModel(StrictModel):
 
     @model_validator(mode="after")
     def dimensions(self):
-        n = len(FEATURES)
-        if self.features != FEATURES or len(self.mean) != n or len(self.scale) != n or any(x <= 0 for x in self.scale):
+        expected = features_for(self.featureVersion)
+        if (self.version == "frozen_mbo_v2") != (self.featureVersion == V2):
+            raise ValueError("frozen model version differs from feature version")
+        n = len(expected)
+        if self.features != expected or len(self.mean) != n or len(self.scale) != n or any(x <= 0 for x in self.scale):
             raise ValueError("frozen feature order/scaler mismatch")
         if self.kind == "ridge":
             if len(self.coefficients) != n or self.centers or self.active:
@@ -37,8 +41,10 @@ class FrozenModel(StrictModel):
         return self
 
     def predict(self, values):
+        if hasattr(values, "columns") and list(values.columns) != self.features:
+            raise ValueError("model input feature order mismatch")
         x = np.asarray(values, dtype=float)
-        if x.ndim != 2 or x.shape[1] != len(FEATURES) or not np.isfinite(x).all():
+        if x.ndim != 2 or x.shape[1] != len(self.features) or not np.isfinite(x).all():
             raise ValueError("complete finite ordered MBO feature matrix required")
         z = (x - np.asarray(self.mean)) / np.asarray(self.scale)
         if not np.isfinite(z).all():

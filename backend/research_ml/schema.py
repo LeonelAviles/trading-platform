@@ -78,6 +78,7 @@ class MBOSource(StrictModel):
 
 class MBOFeatureRequest(StrictModel):
     """Data preparation only: no outcomes, fitting or trading choices."""
+    featureVersion: Literal["mbo_receive_minute_v1", "mbo_receive_minute_v2"] = "mbo_receive_minute_v1"
     contract: str = Field(pattern=r"^ES[HMUZ][0-9]{1,2}$")
     sources: list[MBOSource] = Field(min_length=1, max_length=366)
     depthLevels: int = Field(strict=True, ge=1, le=50)

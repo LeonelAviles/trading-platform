@@ -1,182 +1,227 @@
-"""Reusable, verified contract/day MBO features, queried locally with DuckDB.
+"""Immutable Postgres prepared MBO batches; legacy Parquet is import-only.
 
-Preparation is data-only. Experiments still freeze their own selected rows and
-require approval before fitting. Committed partitions are never overwritten.
+A batch is one contract/day (at most 390 rows). Experiments still freeze their
+own approved snapshots; database availability is unnecessary for old runs.
 """
 import hashlib
-import importlib.metadata
+import io
 import json
+import math
 import os
-from pathlib import Path
 import shutil
-import tempfile
 
-import duckdb
-import numpy as np
 import pandas as pd
+import psycopg
+from psycopg.types.json import Jsonb
 
 from engine.mbo_features import FEATURES, FEATURE_VERSION
+from engine.feature_schema import V2, features_for, frame_features
 from market.paths import get_paths
-from research_ml import core, mbo_source
-from research_ml.schema import MBOFeatureRequest
+from research_ml import core, mbo_source, legacy_feature_store as legacy
+from research_ml.schema import MBOSource
 
-FORMAT_VERSION = "mbo_feature_partition_v1"
-MAX_PARQUET_BYTES = 8_000_000
-MAX_METADATA_BYTES = 128_000
-
-
-def _digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                    allow_nan=False).encode()).hexdigest()
-
-
-def _extractor():
-    backend = Path(__file__).resolve().parents[1]
-    files = ["engine/mbo_features.py", "engine/session.py", "replay/book.py",
-             "research_ml/mbo_source.py", "research_ml/feature_store.py"]
-    return {"code": {p: mbo_source.file_hash(backend / p) for p in files},
-            "dependencies": {p: importlib.metadata.version(p) for p in
-                             ("numpy", "pandas", "pyarrow", "duckdb", "databento", "databento-dbn")}}
-
-
+# Storage is deliberately excluded from extraction semantics. This preserves
+# PR4 identities, including its pinned storage-module hash, for imported days.
 def _identity(request, source, tick_size):
-    if not np.isfinite(tick_size) or tick_size <= 0:
-        raise ValueError("positive finite tick size required")
-    # Exclude model, targets, experiment dates and other source days, so the
-    # same day can be reused in different experiments and date ranges.
-    settings = MBOFeatureRequest.model_validate({
-        k: getattr(request, k) for k in MBOFeatureRequest.model_fields
-    }).model_dump(mode="json", exclude={"sources"})
-    return {"formatVersion": FORMAT_VERSION, "featureVersion": FEATURE_VERSION,
-            "settings": settings, "source": source.model_dump(mode="json"),
-            "tickSize": tick_size, "extractor": _extractor()}
+    identity = legacy._identity(request, source, tick_size)
+    version = getattr(request, "featureVersion", FEATURE_VERSION)
+    identity["featureVersion"] = version
+    if version == V2:
+        from pathlib import Path
+        backend = Path(__file__).resolve().parents[1]
+        identity["settings"]["featureVersion"] = version
+        identity["extractor"]["code"].update({p: mbo_source.file_hash(backend / p) for p in
+            ("engine/mbo_features_v2.py", "engine/feature_schema.py", "research_ml/mbo_source_v2.py")})
+    return identity
 
 
-def _path(identity):
-    return (get_paths().mbo_features_dir / f"contract={identity['settings']['contract']}" /
-            f"date={identity['source']['day']}" / _digest(identity))
+_digest = legacy._digest
 
 
-def _validate_frame(frame, source):
-    if list(frame.columns) != core.COLUMNS + FEATURES:
+def _validate_frame(frame, source, version=FEATURE_VERSION):
+    if list(frame.columns) != core.COLUMNS + features_for(version):
         raise ValueError("prepared MBO feature schema changed")
-    frame = core.validate_bars(frame)
-    local = frame.index.tz_convert("America/New_York")
-    if (len(frame) > 390 or any(local.strftime("%Y-%m-%d") != str(source.day))
-            or any(local.strftime("%H:%M") < "09:30") or any(local.strftime("%H:%M") >= "16:00")):
-        raise ValueError("prepared MBO rows exceed selected session")
-    return frame
+    # Reuse original session/quality guards on the unchanged v1 prefix, then
+    # validate all v2 numerics without discarding their explicit ordering.
+    legacy._validate_frame(frame[core.COLUMNS + FEATURES], source)
+    return core.validate_bars(frame)
 
 
-def _metadata(path):
-    try:
-        with (path / "metadata.json").open("rb") as stream:
-            content = stream.read(MAX_METADATA_BYTES + 1)
-        if len(content) > MAX_METADATA_BYTES:
-            raise ValueError("prepared MBO metadata exceeds size limit")
-        meta = json.loads(content)
-        document = meta["document"]
-        if (_digest(document) != meta["digest"] or _path(document["identity"]) != path
-                or meta["partitionId"] != _digest(document["identity"])):
-            raise ValueError("prepared MBO metadata identity changed")
-        return meta
-    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("prepared MBO metadata missing or corrupt") from exc
+def _columns(identity):
+    return core.COLUMNS + features_for(identity["featureVersion"])
+
+
+def _table(identity):
+    return "prepared_mbo_v2_rows" if identity["featureVersion"] == V2 else "prepared_mbo_rows"
+
+
+_SIZE_SQL = "SELECT pg_total_relation_size('prepared_mbo_batches') + pg_total_relation_size('prepared_mbo_rows') + pg_total_relation_size('prepared_mbo_v2_rows')"
+COLUMNS = core.COLUMNS + FEATURES
+MAX_INVENTORY_BYTES = 8_000_000
+
+
+def connect():
+    url = os.environ.get("FEATURE_DATABASE_URL")
+    if not url:
+        raise ValueError("FEATURE_DATABASE_URL must point to PostgreSQL; import prepared Parquet first")
+    return psycopg.connect(url, connect_timeout=10)
+
+
+def initialize():
+    """Explicit additive schema setup; never invoked by reads or extraction."""
+    from pathlib import Path
+    with connect() as conn:
+        _timeouts(conn)
+        conn.execute((Path(__file__).with_name("feature_store.sql")).read_text())
+
+
+def _timeouts(conn):
+    conn.execute("SET LOCAL lock_timeout = '10s'")
+    conn.execute("SET LOCAL statement_timeout = '60s'")
+
+
+def _rows(frame):
+    return [(int(ts), *(float(v) for v in values)) for ts, values in
+            zip(frame.index.as_unit("ns").asi8, frame[core.COLUMNS + frame_features(frame.columns)].itertuples(index=False, name=None))]
+
+
+def _checksum(rows, columns=COLUMNS):
+    return _digest({"schema": ["timestamp_ns", *columns], "rows": rows})
+
+
+def _read_conn(conn, identity):
+    _timeouts(conn)
+    pid = _digest(identity)
+    record = conn.execute("SELECT metadata, rows_sha256 FROM prepared_mbo_batches WHERE partition_id=%s", (pid,)).fetchone()
+    if record is None:
+        raise ValueError("prepared MBO features unavailable; prepare these settings first")
+    meta, checksum = record
+    document = meta["document"]
+    if (meta["partitionId"] != pid or document["identity"] != identity
+            or _digest(document) != meta["digest"]):
+        raise ValueError("prepared MBO metadata identity changed")
+    # LIMIT bounds memory even if an administrator has corrupted the table.
+    columns = _columns(identity)
+    rows = conn.execute("SELECT timestamp_ns," + ",".join(columns) +
+        " FROM " + _table(identity) + " WHERE partition_id=%s ORDER BY timestamp_ns LIMIT 391", (pid,)).fetchall()
+    if len(rows) != document["rows"] or _checksum(rows, columns) != checksum:
+        raise ValueError("prepared MBO row count or checksum changed")
+    frame = pd.DataFrame(rows, columns=["timestamp_ns", *columns])
+    frame.index = pd.to_datetime(frame.pop("timestamp_ns"), unit="ns", utc=True)
+    frame.index.name = None
+    return _validate_frame(frame, MBOSource.model_validate(identity["source"]), identity["featureVersion"]), meta
 
 
 def _read(identity):
-    path = _path(identity)
-    meta = _metadata(path)
-    document = meta["document"]
-    if document["identity"] != identity:
-        raise ValueError("prepared MBO extraction settings changed")
-    parquet = path / "rows.parquet"
-    try:
-        if parquet.stat().st_size > MAX_PARQUET_BYTES:
-            raise ValueError("prepared MBO partition exceeds size limit")
-        # Read the exact checked bytes, including when another process alters
-        # the file during a query. A before/after hash alone has a race.
-        with parquet.open("rb") as stream:
-            content = stream.read(MAX_PARQUET_BYTES + 1)
-        if len(content) > MAX_PARQUET_BYTES:
-            raise ValueError("prepared MBO partition exceeds size limit")
-        if hashlib.sha256(content).hexdigest() != document["parquetSha256"]:
-            raise ValueError("prepared MBO partition checksum changed")
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        table = pq.read_table(pa.BufferReader(content))
-        with duckdb.connect() as con:
-            con.register("prepared_rows", table)
-            frame = con.execute("SELECT * FROM prepared_rows").fetchdf()
-        if list(frame.columns) != ["timestamp_ns", *core.COLUMNS, *FEATURES]:
-            raise ValueError("prepared MBO feature schema changed")
-        if not pd.api.types.is_integer_dtype(frame.timestamp_ns):
-            raise ValueError("prepared MBO timestamps must be integer nanoseconds")
-        frame.index = pd.to_datetime(frame.pop("timestamp_ns"), unit="ns", utc=True)
-        frame.index.name = None
-        source = identity["source"]
-        from research_ml.schema import MBOSource
-        frame = _validate_frame(frame, MBOSource.model_validate(source))
-        if len(frame) != document["rows"]:
-            raise ValueError("prepared MBO row count changed")
-        return frame, meta
-    except (OSError, KeyError, TypeError, duckdb.Error) as exc:
-        raise ValueError("prepared MBO partition missing or corrupt") from exc
+    with connect() as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        return _read_conn(conn, identity)
+
+
+def exists(identity):
+    with connect() as conn:
+        return conn.execute("SELECT 1 FROM prepared_mbo_batches WHERE partition_id=%s", (_digest(identity),)).fetchone() is not None
+
+
+def _publish(frame, meta):
+    identity = meta["document"]["identity"]
+    frame = _validate_frame(frame, MBOSource.model_validate(identity["source"]), identity["featureVersion"])
+    columns = _columns(identity)
+    rows = _rows(frame)
+    if (len(rows) != meta["document"]["rows"] or meta["partitionId"] != _digest(identity)
+            or meta["digest"] != _digest(meta["document"])):
+        raise ValueError("prepared MBO import metadata mismatch")
+    with connect() as conn:
+        _timeouts(conn)
+        # Serialize publishers of the same identity without blocking other days.
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (int(meta["partitionId"][:16], 16) - 2**63,))
+        if conn.execute("SELECT 1 FROM prepared_mbo_batches WHERE partition_id=%s", (meta["partitionId"],)).fetchone():
+            actual, winner = _read_conn(conn, identity)
+            if winner != meta or _checksum(_rows(actual), columns) != _checksum(rows, columns):
+                raise ValueError("conflicting concurrent MBO preparation")
+            return {**winner, "reused": True}
+        # Operator sets a finite byte budget. Include indexes/TOAST; leave WAL,
+        # snapshots, backups and server free space outside this relation budget.
+        budget = int(os.environ.get("FEATURE_STORE_MAX_BYTES", "1073741824"))
+        conn.execute("SELECT pg_advisory_xact_lock(1706198701)")
+        size = conn.execute(_SIZE_SQL).fetchone()[0]
+        if budget <= 0 or size + 262144 > budget:
+            raise ValueError("prepared feature database capacity guard; increase verified capacity or stop")
+        conn.execute("INSERT INTO prepared_mbo_batches VALUES (%s,%s,%s,%s,%s)",
+                     (meta["partitionId"], identity["settings"]["contract"], identity["source"]["day"], Jsonb(meta), _checksum(rows, columns)))
+        with conn.cursor() as cur:
+            with cur.copy("COPY " + _table(identity) + " (partition_id,timestamp_ns," + ",".join(columns) + ") FROM STDIN") as copy:
+                for row in rows:
+                    copy.write_row((meta["partitionId"], *row))
+        actual_size = conn.execute(_SIZE_SQL).fetchone()[0]
+        if actual_size > budget:
+            raise ValueError("prepared feature database capacity guard after insert; transaction rolled back")
+        actual, _ = _read_conn(conn, identity)
+        pd.testing.assert_frame_equal(frame, actual, check_freq=False)
+    return {**meta, "reused": False}
 
 
 def prepare_day(request, source, tick_size):
     identity = _identity(request, source, tick_size)
-    path = _path(identity)
-    if path.exists():
+    if exists(identity):
         _, meta = _read(identity)
         raw = get_paths().raw_dir / "ES" / f"{source.day}.mbo.dbn.zst"
         if raw.is_file() and mbo_source.file_hash(raw) != meta["document"]["rawSource"]["sha256"]:
             raise ValueError("raw source differs from prepared MBO partition; existing partition was not replaced")
         return {**meta, "reused": True}
-    frame, raw_source = mbo_source.extract_day(request, source, tick_size)
-    frame = _validate_frame(frame, source)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".preparing-", dir=path.parent))
-    try:
-        rows = frame.reset_index(drop=True)
-        rows.insert(0, "timestamp_ns", frame.index.as_unit("ns").asi8)
-        rows.to_parquet(staging / "rows.parquet", index=False)
-        document = {"identity": identity, "rawSource": raw_source, "rows": len(frame),
-                    "parquetSha256": mbo_source.file_hash(staging / "rows.parquet")}
-        meta = {"partitionId": _digest(identity), "document": document, "digest": _digest(document)}
-        (staging / "metadata.json").write_text(json.dumps(meta, sort_keys=True, allow_nan=False))
-        try:
-            os.rename(staging, path)  # Publish both files atomically; never merge directories.
-        except OSError:
-            if not path.exists():
-                raise
-            # A concurrent preparer won. Accept identical content only.
-            _, winner = _read(identity)
-            if winner["digest"] != meta["digest"]:
-                raise ValueError("conflicting concurrent MBO preparation")
-            return {**winner, "reused": True}
-        return {**meta, "reused": False}
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+    parent = get_paths().data_dir
+    while not parent.exists():
+        parent = parent.parent
+    floor = float(os.environ.get("FEATURE_MIN_FREE_GIB", "2"))
+    if not math.isfinite(floor) or floor < 1 or shutil.disk_usage(parent).free < floor * 2**30:
+        raise ValueError("local free-disk floor reached before feature extraction")
+    extractor = mbo_source
+    if identity["featureVersion"] == V2:
+        from research_ml import mbo_source_v2 as extractor
+    frame, raw_source = extractor.extract_day(request, source, tick_size)
+    frame = _validate_frame(frame, source, identity["featureVersion"])
+    # Preserve the PR4 content document for compatibility; no persistent Parquet
+    # is written. Logical row checksums independently verify database content.
+    rows = frame.reset_index(drop=True)
+    rows.insert(0, "timestamp_ns", frame.index.as_unit("ns").asi8)
+    content = io.BytesIO()
+    rows.to_parquet(content, index=False)
+    document = {"identity": identity, "rawSource": raw_source, "rows": len(frame),
+                "parquetSha256": hashlib.sha256(content.getvalue()).hexdigest()}
+    return _publish(frame, {"partitionId": _digest(identity), "document": document, "digest": _digest(document)})
 
 
-def prepare(request: MBOFeatureRequest, tick_size):
+def prepare(request, tick_size):
     return {"partitions": [prepare_day(request, source, tick_size) for source in request.sources]}
 
 
 def inventory(contract=None, start=None, end=None):
-    """List committed metadata only; experiment reads verify the actual rows."""
     out = []
-    for file in sorted(get_paths().mbo_features_dir.glob("contract=*/date=*/*/metadata.json")):
-        if file.parent.name.startswith("."):
-            continue
-        # Filter by directory names before reading unrelated partitions.
-        symbol, day = file.parents[2].name[9:], file.parents[1].name[5:]
-        if (contract and symbol != contract) or (start and day < str(start)) or (end and day > str(end)):
-            continue
-        out.append(_metadata(file.parent))
+    metadata_bytes = 0
+    with connect() as conn:
+        _timeouts(conn)
+        with conn.cursor(name="feature_inventory") as cur:
+            cur.itersize = 64
+            cur.execute("SELECT metadata FROM prepared_mbo_batches WHERE (%s::text IS NULL OR contract=%s) AND (%s::date IS NULL OR source_day>=%s) AND (%s::date IS NULL OR source_day<=%s) ORDER BY contract,source_day,partition_id", (contract,contract,start,start,end,end))
+            for (meta,) in cur:
+                metadata_bytes += len(json.dumps(meta).encode())
+                if metadata_bytes > MAX_INVENTORY_BYTES:
+                    raise ValueError("inventory exceeds metadata memory bound; narrow filters")
+                if len(out) >= 10000:
+                    raise ValueError("inventory exceeds 10000 batches; narrow filters")
+                if _digest(meta["document"]) != meta["digest"]:
+                    raise ValueError("prepared MBO metadata checksum changed")
+                out.append(meta)
     return {"partitions": out, "rowChecksumsVerified": False}
+
+
+def import_partition(path):
+    """Verify exact original bytes, commit one day, verify parity; retain source."""
+    meta = legacy._metadata(path)
+    frame, verified = legacy._read(meta["document"]["identity"])
+    if verified != meta:
+        raise ValueError("legacy metadata changed during import")
+    return _publish(frame, meta)
 
 
 def load(plan, sessions, tick_size):
@@ -185,10 +230,7 @@ def load(plan, sessions, tick_size):
     frames, sources, partitions = [], [], []
     rows = 0
     for source in plan.sources:
-        identity = _identity(plan, source, tick_size)
-        if not _path(identity).exists():
-            raise ValueError(f"prepared MBO features unavailable for {plan.contract} {source.day}; prepare these settings first")
-        frame, meta = _read(identity)
+        frame, meta = _read(_identity(plan, source, tick_size))
         rows += len(frame)
         if rows > core.MAX_BARS:
             raise ValueError("dataset requires 1..50,000 bars; select a smaller date range")
@@ -197,7 +239,7 @@ def load(plan, sessions, tick_size):
         partitions.append({"id": meta["partitionId"], "digest": meta["digest"],
                            "parquetSha256": meta["document"]["parquetSha256"]})
     return pd.concat(frames), {"source": "prepared_MBO_features", "contract": plan.contract,
-        "sources": sources, "featurePartitions": partitions, "featureVersion": FEATURE_VERSION,
+        "sources": sources, "featurePartitions": partitions, "featureVersion": getattr(plan, "featureVersion", FEATURE_VERSION),
         "identityPolicy": "immutable_MBO_receive_time_snapshot",
         "rawDataQuality": "checked_record_semantics_not_independent_vendor_audit",
         "availableAt": "minute_close_exclusive_receive_time_complete_events",

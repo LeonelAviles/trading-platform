@@ -1,14 +1,16 @@
-"""Single approved fit, all six causal features jointly; no hidden search."""
+"""Single approved fit with the explicitly versioned inputs; no hidden search."""
 import numpy as np
 from engine.mbo_features import FEATURES
+from engine.feature_schema import features_for, frame_features, model_schema
 from engine.ml_signal import FrozenModel
 
 
 def standardize(train, targets):
-    expected = FEATURES + (["netTicks"] if targets else [])
+    features = frame_features(train.columns)
+    expected = features + (["netTicks"] if targets else [])
     if list(train.columns) != expected:
         raise ValueError("training matrix must contain exactly the ordered features and permitted target")
-    x = train[FEATURES].to_numpy(dtype=float)
+    x = train[features].to_numpy(dtype=float)
     if not np.isfinite(x).all():
         raise ValueError("non-finite training features")
     mean, scale = x.mean(axis=0), x.std(axis=0, ddof=0)
@@ -20,15 +22,18 @@ class MBORidge:
     requires_targets = True
 
     def fit(self, train, plan):
+        features = features_for(plan.featureVersion)
+        if frame_features(train.columns) != features:
+            raise ValueError("training schema differs from approved featureVersion")
         x, mean, scale = standardize(train, True)
         y = train.netTicks.to_numpy(dtype=float)
         intercept = float(y.mean())
-        coef = np.linalg.solve(x.T @ x + plan.ridgeAlpha * np.eye(len(FEATURES)), x.T @ (y-intercept))
-        model = FrozenModel(kind="ridge", features=FEATURES, mean=mean.tolist(), scale=scale.tolist(),
+        coef = np.linalg.solve(x.T @ x + plan.ridgeAlpha * np.eye(len(features)), x.T @ (y-intercept))
+        model = FrozenModel(kind="ridge", **model_schema(plan.featureVersion), features=features, mean=mean.tolist(), scale=scale.tolist(),
                             coefficients=coef.tolist(), intercept=intercept, threshold=plan.predictionThresholdTicks)
-        count = int(model.predict(train[FEATURES]).sum())
+        count = int(model.predict(train[features]).sum())
         trial = {"ridgeAlpha": plan.ridgeAlpha, "predictionThresholdTicks": plan.predictionThresholdTicks,
-                 "signals": count, "jointFeatureCount": len(FEATURES)}
+                 "signals": count, "jointFeatureCount": len(features)}
         return (model if count >= plan.minTrainSignals else None), [trial]
 
 
@@ -44,6 +49,9 @@ class MBOKMeans:
 
 def fit_clusters(train, plan):
     """Fit feature geometry without a trading direction or active IDs."""
+    features = features_for(plan.featureVersion)
+    if frame_features(train.columns) != features:
+        raise ValueError("training schema differs from approved featureVersion")
     x, mean, scale = standardize(train, False)
     unique = np.unique(x, axis=0)  # lexicographic; independent of input ordering
     k = plan.clusterCount
@@ -70,6 +78,6 @@ def fit_clusters(train, plan):
     # IDs are lexicographic standardized-center order, never outcome-ranked.
     centers = np.asarray(sorted(centers.tolist()))
     labels = ((x[:, None, :] - centers[None, :, :])**2).sum(axis=2).argmin(axis=1)
-    return {"features": FEATURES, "mean": mean.tolist(), "scale": scale.tolist(), "centers": centers.tolist()}, {
+    return {**model_schema(plan.featureVersion), "features": features, "mean": mean.tolist(), "scale": scale.tolist(), "centers": centers.tolist()}, {
         "iterations": iteration + 1, "counts": np.bincount(labels, minlength=k).tolist(),
-        "jointFeatureCount": len(FEATURES), "clusterIds": "lexicographic_standardized_centers"}
+        "jointFeatureCount": len(features), "clusterIds": "lexicographic_standardized_centers"}

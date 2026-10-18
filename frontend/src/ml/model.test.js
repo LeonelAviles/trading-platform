@@ -41,3 +41,14 @@ describe("discovery workflow boundaries", () => {
     expect(() => hypothesisBody(row, { ...fields, roundTripCostTicks: "" })).toThrow("explicitly");
   });
 });
+
+it("separates v1 and v2 datasets and carries their input version into discovery", () => {
+  const rich = structuredClone(partitions);
+  rich.forEach((p) => { p.document.identity.featureVersion = "mbo_receive_minute_v2"; });
+  const groups = datasetGroups([...partitions, ...rich]);
+  expect(groups).toHaveLength(2);
+  const group = groups.find((g) => g.settings.featureVersion === "mbo_receive_minute_v2");
+  const plan = discoveryPlan(group, { start: sources[0].day, trainEnd: sources[0].day,
+    validationEnd: sources[1].day, testEnd: sources[2].day, clusterCount: "2", maxIterations: "30", minClusterSamples: "2" });
+  expect(plan.featureVersion).toBe("mbo_receive_minute_v2");
+});

@@ -25,6 +25,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--days',nargs='+',required=True)
     parser.add_argument('--contract',required=True)
+    parser.add_argument('--feature-version', choices=['mbo_receive_minute_v1', 'mbo_receive_minute_v2'], default='mbo_receive_minute_v1')
+    parser.add_argument('--max-days-per-run', type=int, default=20)
     parser.add_argument('--manifest',type=Path,required=True)
     parser.add_argument('--max-cache-gib',type=float,default=6)
     parser.add_argument('--min-free-gib',type=float,default=20)
@@ -32,8 +34,10 @@ def main():
     if not re.fullmatch(r'ES[HMUZ][0-9]{1,2}',args.contract): parser.error('explicit ES contract required')
     if not math.isfinite(args.max_cache_gib) or not math.isfinite(args.min_free_gib): parser.error('finite disk limits required')
     days=sorted(set(str(date.fromisoformat(d)) for d in args.days))
-    if len(days)>20 or any(date.fromisoformat(d).weekday()>4 for d in days):
-        parser.error('select at most 20 RTH weekdays')
+    if not 1 <= args.max_days_per_run <= 366:
+        parser.error('max-days-per-run must be 1..366')
+    if len(days)>args.max_days_per_run or any(date.fromisoformat(d).weekday()>4 for d in days):
+        parser.error('selected RTH weekdays exceed the explicit per-run bound')
     from engine.validation import _splits
     allowed=set((_splits('ES') or {}).get('inSample',[]))
     if not set(days)<=allowed: parser.error('selected days must be frozen in-sample research sessions')
@@ -44,8 +48,10 @@ def main():
     client=boto3.Session(profile_name=os.environ.get('AWS_PROFILE') or None).client('s3',config=Config(connect_timeout=10,read_timeout=60,retries={'max_attempts':2}))
     import databento as db
     from research_ml import feature_store, mbo_source
-    audit=paths.data_dir/'preparation'; audit.mkdir(exist_ok=True)
-    request={'contract':args.contract,'sources':[],'depthLevels':10,'featureWindowSeconds':60,
+    audit=paths.data_dir/'preparation'
+    if args.feature_version != 'mbo_receive_minute_v1': audit=audit/args.contract/args.feature_version
+    audit.mkdir(parents=True,exist_ok=True)
+    request={'featureVersion':args.feature_version,'contract':args.contract,'sources':[],'depthLevels':10,'featureWindowSeconds':60,
         'maxBookAgeMs':5000,'maxEventLagMs':5000,'maxUnknownTradeFraction':0.01}
     budget=args.max_cache_gib*2**30; floor=args.min_free_gib*2**30
     if budget<=0 or floor<2**30: parser.error('positive cache cap and at least 1 GiB safety floor required')
@@ -77,6 +83,10 @@ def main():
             day_request=MBOFeatureRequest.model_validate({**request,'sources':[source]})
             result=feature_store.prepare_day(day_request,day_request.sources[0],0.25)
             request['sources'].append(source)
+            checkpoint=audit/'feature-request.json'
+            partial_request=checkpoint.with_suffix('.json.partial')
+            partial_request.write_text(json.dumps(request,indent=2))
+            partial_request.replace(checkpoint)
             record.update(status='complete',source=source,sha256=digest,bytes=dst.stat().st_size,
                 checksumScope='archive_expected' if entry.get('sha256') else 'observed_download_hash_no_archive_reference',
                 partitionId=result['partitionId'],rows=result['document']['rows'],quality=result['document']['rawSource']['quality'])
@@ -88,7 +98,7 @@ def main():
             with (audit/'attempts.jsonl').open('a') as stream: stream.write(json.dumps(record,allow_nan=False)+'\n')
             print(json.dumps(record,allow_nan=False),flush=True)
     target=audit/'feature-request.json'
-    target.write_text(json.dumps(request,indent=2)); print('request',str(target),flush=True)
+    print('request',str(target),flush=True)
 
 
 if __name__=='__main__': main()

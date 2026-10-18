@@ -11,6 +11,7 @@ import pandas as pd
 
 import database
 from engine.mbo_features import FEATURES
+from engine.feature_schema import features_for, frame_features
 from engine.ml_signal import parse_frozen
 from market import catalog as cat
 from models import MLExperiment
@@ -59,7 +60,7 @@ def load(strategy, *, allow_rejected=False):
     if len(content) > service.MAX_SNAPSHOT_BYTES or hashlib.sha256(content).hexdigest() != document["dataset"]["sha256"]:
         raise ValueError("approved MBO snapshot changed")
     payload = json.loads(content)
-    if payload["columns"] != service.core.COLUMNS + FEATURES:
+    if payload["columns"] != service.core.COLUMNS + features_for(plan.featureVersion):
         raise ValueError("frozen MBO feature schema changed")
     bars = service.core.validate_bars(pd.DataFrame(payload["values"], columns=payload["columns"],
         index=pd.to_datetime(payload["timestamps"], unit="ns", utc=True)))
@@ -110,7 +111,7 @@ def nautilus_day(frame, symbol, day):
             Quantity.from_int(1), AggressorSide.NO_AGGRESSOR, TradeId(str(opening)), opening, opening))
         bars.append(Bar(bar_type, *(Price.from_str(f"{r[c]:.2f}") for c in ("open", "high", "low", "close")),
                         Quantity.from_int(int(r.volume)), close, close))
-        rows[close] = r[FEATURES].tolist()
+        rows[close] = r[frame_features(frame.columns)].tolist()
         buy, sell = r.aggressive_buy_rate * 60, r.aggressive_sell_rate * 60
         flows[close] = (r.volume, buy - sell, buy, sell)
     return bars, rows, flows

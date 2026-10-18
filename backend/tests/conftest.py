@@ -134,3 +134,24 @@ def agent_db(tmp_path, monkeypatch, metadata_engine):
     (repo / "example.py").write_text("# this is a Python comment\ndef score():\n    return 'deflated sharpe'\n", encoding="utf-8")
     knowledge.ingest_repository(root=repo, name="test-research", url="https://example.test/repo", revision="abc123", license_name="MIT")
     yield repo
+
+
+@pytest.fixture()
+def feature_database(monkeypatch):
+    """Real PostgreSQL only, isolated schema; never touches live feature data."""
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    from research_ml import feature_store
+    url = os.environ.get("TEST_FEATURE_POSTGRES_URL")
+    if not url:
+        pytest.skip("set TEST_FEATURE_POSTGRES_URL for real prepared-feature integration")
+    schema = "features_test_" + uuid.uuid4().hex
+    with psycopg.connect(url) as conn:
+        conn.execute(f"CREATE SCHEMA {schema}")
+    monkeypatch.setenv("FEATURE_DATABASE_URL", make_conninfo(url, options=f"-csearch_path={schema}"))
+    try:
+        feature_store.initialize()
+        yield
+    finally:
+        with psycopg.connect(url) as conn:
+            conn.execute(f"DROP SCHEMA {schema} CASCADE")

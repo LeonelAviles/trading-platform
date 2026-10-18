@@ -13,6 +13,7 @@ import numpy as np
 
 import database
 from engine.mbo_features import FEATURES
+from engine.feature_schema import features_for
 from engine.ml_signal import FrozenModel
 from models import AgentThread, MLDiscovery, MLExperiment, MLHeldoutUse, new_id, utc_now
 from research_agent import memory, service as agent
@@ -177,7 +178,8 @@ def stop(thread_id, discovery_id, digest, reason):
 
 
 def describe_clusters(train, cluster):
-    values = train[FEATURES].to_numpy(dtype=float)
+    features = cluster["features"]
+    values = train[features].to_numpy(dtype=float)
     z = (values - cluster["mean"]) / cluster["scale"]
     labels = ((z[:, None, :] - np.asarray(cluster["centers"])[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)
     days = train.index.tz_convert("America/New_York").strftime("%Y-%m-%d")
@@ -187,11 +189,11 @@ def describe_clusters(train, cluster):
         shares = [float(active[days == day].mean()) for day in sorted(set(days))]
         raw_center = np.asarray(center) * cluster["scale"] + cluster["mean"]
         clusters.append({"clusterId": index, "samples": int(active.sum()), "share": float(active.mean()),
-            "center": dict(zip(FEATURES, raw_center.tolist())),
-            "featureStd": dict(zip(FEATURES, values[active].std(axis=0).tolist())),
+            "center": dict(zip(features, raw_center.tolist())),
+            "featureStd": dict(zip(features, values[active].std(axis=0).tolist())),
             "sessionsPresent": sum(share > 0 for share in shares),
             "sessionShareMin": min(shares), "sessionShareMax": max(shares)})
-    return {"features": FEATURES, "rows": len(train), "sessions": len(set(days)), "clusters": clusters,
+    return {"features": features, "rows": len(train), "sessions": len(set(days)), "clusters": clusters,
             "clusterIds": "lexicographic_standardized_centers", "outcomesUsed": False,
             "interpretation": "descriptive feature groups; no direction, profitability or significance established"}
 
@@ -213,7 +215,7 @@ def fit(thread_id, discovery_id):
         if service.provenance() != document["provenance"] or service._scope(plan) != document["dataset"]["sessions"]:
             raise ValueError("discovery code/config/sessions changed; a new approval is required")
         bars = service.read_snapshot(_path(discovery_id), document["dataset"])
-        train = bars.loc[bars.index.tz_convert("America/New_York").date <= plan.trainEnd, FEATURES]
+        train = bars.loc[bars.index.tz_convert("America/New_York").date <= plan.trainEnd, features_for(plan.featureVersion)]
         cluster, diagnostics = fit_clusters(train, plan)
         result = {"discoveryDigest": digest, "clusterModel": cluster, "diagnostics": diagnostics,
                   "summary": describe_clusters(train, cluster), "outcomesUsed": False}
