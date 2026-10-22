@@ -418,7 +418,9 @@ class DayIngest:
         con.register("trades_df", tdf[TRADE_COLUMNS])
         write_parquet(con, BARS_1M_SQL.format(source="trades_df"), out)
         con.unregister("trades_df")
-        return int(con.execute(f"SELECT count(*) FROM read_parquet('{out}')").fetchone()[0])
+        # Drain the scalar result: DuckDB 2 keeps fetchone() results active,
+        # preventing the next writer from registering its DataFrame.
+        return int(con.execute(f"SELECT count(*) FROM read_parquet('{out}')").fetchall()[0][0])
 
     def _write_checkpoints(self, con, root: str, m: BookMaterializer) -> int:
         df = m.checkpoint_frame()

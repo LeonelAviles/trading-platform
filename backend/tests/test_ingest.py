@@ -163,3 +163,26 @@ def test_organize_raw_and_manifest(data_paths, tmp_path):
     assert ing.list_raw_files(data_paths) == [dst]
     assert ing.list_raw_files(data_paths, roots={"ES"}) == []
     assert ing.manifest_key(dst, data_paths) == "NQ/2026-06-05.mbo.dbn.zst"
+
+
+def test_bar_count_finishes_result_before_connection_reuse(data_paths):
+    """A scalar fetch must not leave DuckDB 2's result active for the next writer."""
+    trades = pd.DataFrame({
+        "ts_event": [1781271000000000000, 1781271060000000000],
+        "ts_recv": [1781271000000000000, 1781271060000000000],
+        "symbol": ["ESM6", "ESM6"], "price": [5300.0, 5300.25],
+        "size": [1, 2], "side": ["B", "A"], "sequence": [1, 2],
+    })
+    job = ing.DayIngest(None, schema="trades", session_date=date(2026, 6, 12),
+                        frames=iter(()), paths=data_paths, name="synthetic")
+    con = ing.duck()
+    try:
+        assert job._write_bars(con, "ES", trades) == 2
+        # Registering starts the next checkpoint writer. DuckDB 2 rejects this
+        # if the count result was read with only fetchone().
+        con.register("next_writer", pd.DataFrame({"value": [7]}))
+        assert con.execute("SELECT value FROM next_writer").fetchall() == [(7,)]
+        con.unregister("next_writer")
+        assert job._write_bars(con, "ES", trades) == 2
+    finally:
+        con.close()
