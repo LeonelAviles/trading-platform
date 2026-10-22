@@ -274,3 +274,10 @@ derivable from the existing buy/sell rates, and VWAP/absorption ratios share
 trade observations. Their joint use changes ridge penalties and cluster geometry;
 there is no automatic feature selection or claim that eighteen inputs improve
 prediction. That comparison requires a separately approved real-data experiment.
+
+## Creating strategies with Codex
+
+Use the repo-local `nautilus-strategy-creator` skill in `.agents/skills/` and
+[the strategy creation workflow](docs/12-strategy-creation.md) for explicit specs,
+causal-feature checks and reproducible reporting through the existing Nautilus
+stack. Invoking the skill does not authorize economic searches.
